@@ -6280,7 +6280,7 @@ window.__ModuleLoader__.load({
 			return Promise.all(jobs).then(function (parts) {
 				const body = parts.filter(Boolean).join(" ");
 				if (!body) {
-					window.alert("文件没写进工作区。点输入框旁的「文件」再选一次。");
+					window.alert("文件没写进工作区。再拖一次试试。");
 					return 0;
 				}
 				if (!deskInsertComposer(body, scope.sessionId)) {
@@ -6360,7 +6360,7 @@ window.__ModuleLoader__.load({
 				: Promise.resolve(fallback);
 			return ready.then(function (files) {
 				if (!files || !files.length) {
-					window.alert("没拿到文件。请点输入框旁的「文件」选择。");
+					window.alert("没拿到文件。从访达里直接拖文件进来再试一次。");
 					return 0;
 				}
 				return landDeskFiles(files);
@@ -6451,6 +6451,9 @@ window.__ModuleLoader__.load({
 		function DeskFileButton(props) {
 			const sessionId = props && props.sessionId;
 			composerSessionId = sessionId ? String(sessionId) : "";
+			// The 文件 button is gone (2026-11-18): dragging a file into the conversation does the
+			// same. This slot stays so a drop knows which conversation it lands in.
+			return null;
 			const inputRef = React.useRef(null);
 			const busyHook = React.useState(false);
 			return React.createElement("span", { className: "cs-desk-file", title: "添加文件，可多选" },

@@ -22,6 +22,8 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
   - 加速：只有在要求优先档位、回复里也确实写着 priority 时才显示（ChatGPT 订阅经 CLIProxyAPI 会接受这个参数，但实际都走 default，所以不显示）；
   - 识图：发一张小图，真的回答了才标「识图」。
   通道答不出（过载、429、5xx）的模型不记结果，下次打开列表时再试；列出来但拒绝对话的模型不出现。证明：`scripts/prove-gpt-media.js`。
+- 对话框里的「文件」按钮去掉：它和直接把文件拖进对话框是同一件事。拖进来的图片照旧显示缩略图，其他文件放进工作区 `inbox/`，输入框里插入 `@inbox/文件名`。
+- GPT 模型的能力没测过时，员工登录拉模型列表就会触发网关在后台去测，不用等管理员打开「选择模型」；下一次拉列表时就带上测到的档位和识图。
 - 对话框里的「快速推理」开关对所有人关掉。它只给管理员显示，拨动后写的是员工电脑上的 `D:/dsh/shared/grok-fast.json`，网关和内核都不读这个文件：Grok 走不走优先档位由设置 → 模型 → Grok 里的「快速」决定，而且只对 Grok 有效。所以这个开关什么都没改，还会出现在 GPT 模型旁边，让人误会。
 - 生图和看图只改了服务器网关（`server/gw-media.js`、`server/gw-lite.js`），重启 `Autostart-Gateway` 生效；上面的 `/gw` 修复是员工端改动，要发一次客户端更新。
 - 证明：`scripts/prove-gpt-media.js`（CI）。用一个假的上游验证四件事：没有 Grok 时生图、改图都走 GPT 通道；用的是服务器的 key，不是员工令牌；`gpt-6`、`gpt-5` 和 `VISION_MODELS` 里的模型标成能看图，未知模型仍只收文字；生图模型不出现在对话模型列表里。

@@ -484,7 +484,12 @@ async function gptCatalog(env, probe) {
   const up = await listUpstream(route.base + '/models', route.key);
   if (up.status !== 200) return { status: up.status, rows: [] };
   const ids = up.rows.map((r) => (r && typeof r.id === 'string' ? r.id : '')).filter((id) => MODEL_ID.test(id) && !NOT_CHAT.test(id));
-  const seen = probe ? await probeGptMissing(ids, route) : readStateFile(GPT_PROBE_PATH, {});
+  let seen = readStateFile(GPT_PROBE_PATH, {});
+  if (probe) seen = await probeGptMissing(ids, route);
+  else if (ids.some((id) => !seen[id] || seen[id].rev !== GPT_PROBE_REV)) {
+    // A desk signing in does not wait for this; the next model list carries what was learned.
+    probeGptMissing(ids, route).then(() => { companyModelsCache = { at: 0, val: null }; }, () => {});
+  }
   const rows = [];
   for (const id of ids) {
     const p = seen[id] && seen[id].rev === GPT_PROBE_REV ? seen[id] : null;
