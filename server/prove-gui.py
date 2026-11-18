@@ -168,9 +168,12 @@ def main() -> None:
             names = [n.replace("\\", "/") for n in zin.namelist()]
             start_name = "CompanyDesk/start.command" if "CompanyDesk/start.command" in names else "start.command"
             start = zin.read(start_name)
-        if b"tree-check skip-on-open" not in start:
+        # Opening must not wait on hashing the product tree: either skipped (older packs) or
+        # run in the background with the result in tree-check.last.txt (patch_client_scripts).
+        background = b"tree-check background" in start
+        if b"tree-check skip-on-open" not in start and not background:
             raise SystemExit("mac-start-missing-skip")
-        if b'tree-check.js" --root' in start:
+        if b'tree-check.js" --root' in start and not background:
             raise SystemExit("mac-start-still-hashes-tree")
         print("MAC_OPEN_SKIP=1")
 

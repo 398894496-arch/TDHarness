@@ -12,6 +12,8 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 - 修了装机卡死：`setup-server.ps1` 用 `net user` 建共享账号 `dshshare` 时，密码是 16 位，超过 14 位后 `net` 会停下来问 Y/N。后台无人值守装机没人回答，就一直卡在那里（一次现场装机卡了 20 分钟）。现在改用 `New-LocalUser` / `Set-LocalUser` 建账号，不会再卡；密码也不再出现在进程命令行里。
 - 修了打安装包失败（`site-emit-cs-failed`）：`server/pack-setup.ps1` 找 Python 时先找 `python3`，在没装 Store 版 Python 的 Windows 上，拿到的是系统自带的应用商店占位程序，它只会提示「Python was not found」。现在和其他脚本一样，跳过 `WindowsApps` 里的占位程序。
 - 修了全新装机最后一步必失败（`gui-prove-failed` / `zip-shell-missing-model-tab`）：`server/prove-gui.py` 检查客户端有没有「模型」设置页时，找的是旧写法 `label: "模型"`，2026.10 的客户端已经改成 `keep["模型"]`。因为这一步失败，后面的网关 TLS 切换和桌面客户端安装都没有执行。现在两种写法都认。
+- 修了全新装机后管理员初始密码丢失：登录服务第一次登录时把明文密码改存成哈希，走的是「改密码」那条路，顺手删掉了 `seed-admin.txt`。而第一次登录就是装机脚本自己的登录自检，所以初始密码还没给人看到就没了，装机结尾也不会再显示。现在只存成哈希不算改密码，`seed-admin.txt` 保留到管理员在设置里真正改密码为止。
+- 同一道 `prove-gui` 自检里，Mac 启动脚本那一项也是旧标准：只认「启动时跳过产品树校验」，可客户端补丁早就改成「后台校验」了（`mac-start-missing-skip`）。现在两种都认；只有在前台做全量校验时才判失败。
 - 员工端不用更新：只改了服务器网关（`server/gw-media.js`、`server/gw-lite.js`），重启 `Autostart-Gateway` 生效。
 - 证明：`scripts/prove-gpt-media.js`（CI）。用一个假的上游验证四件事：没有 Grok 时生图、改图都走 GPT 通道；用的是服务器的 key，不是员工令牌；`gpt-6`、`gpt-5` 和 `VISION_MODELS` 里的模型标成能看图，未知模型仍只收文字；生图模型不出现在对话模型列表里。
 
