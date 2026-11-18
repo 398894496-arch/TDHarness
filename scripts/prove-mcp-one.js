@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// Proof for desk/pack/common/mcp-one.cjs: a desktop MCP server behind it shows the model one
+// Proof for desk/plugins/company-shell/lib/mcp-one.cjs: a desktop MCP server behind it shows the model one
 // tool, a call to that tool reaches the server as the chosen action with its args, and hidden
 // or unknown actions are refused without reaching the server. A stand-in server, no desktop.
 
@@ -11,7 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
-const ONE = path.join(__dirname, '..', 'desk', 'pack', 'common', 'mcp-one.cjs');
+const ONE = path.join(__dirname, '..', 'desk', 'plugins', 'company-shell', 'lib', 'mcp-one.cjs');
 
 const SERVER = `
 const tools = [

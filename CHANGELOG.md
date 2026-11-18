@@ -23,7 +23,7 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
   - 识图：发一张小图，真的回答了才标「识图」。
   通道答不出（过载、429、5xx）的模型不记结果，下次打开列表时再试；列出来但拒绝对话的模型不出现。证明：`scripts/prove-gpt-media.js`。
 - **员工端工具瘦身**：内核每一轮都会把全部工具定义发给模型，原来一共 70 个、约 98KB，带着这么多工具时 GPT 首字慢、结束信号也慢（实测同一请求 4～17 秒，不带工具 3 秒）。
-  - **桌面控制只剩一个工具**：新增 `desk/pack/common/mcp-one.cjs`，接在桌面控制服务前面，模型只看到一个 `desktop`（参数是动作 + 该动作的参数），说明里列出每个动作和它的参数名，调用时再转回原工具。Mac 的 Peekaboo 从 28 个、约 55KB 降到 1 个、5.4KB（用真机上的 Peekaboo 实测）；同时隐藏录屏 `capture`。Windows 的 Windows-MCP 原来 10 个，现在也只剩 1 个。证明：`scripts/prove-mcp-one.js`（CI）。
+  - **桌面控制只剩一个工具**：新增 `desk/plugins/company-shell/lib/mcp-one.cjs`（放在插件目录里，是因为客户端更新只会拷贝白名单目录里的文件，放在包根目录的新文件会被跳过），接在桌面控制服务前面，模型只看到一个 `desktop`（参数是动作 + 该动作的参数），说明里列出每个动作和它的参数名，调用时再转回原工具。Mac 的 Peekaboo 从 28 个、约 55KB 降到 1 个、5.4KB（用真机上的 Peekaboo 实测）；同时隐藏录屏 `capture`。Windows 的 Windows-MCP 原来 10 个，现在也只剩 1 个。证明：`scripts/prove-mcp-one.js`（CI）。
   - **去掉只走 Grok 的工具**：`generate_video`（生视频）、`watch_video`（看视频）。生图 `generate_image` 保留，说明里不再写 Grok。
   - **去掉电商**：工具 `shop_recipe`、`shop_write` 和 skill `company-shop`。
 - 对话框里的「文件」按钮去掉：它和直接把文件拖进对话框是同一件事。拖进来的图片照旧显示缩略图，其他文件放进工作区 `inbox/`，输入框里插入 `@inbox/文件名`。

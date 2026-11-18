@@ -122,7 +122,7 @@
         transport: stdio
         command: !!js process.execPath
         args:
-          - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/mcp-one.cjs')
+          - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/plugins/company-shell/lib/mcp-one.cjs')
           - --name
           - desktop
           - --label
