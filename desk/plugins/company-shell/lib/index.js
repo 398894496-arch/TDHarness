@@ -1852,12 +1852,64 @@ async function mailboxCall(body) {
 	return j;
 }
 
-// The company folder is the same tree whether the desk sees it as D:/dsh/company
-// or as a share; the server wants paths inside it.
-function companyRel(p) {
+// The company folder is one tree seen under different names: D:/dsh/company on
+// the server, \\server\dsh-company on a Windows desk, ~/company on a Mac. The
+// server wants paths inside it; the agent wants the path this desk can open.
+// Same markers as desk-lease.js companyRel.
+const COMPANY_MARKS = ["/dsh/company", "/dsh-company", "/company"];
+
+// [index of the marker, length of the marker] or null.
+function companyMark(fwd) {
+	const low = fwd.toLowerCase();
+	let best = null;
+	for (const m of COMPANY_MARKS) {
+		let i = low.indexOf(m);
+		while (i >= 0) {
+			const next = low.charAt(i + m.length);
+			if (next === "" || next === "/") {
+				if (best == null || i < best[0]) best = [i, m.length];
+				break;
+			}
+			i = low.indexOf(m, i + 1);
+		}
+	}
+	return best;
+}
+
+export function companyRel(p) {
 	const fwd = String(p || "").replace(/\\/g, "/");
-	const i = fwd.toLowerCase().indexOf("/company/");
-	return i >= 0 ? fwd.slice(i + "/company/".length) : fwd;
+	const hit = companyMark(fwd);
+	if (hit == null) return fwd;
+	return fwd.slice(hit[0] + hit[1]).replace(/^\/+/, "");
+}
+
+// This desk's own company root, from the personal folder the login handed it.
+export function deskCompanyRoot(personal) {
+	const fwd = String(personal == null ? readTrim(path.join(rcDir(), "work.personal")) : personal).replace(/\\/g, "/");
+	const hit = companyMark(fwd);
+	return hit == null ? "" : fwd.slice(0, hit[0] + hit[1]);
+}
+
+// A path the server reported (its own D:/dsh/company/...) as this desk sees it.
+export function deskPath(serverPath, root) {
+	const rel = companyRel(serverPath);
+	const base = root == null ? deskCompanyRoot() : root;
+	if (!base || rel === String(serverPath || "").replace(/\\/g, "/")) return String(serverPath || "");
+	return rel ? base + "/" + rel : base;
+}
+
+// The server names task folders by its own path; the card shows (and copies) the
+// one this desk can open.
+export function localizeMailbox(buf, root) {
+	let j = null;
+	try { j = JSON.parse(Buffer.from(buf).toString("utf8")); } catch { return buf; }
+	if (!j || typeof j !== "object") return buf;
+	const base = root == null ? deskCompanyRoot() : root;
+	if (!base) return buf;
+	const fix = (t) => { if (t && typeof t.folder === "string" && t.folder) t.folder = deskPath(t.folder, base); };
+	for (const t of Array.isArray(j.tickets) ? j.tickets : []) fix(t);
+	fix(j.card);
+	return Buffer.from(JSON.stringify(j));
 }
 
 function when(ms) {
@@ -1889,13 +1941,11 @@ function cardText(card, sid, people) {
 	lines.push("【交付物】");
 	const files = card.files || [];
 	if (!files.length) lines.push("（还没有）");
-	const folder = String(card.folder || "");
-	const cut = folder.toLowerCase().indexOf("/company/");
-	const companyRoot = cut >= 0 ? folder.slice(0, cut + "/company/".length) : "";
-	for (const f of files) lines.push("- " + f.name + "（" + (f.kind || "文件") + "） " + companyRoot + f.path);
+	const root = deskCompanyRoot();
+	for (const f of files) lines.push("- " + f.name + "（" + (f.kind || "文件") + "） " + (root ? root + "/" : "") + f.path);
 	if (card.folder) {
 		lines.push("");
-		lines.push("【任务文件夹】" + card.folder);
+		lines.push("【任务文件夹】" + deskPath(card.folder, root));
 		lines.push("这张卡的产出文件存到这个文件夹，就会自动列为交付物。");
 	}
 	lines.push("");
@@ -1904,7 +1954,7 @@ function cardText(card, sid, people) {
 	if (!sessions.length) lines.push("（没有）");
 	for (const s of sessions) {
 		const owner = byLogin[s.account] || {};
-		const log = owner.personal ? String(owner.personal).replace(/\\/g, "/") + "/.dsh-desk/sessions/" + s.id + ".jsonl" : "";
+		const log = owner.personal ? deskPath(owner.personal, root) + "/.dsh-desk/sessions/" + s.id + ".jsonl" : "";
 		lines.push("- " + (s.id === sid ? "【本会话】" : "") + (s.title || s.id) + " · " + nameOf(s.account) + " · " + when(s.at) + (log && s.id !== sid ? "\n  记录：" + log : ""));
 	}
 	const events = (card.events || []).slice(-8);
@@ -2156,7 +2206,7 @@ export function apply(ctx) {
 					? out.contentType
 					: "application/json; charset=utf-8";
 				res.writeHead(out.status, { "content-type": ctype, "cache-control": "no-store" });
-				res.end(out.body);
+				res.end(ctype.indexOf("application/json") === 0 ? localizeMailbox(out.body) : out.body);
 			},
 		}),
 	);

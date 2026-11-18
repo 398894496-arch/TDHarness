@@ -39,6 +39,8 @@ BOARD = ticket_board.Board(
 TICKET_ACTIONS = ("issue", "rename", "edit", "submit", "verdict", "withdraw", "archive",
                   "bind-session", "unbind-session", "attach-file", "detach-file", "upload")
 SEED_ADMIN = "tdh"
+# Largest request body read: a 12 MB task-card upload is about 16 MB as base64.
+BODY_MAX = 17 * 1024 * 1024
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("TDH_PEOPLE_PORT") or 4181)
 
@@ -677,8 +679,12 @@ def mailbox_hit(actor: str, **extra) -> dict:
     spend = usage_summary(usage_since())
     cards = []
     if row:
-        with BOARD_MU:
-            cards = BOARD.visible(row, people_by_login())
+        try:
+            with BOARD_MU:
+                cards = BOARD.visible(row, people_by_login())
+        except ticket_board.BoardUnreadable:
+            # Say so instead of showing an empty board that the next change would save.
+            return {"ok": False, "error": "board-unreadable", "login": actor or ""}
     body = {
         "ok": True,
         "login": actor or "",
@@ -768,17 +774,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def _read_json(self) -> dict:
-        n = int(self.headers.get("Content-Length") or 0)
+    def _read_json(self) -> dict | None:
+        """The JSON body; None when it is too large or not JSON. An empty dict
+        here would read as a plain refresh and answer ok, so an upload that was
+        never stored looked uploaded."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return None
         # A 12 MB attachment is about 16 MB as base64; nothing larger is read.
-        if n > 17 * 1024 * 1024:
-            return {}
+        if n > BODY_MAX:
+            self._too_large = True
+            return None
         raw = self.rfile.read(n) if n else b"{}"
         try:
             data = json.loads(raw.decode("utf-8") or "{}")
-        except ValueError:
-            return {}
-        return data if isinstance(data, dict) else {}
+        except (ValueError, UnicodeDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
 
     def _people(self, payload: dict) -> None:
         actor = person(self._actor())
@@ -1064,7 +1077,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        self._too_large = False
         payload = self._read_json()
+        if payload is None:
+            if self._too_large:
+                self._send(*json_bytes({"ok": False, "error": "too-large"}, 413))
+            else:
+                self._send(*json_bytes({"ok": False, "error": "bad-json"}, 400))
+            self.close_connection = True
+            return
         if path == "/company/mailbox":
             self._mailbox(payload)
             return
