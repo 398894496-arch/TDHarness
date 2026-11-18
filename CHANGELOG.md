@@ -4,6 +4,18 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.18.3
+
+**扩展包可以装在 TDH 上面，不用 fork：公司盘 `_skills` 里的 skill 叠加在自带 skill 上；Caddy 留出扩展路由目录**
+- **skill 叠加**：原来公司盘 `_skills` 里只要有一个 skill，员工电脑就只用 `_skills` 里的，自带的 `company-*`（任务卡、知识库等）全部不加载。扩展包想加几个 skill，就只能把自带的也拷一份进去，TDH 一升级，这份拷贝就过期了。现在员工电脑启动时先放自带的 skill，再把 `_skills` 叠上去：新的就加上，同名的整个替换成 `_skills` 里那一份。缓存每次重新生成，两边都删掉的 skill 不会残留；生成到一半失败时，保留上一次的缓存。想保留旧规则（只用公司盘的），在 `_skills` 里放一个 `.replace-bundled` 文件。
+- **扩展路由**：生成的 Caddyfile 在站点里、兜底规则之前，`import D:/dsh/runtime/caddy/ext/*.caddy`。扩展包往这个目录放自己的 `handle /company/<包名>* { ... }`，重跑 setup 也不会被覆盖。setup 会建好这个目录，并放一个只有注释的 `00-placeholder.caddy`。这个目录只有管理员能写。
+- 说明：docs/SERVER.md 新增「Extension packs」一节；desk/README.md 里 skills 那一行同步更新。
+- 证明：
+  - 新增 `scripts/prove-sync-skills.js`：覆盖叠加、同名替换（旧文件不残留）、删除后不残留、`.replace-bundled`、没有共享盘几种情况。这份测试在旧代码上会失败。
+  - 新增 `scripts/prove-caddy-ext.py`：`import` 只有一行，位置在站点块里、兜底规则之前，大括号配对；setup 在启动 Caddy 之前就放好了占位文件。
+  - 两个测试都已加进 CI。
+  - 没用真的 Caddy 跑 `caddy validate`（本机没有 Caddy，Windows 测试机也连不上），要在服务器上验证一次。
+
 ## 2026.11.18.2
 
 **任务卡：一张卡打开的范围不超过本人在共享盘上能打开的；不能自己审批自己的工作；任务板读坏了不会被清空；员工 Windows 电脑上，智能体能把交付物挂上卡**

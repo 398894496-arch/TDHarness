@@ -151,6 +151,13 @@ Then `publish-site-update.ps1` (step 2b, `server\tailnet-site.ps1`) puts three f
 
 Proofs: `scripts\prove-tailnet-join.ps1` (CI) checks the join logic offline; workflow `tailnet-e2e` runs `scripts\e2e-remote-setup.ps1` on a fresh Windows runner against a live site with an ephemeral key: join, resolve the site name over the tailnet, install the desk over it, refuse a second join.
 
+## Extension packs
+
+An industry pack or a site's own tool sits on top of this repository instead of forking it, so `git pull` keeps upgrading the product and the pack upgrades on its own. Two hooks, both kept across setup re-runs:
+
+- **Skills.** Put the pack's skills in the share's `_skills` (admins write it). Each desk builds its skills cache from the pack's own `company-*` skills with `_skills` laid over them (`desk/pack/common/sync-skills.js`): a skill there is added, or replaces the bundled one of the same name whole. Do not copy the bundled skills into `_skills`; that copy would go stale at the next update. A file named `.replace-bundled` in `_skills` keeps the old rule (only the share's skills, when it has any). `node scripts/prove-sync-skills.js` → `SYNC_SKILLS_PROVE_OK=1`.
+- **Routes.** The Caddyfile imports `D:\dsh\runtime\caddy\ext\*.caddy` inside the site, before the catch-all. A pack adds a file there with its own `handle /company/<pack>* { reverse_proxy 127.0.0.1:<port> }` and restarts the `Autostart-Caddy-8443` task. Only admins can write `D:\dsh\runtime`. Caddy passes the desk's `Authorization` header through untouched; the pack's service checks the token itself, as the knowledge search does. Setup makes the folder with a comment-only `00-placeholder.caddy`. `python scripts/prove-caddy-ext.py` → `CADDY_EXT_PROVE_OK=1`.
+
 ## Upgrade, back up, uninstall
 
 **Upgrade.** On the server, in the clone, as Administrator:

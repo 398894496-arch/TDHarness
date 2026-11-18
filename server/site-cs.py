@@ -174,6 +174,10 @@ https://%s:%s, https://:%s {
 			flush_interval -1
 		}
 	}
+	# Extension packs (an industry pack, a site's own tool) add their routes as
+	# handle blocks in D:/dsh/runtime/caddy/ext/*.caddy. Setup re-runs rewrite this file but not that folder,
+	# so their routes survive; only admins can write there (D:/dsh/runtime).
+	import D:/dsh/runtime/caddy/ext/*.caddy
 	handle {
 		header Cache-Control "no-store"
 		root * D:/dsh/client-dist
