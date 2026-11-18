@@ -4,6 +4,19 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.18.2
+
+**任务卡：一张卡打开的范围不超过本人在共享盘上能打开的；不能自己审批自己的工作；任务板读坏了不会被清空；员工 Windows 电脑上，智能体能把交付物挂上卡**
+- **跨部门读文件**：原来任何人都能把公司盘里任意路径（别人的个人文件夹、`_office`、别部门的手册）挂到自己的卡上，再通过卡读出内容。人员服务是用服务器的权限去读文件，所以绕过了 `secure-folders.ps1` 写进 NTFS 的权限。现在挂文件和读文件都按 docs/SERVER.md「Who opens which folder」那张表检查：本人的文件夹本人能开；总监能开本部门成员的文件夹；部门手册只有本部门能开；`_office` 只有管理员能开；`_control/tickets/<卡>` 只有看得到那张卡的人能开。以前就挂在卡上、但读的人在共享盘上打不开的文件，现在读的时候一样拒绝；卡自己的任务文件夹和上传区不受影响。
+- **自己审批自己**：原来管理员能替员工写汇报、点「提交验收」，再自己点通过。现在汇报和提交只有负责人本人能做。谁都不能审批派给自己的卡，只有一个例外：管理员派给自己的卡，因为没有更上一级可以审。总监给自己开的卡由管理员审批。
+- **任务板读坏**：原来 `tickets.json` 读不出来（被手动改坏、磁盘出错）时，系统当成空板，下一次任何操作都会把空板存回去，所有卡就没了。现在读坏时拒绝一切改动，界面提示「任务板文件读不出来」，坏文件原样留着。每次保存前把上一版存成 `tickets.bak`。
+- **大文件假上传**：原来超过约 12.7 MB 的文件，服务器不读请求体，却回了 ok，界面显示「已上传」，实际什么都没存。现在服务器明确回 413 `too-large`；请求体不是完整的 JSON（比如传到一半断了）回 400 `bad-json`。界面在上传前先检查大小，超过 12 MB 直接提示，不发请求。
+- **Windows 员工机上挂交付物**：智能体 `task_card attach` 原来只认路径里的 `/company/`，不认 Windows 共享路径 `\\服务器\dsh-company\...`，挂文件一律报 `file-path`。卡上给智能体和给人看的「任务文件夹」原来是服务器自己的路径 `D:/dsh/company/...`，员工电脑上打不开。现在两边都按这台电脑登录时拿到的个人文件夹（`work.personal`）换算：Windows 上是 `//服务器/dsh-company/...`，Mac 上是 `~/company/...`。识别规则和 `desk-lease.js` 相同。
+- 证明：
+  - `scripts/prove-tickets.py` 新增上面每一条的用例，并进了 CI（Linux）。这些用例在旧代码上第一条就失败。
+  - 新增 `scripts/prove-task-card-paths.mjs`：服务器路径和桌面路径的双向换算（Windows 共享、Mac），进了 CI。
+  - 还没在真实的 Windows 员工机上实测。
+
 ## 2026.11.18
 
 **没绑 Grok 的站点也能生图、改图：走服务器的 GPT 通道；gpt-6 以后的模型能看图**

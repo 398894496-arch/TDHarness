@@ -18,6 +18,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -35,6 +36,11 @@ STATES = ("待提交", "待审批", "已通过", "未通过")
 
 class Refused(Exception):
     """A request the rules do not allow; the message is the error code."""
+
+
+class BoardUnreadable(Refused):
+    """The board file exists but cannot be read. Nothing may be written over it:
+    an empty board saved back would erase every card."""
 
 
 def now_ms() -> int:
@@ -67,20 +73,26 @@ class Board:
 
     # -- storage -----------------------------------------------------------
     def load(self) -> dict:
-        if not self.path.is_file():
+        """The board, or an empty one when there is no file yet. A file that is
+        there but unreadable raises: returning an empty board would let the next
+        change save it over every card."""
+        if not self.path.exists():
             return {"tickets": []}
         try:
             data = json.loads(self.path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
-            return {"tickets": []}
+            raise BoardUnreadable("board-unreadable")
         if not isinstance(data, dict) or not isinstance(data.get("tickets"), list):
-            return {"tickets": []}
+            raise BoardUnreadable("board-unreadable")
         return data
 
     def save(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if self.path.is_file():
+            # The last good board, for when the live one is damaged by hand or disk.
+            shutil.copy2(self.path, self.path.with_suffix(".bak"))
         os.replace(tmp, self.path)
 
     # -- who may see / do what ---------------------------------------------
@@ -96,13 +108,17 @@ class Board:
 
     @staticmethod
     def can_review(who: dict, card: dict) -> bool:
+        """Nobody approves their own work. The one exception is an admin's card to
+        themselves: there is nobody above to ask."""
         role = who.get("role")
         login = who.get("login")
+        if card.get("to") == login:
+            return role == "admin" and card.get("from") == login
         if role == "admin":
             return True
-        if role == "director" and card.get("dept") == who.get("dept") and card.get("to") != login:
+        if role == "director" and card.get("dept") == who.get("dept"):
             return True
-        return card.get("from") == login and card.get("to") != login
+        return card.get("from") == login
 
     @staticmethod
     def may_issue(who: dict, target: dict) -> bool:
@@ -164,7 +180,9 @@ class Board:
         login = who.get("login")
         role = who.get("role")
         state = card.get("state")
-        mine = card.get("to") == login or role == "admin"
+        # Only the assignee writes the report and hands it in; an admin does not
+        # hand in someone else's work (and then approve it).
+        mine = card.get("to") == login
         issuer = card.get("from") == login or role == "admin"
         return {
             "edit_assignment": issuer and state in OPEN_STATES,
@@ -180,6 +198,59 @@ class Board:
         rows = [c for c in self.load()["tickets"] if self.can_see(who, c)]
         rows.sort(key=lambda c: -int(c.get("updated_at") or c.get("created_at") or 0))
         return [self.view(c, who, people) for c in rows]
+
+    def owner_of(self, people: dict, rel: str) -> dict | None:
+        """The person whose own folder holds rel: their personal folder, or their
+        personal memory under content/emp-<login>."""
+        parts = rel.split("/")
+        for p in people.values():
+            personal = str((p or {}).get("personal") or "").strip()
+            if personal:
+                mine = self.rel(Path(personal.replace("\\", "/")))
+                if mine and (rel == mine or rel.startswith(mine + "/")):
+                    return p
+        name = ""
+        if parts[0].startswith("emp-"):
+            name = parts[0][4:]
+        elif parts[0] == "content" and len(parts) > 2 and parts[1].startswith("emp-"):
+            name = parts[1][4:]
+        if name:
+            return people.get(name) or {"login": name, "dept": None}
+        return None
+
+    def may_read(self, who: dict, people: dict, rel: str) -> bool:
+        """Who may open a company-share path, the same table secure-folders.ps1
+        writes into NTFS (docs/SERVER.md, Who opens which folder). The people
+        service reads with the server's rights, so a card must not reach further
+        than the person asking could on the share."""
+        role = who.get("role")
+        if role == "admin":
+            return True
+        parts = rel.split("/")
+        top = parts[0]
+        if top == "_office":
+            return False
+        if top == "_handbook" and len(parts) > 2 and parts[1] != "_company":
+            return parts[1] == who.get("dept")
+        if top == "_control" and len(parts) > 2 and parts[1] == "tickets":
+            try:
+                return self.can_see(who, self.find(self.load()["tickets"], parts[2]))
+            except Refused:
+                return False
+        owner = self.owner_of(people, rel)
+        if owner is not None:
+            if owner.get("login") == who.get("login"):
+                return True
+            return role == "director" and owner.get("dept") is not None and owner.get("dept") == who.get("dept")
+        return True
+
+    def on_card_area(self, people: dict, card: dict, rel: str) -> bool:
+        """The card's own task folder and its upload folder."""
+        areas = [self.rel(self.files_root / card["id"])]
+        folder = self.task_folder(people, card)
+        if folder is not None:
+            areas.append(self.rel(folder))
+        return any(a and (rel == a or rel.startswith(a + "/")) for a in areas)
 
     def rel(self, path: Path) -> str | None:
         try:
@@ -329,6 +400,8 @@ class Board:
             rel = self.safe_rel(body.get("path"))
             if rel is None:
                 raise Refused("file-path")
+            if not self.may_read(who, people, rel):
+                raise Refused("file-path")
             self.add_file(card, {"name": clean_name(body.get("name") or rel.split("/")[-1]), "path": rel,
                                  "kind": clean_text(body.get("kind"), 20) or "文件",
                                  "meta": clean_text(body.get("meta"), 80) or "已挂上", "at": now_ms()})
@@ -382,6 +455,10 @@ class Board:
             raise Refused("file-path")
         listed = {f.get("path") for f in card.get("files") or []} | {f["path"] for f in self.folder_files(people, card)}
         if rel not in listed:
+            raise Refused("file-not-on-card")
+        # A card made before this check may list a path its reader could not open
+        # on the share; files in the card's own folders are the hand-in itself.
+        if not self.on_card_area(people, card, rel) and not self.may_read(who, people, rel):
             raise Refused("file-not-on-card")
         path = self.company / rel
         if not path.is_file():

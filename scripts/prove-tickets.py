@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Prove task cards end to end through the people service: issue rules, the
 submit / review / withdraw cycle, session links, the task folder, uploads and
-reads, archive, and that changes need a live gateway token.
+reads, archive, and that changes need a live gateway token. Also: a card reaches
+no further into the company share than its reader could (NTFS table in
+docs/SERVER.md), nobody approves their own work, a damaged board is never saved
+over, and a body too large to read is refused instead of answered "ok".
 
 Runs server/people-api.py against a throwaway folder on a free port. Prints
 no token or password. Ends with TICKETS_PROVE_OK=1.
@@ -9,6 +12,7 @@ no token or password. Ends with TICKETS_PROVE_OK=1.
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import os
 import socket
@@ -87,6 +91,12 @@ def main() -> None:
     (runtime / "roster.json").write_text(json.dumps(roster), encoding="utf-8")
     (runtime / "caddy" / "PASSWORDS.txt").write_text("".join("%s:pass-%s-123\n" % (p[0], p[0]) for p in people), encoding="utf-8")
     (company / "secret.txt").write_text("not on any card", encoding="utf-8")
+    (company / "emp-vic" / "私密.txt").write_text("vic only", encoding="utf-8")
+    (company / "emp-amy" / "草稿.txt").write_text("amy draft", encoding="utf-8")
+    (company / "_office").mkdir()
+    (company / "_office" / "店铺.txt").write_text("admins only", encoding="utf-8")
+    (company / "_handbook" / "live").mkdir(parents=True)
+    (company / "_handbook" / "live" / "手册.txt").write_text("live dept", encoding="utf-8")
 
     port = free_port()
     env = dict(os.environ, TDH_ROOT=str(root), TDH_PEOPLE_PORT=str(port), DSH_LEASE_DIR=str(runtime / "lease"))
@@ -168,6 +178,41 @@ def main() -> None:
         code, j = c.box(amy, action="attach-file", ticket=tid, path="../../etc/passwd")
         check(j.get("error") == "file-path", "attach outside the company folder refused")
 
+        # A card reaches no further than its reader could on the share.
+        code, j = c.box(amy, action="attach-file", ticket=tid, path="emp-vic/私密.txt")
+        check(j.get("error") == "file-path", "no hanging another person's file")
+        code, j = c.box(amy, action="attach-file", ticket=tid, path="_office/店铺.txt")
+        check(j.get("error") == "file-path", "no hanging the admins' folder")
+        code, j = c.box(amy, action="attach-file", ticket=tid, path="_handbook/live/手册.txt")
+        check(j.get("error") == "file-path", "no hanging another dept's handbook")
+        code, j = c.box(amy, action="attach-file", ticket=tid, path="emp-amy/草稿.txt")
+        check(code == 200, "her own file hangs")
+        code, j = c.box(lead, action="file", ticket=tid, path="emp-amy/草稿.txt")
+        check(base64.b64decode(j.get("content") or "").decode("utf-8") == "amy draft", "her director reads it")
+        code, j = c.box(boss, action="attach-file", ticket=tid, path="emp-vic/私密.txt")
+        check(code == 200, "an admin may hang any file")
+        code, j = c.box(amy, action="file", ticket=tid, path="emp-vic/私密.txt")
+        check(j.get("error") == "file-not-on-card", "but amy still cannot read vic's file through it")
+        c.box(boss, action="detach-file", ticket=tid, path="emp-vic/私密.txt")
+
+        # Nobody approves their own work; an admin does not hand in someone else's.
+        code, j = c.box(boss, action="submit", ticket=tid, summary="老板代交")
+        check(j.get("error") == "submit-role", "an admin cannot hand in amy's card")
+        code, j = c.box(boss, action="edit", ticket=tid, summary="老板改汇报")
+        check(j.get("error") == "summary-locked", "an admin cannot write amy's report")
+        code, j = c.box(lead, action="issue", to="lead", title="总监自己的")
+        mine = j["ticket"]
+        code, j = c.box(lead, action="submit", ticket=mine, summary="做完了")
+        code, j = c.box(lead, action="verdict", ticket=mine, passed=True)
+        check(j.get("error") == "verdict-role", "a director cannot approve his own card")
+        code, j = c.box(boss, action="verdict", ticket=mine, passed=True)
+        check(card(j, mine)["state"] == "已通过", "an admin approves it")
+        code, j = c.box(boss, action="issue", to="boss", title="老板自己的")
+        own = j["ticket"]
+        c.box(boss, action="submit", ticket=own, summary="记一笔")
+        code, j = c.box(boss, action="verdict", ticket=own, passed=True)
+        check(card(j, own)["state"] == "已通过", "an admin's card to himself: nobody above, he closes it")
+
         # Submit, review (the assignee cannot approve), reject with a reason, resubmit, pass.
         code, j = c.box(bob, action="submit", ticket=tid, summary="x")
         check(j.get("error") == "ticket-missing", "someone else cannot submit (cannot even see it)")
@@ -195,6 +240,37 @@ def main() -> None:
         code, j = c.box(lead, action="archive", ticket=other, archived=True)
         check(card(j, other)["archived"] is True, "director hides it for himself")
         check(card(c.post("/company/mailbox", {}, amy)[1], other)["archived"] is False, "amy still sees it open")
+
+        # A body too large to read, or not JSON, is refused, not answered as a refresh.
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn.putrequest("POST", "/company/mailbox")
+        conn.putheader("Authorization", "Bearer " + amy)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(18 * 1024 * 1024))
+        conn.endheaders()
+        resp = conn.getresponse()
+        hit = json.loads(resp.read().decode("utf-8") or "{}")
+        conn.close()
+        check(resp.status == 413 and hit.get("error") == "too-large", "a too-large body is refused (%s %r)" % (resp.status, hit))
+        req = urllib.request.Request("http://127.0.0.1:%d/company/mailbox" % port, data=b'{"action": "upload", "content": "AAA', method="POST")
+        req.add_header("Authorization", "Bearer " + amy)
+        try:
+            urllib.request.urlopen(req, timeout=10)
+            check(False, "a cut-off body is refused")
+        except urllib.error.HTTPError as exc:
+            check(exc.code == 400 and json.loads(exc.read().decode("utf-8")).get("error") == "bad-json", "a cut-off body is refused")
+
+        # A damaged board stops changes and is never saved over.
+        board = runtime / "tickets.json"
+        check((runtime / "tickets.bak").is_file(), "the last good board is kept")
+        damaged = board.read_text(encoding="utf-8")[:-7]
+        board.write_text(damaged, encoding="utf-8")
+        code, j = c.post("/company/mailbox", {}, amy)
+        check(j.get("ok") is False and j.get("error") == "board-unreadable", "reading says the board is damaged %r" % j.get("error"))
+        code, j = c.box(amy, action="issue", to="amy", title="坏板上新建")
+        check(j.get("error") == "board-unreadable", "no change on a damaged board")
+        check(board.read_text(encoding="utf-8") == damaged, "the damaged board is left as it was")
+        check(len(json.loads((runtime / "tickets.bak").read_text(encoding="utf-8"))["tickets"]) >= 4, "the backup still has the cards")
     finally:
         proc.terminate()
         proc.wait(timeout=5)

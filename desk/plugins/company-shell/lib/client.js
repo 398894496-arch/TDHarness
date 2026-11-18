@@ -1737,6 +1737,11 @@ window.__ModuleLoader__.load({
 		function peopleErr(msg) {
 			const s = String(msg || "");
 			if (s.indexOf("protect-seed-admin") >= 0) return "种子管理员不能停用或降权";
+			if (s.indexOf("upload-size") >= 0 || s.indexOf("too-large") >= 0) return "文件超过 12 MB，没有上传。大文件请存进任务文件夹";
+			if (s.indexOf("board-unreadable") >= 0) return "任务板文件读不出来，所有改动都先停了。请管理员检查服务器上的 tickets.json（旁边的 tickets.bak 是上一次的正常版本）";
+			if (s.indexOf("file-path") >= 0) return "这个文件不在你能打开的范围里，不能挂到任务卡上";
+			if (s.indexOf("submit-role") >= 0) return "只有负责人自己能提交验收";
+			if (s.indexOf("verdict-role") >= 0) return "你不能审批这张卡（自己的工作不能自己审批）";
 			if (s.indexOf("login-bad") >= 0) return "登录名只能用小写字母、数字和 . _ -，2 到 32 位，不能用中文。中文请填在「显示名」里";
 			if (s.indexOf("login-taken") >= 0) return "这个登录名已经有人用了";
 			if (s.indexOf("dept-unknown") >= 0) return "没有这个部门，刷新一下再试";
@@ -3489,11 +3494,18 @@ window.__ModuleLoader__.load({
 			});
 		}
 
+		// Same as FILE_MAX in server/tickets.py.
+		const TASK_FILE_MAX = 12 * 1024 * 1024;
 		function uploadTaskFile(task, file) {
 			if (!task || !file || !file.blob) return Promise.resolve(null);
 			if (String(task.id).indexOf("tk-") !== 0) {
 				file.meta = formatSize(file.blob.size || 0) + " · 先发给人再上传";
 				return Promise.resolve(null);
+			}
+			if ((file.blob.size || 0) > TASK_FILE_MAX) {
+				// The server refuses it; past ~12.7 MB it used to come back "ok" with nothing stored.
+				file.meta = formatSize(file.blob.size || 0) + " · 超过 12 MB，没有上传";
+				return Promise.reject(new Error("upload-size"));
 			}
 			file.meta = formatSize(file.blob.size || 0) + " · 上传中";
 			return new Promise(function (resolve, reject) {
@@ -3954,9 +3966,14 @@ window.__ModuleLoader__.load({
 				const added = [];
 				for (let i = 0; i < list.length; i++) {
 					const file = list[i];
+					if ((file.size || 0) > TASK_FILE_MAX) {
+						mailboxErr = "「" + file.name + "」超过 12 MB，没有上传。大文件请存进任务文件夹";
+						continue;
+					}
 					const kind = fileKind(file);
 					added.push({ name: file.name, kind: kind, meta: formatSize(file.size) + " · 上传中", blob: file });
 				}
+				if (!added.length) { pulse(); return; }
 				task.files = task.files.concat(added);
 				pulse();
 				let chain = Promise.resolve();
