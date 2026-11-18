@@ -10,6 +10,7 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 - 员工端的 `generate_image` 原来只走 Grok Imagine，没绑 Grok 订阅的站点用不了。现在服务器没有 Grok 登录、但配了 OpenAI 通道（`OPENAI_API_KEY`，以及指向其他 OpenAI 兼容端点时的 `OPENAI_BASE_URL`）时，生图改走这条通道，模型由 `gateway.env` 的 `IMAGE_MODEL` 决定，默认 `gpt-image-2`。文生图发 JSON，改图（含局部改图）按 OpenAI 的 multipart 格式发原图。比例换成对应尺寸：横图 1536x1024、竖图 1024x1536，其余 1024x1024。绑了 Grok 的站点和原来一样。生视频仍然只走 Grok。
 - 网关原来只把 `gpt-5`、`gpt-4o` 一类标成「能看图」，`gpt-6.x` 被当成纯文字模型，员工发图片会被客户端直接拒绝。现在 `gpt-5` 及以后都算。其他模型实测能看图后，写进 `gateway.env` 的 `VISION_MODELS` 即可。
 - 修了装机卡死：`setup-server.ps1` 用 `net user` 建共享账号 `dshshare` 时，密码是 16 位，超过 14 位后 `net` 会停下来问 Y/N。后台无人值守装机没人回答，就一直卡在那里（一次现场装机卡了 20 分钟）。现在改用 `New-LocalUser` / `Set-LocalUser` 建账号，不会再卡；密码也不再出现在进程命令行里。
+- 修了打安装包失败（`site-emit-cs-failed`）：`server/pack-setup.ps1` 找 Python 时先找 `python3`，在没装 Store 版 Python 的 Windows 上，拿到的是系统自带的应用商店占位程序，它只会提示「Python was not found」。现在和其他脚本一样，跳过 `WindowsApps` 里的占位程序。
 - 员工端不用更新：只改了服务器网关（`server/gw-media.js`、`server/gw-lite.js`），重启 `Autostart-Gateway` 生效。
 - 证明：`scripts/prove-gpt-media.js`（CI）。用一个假的上游验证四件事：没有 Grok 时生图、改图都走 GPT 通道；用的是服务器的 key，不是员工令牌；`gpt-6`、`gpt-5` 和 `VISION_MODELS` 里的模型标成能看图，未知模型仍只收文字；生图模型不出现在对话模型列表里。
 
