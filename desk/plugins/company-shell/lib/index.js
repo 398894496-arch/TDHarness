@@ -1927,6 +1927,7 @@ function cardText(card, sid, people) {
 	const lines = [];
 	lines.push("任务卡 " + card.id + "「" + card.title + "」 状态：" + card.state);
 	lines.push("下达人 " + nameOf(card.from) + " → 负责人 " + nameOf(card.to) + (card.dept ? " · 部门 " + card.dept : ""));
+	if (card.due) lines.push("截止 " + when(card.due) + (card.overdue ? "（已超期）" : ""));
 	lines.push("");
 	lines.push("【任务内容】");
 	lines.push(card.assignment || "（空）");
@@ -1957,6 +1958,12 @@ function cardText(card, sid, people) {
 		const log = owner.personal ? deskPath(owner.personal, root) + "/.dsh-desk/sessions/" + s.id + ".jsonl" : "";
 		lines.push("- " + (s.id === sid ? "【本会话】" : "") + (s.title || s.id) + " · " + nameOf(s.account) + " · " + when(s.at) + (log && s.id !== sid ? "\n  记录：" + log : ""));
 	}
+	const comments = (card.comments || []).slice(-8);
+	if (comments.length) {
+		lines.push("");
+		lines.push("【留言】");
+		for (const c of comments) lines.push("- " + when(c.t) + " " + nameOf(c.who) + "：" + c.text);
+	}
 	const events = (card.events || []).slice(-8);
 	if (events.length) {
 		lines.push("");
@@ -1985,12 +1992,18 @@ function registerTaskCardTool(ctx) {
 			"list: the cards this person can see. " +
 			"update: write the report draft (summary) or, for the issuer, the assignment. Write the full text; it replaces the old one. " +
 			"attach: hang a file that already exists on the card's deliverables. Files saved into the task folder are listed automatically and need no attach. " +
+			"issue: only when the user explicitly asks to give someone a task (\"让小王周五前把报价发给客户\"): to (login), title, assignment, due (YYYY-MM-DD); say back who, what and when. The server refuses what this person may not issue. " +
+			"comment: add a note to the card without changing its state. due: the issuer moves or clears the due day. " +
 			"Never claim the card was submitted or approved; only a person can do that on the card.",
 		parameters: {
 			type: "object",
 			additionalProperties: false,
 			properties: {
-				action: { type: "string", enum: ["get", "list", "update", "attach"] },
+				action: { type: "string", enum: ["get", "list", "update", "attach", "issue", "comment", "due"] },
+				to: { type: "string", description: "issue: the assignee's login (see list / the people on the card)." },
+				title: { type: "string", description: "issue: a short card title." },
+				due: { type: "string", description: "issue / due: YYYY-MM-DD, or empty to clear (due)." },
+				text: { type: "string", description: "comment: the note." },
 				ticket: { type: "string", description: "Card id (tk-...). Optional for get/update/attach: defaults to the card linked to this session." },
 				summary: { type: "string", description: "update: the full report text." },
 				assignment: { type: "string", description: "update: the full assignment text (issuer only)." },
@@ -2016,6 +2029,13 @@ function registerTaskCardTool(ctx) {
 				if (!rows.length) return { ok: true, text: "没有进行中的任务卡。" };
 				return { ok: true, text: rows.map((t) => "- " + t.id + "「" + t.title + "」 " + t.state + " · " + t.from + " → " + t.to + ((t.sessionIds || []).indexOf(sid) >= 0 ? " · 本会话关联" : "")).join("\n") };
 			}
+			if (action === "issue") {
+				const title = String(a.title || "").trim();
+				if (!title || !a.to) return { ok: false, error: "issue needs to and title" };
+				const j = await mailboxCall({ action: "issue", to: String(a.to), title, assignment: String(a.assignment || title), due: String(a.due || "") });
+				if (!j.ok) return { ok: false, error: j.error || "issue-failed" };
+				return { ok: true, text: "已下达任务卡 " + j.ticket + "。\n\n" + cardText(j.card || {}, sid, j.people) };
+			}
 			let ticket = String(a.ticket || "");
 			let card = null;
 			let people = [];
@@ -2034,6 +2054,12 @@ function registerTaskCardTool(ctx) {
 				const j = await mailboxCall(body);
 				if (!j.ok) return { ok: false, error: j.error || "update-failed" };
 				return { ok: true, text: "已写进任务卡 " + ticket + "。\n\n" + cardText(j.card || {}, sid, j.people) };
+			}
+			if (action === "comment" || action === "due") {
+				const body = action === "comment" ? { action: "comment", ticket, text: String(a.text || "") } : { action: "set-due", ticket, due: String(a.due || "") };
+				const j = await mailboxCall(body);
+				if (!j.ok) return { ok: false, error: j.error || action + "-failed" };
+				return { ok: true, text: (action === "comment" ? "已留言。" : "截止时间已更新。") + "\n\n" + cardText(j.card || {}, sid, j.people) };
 			}
 			if (action === "attach") {
 				const rel = companyRel(a.path);

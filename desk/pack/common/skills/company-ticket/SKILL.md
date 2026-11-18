@@ -21,20 +21,20 @@ disable-model-invocation: true
 
 ## 路径（ASCII）
 
-根：共享盘根（Win `D:/dsh/company`，Mac `$HOME/company`）。本机探针树禁止。
+根：共享盘根（Win `\\<站点>\dsh-company`，Mac `$HOME/company`；服务器上是 `D:/dsh/company`）。本机探针树禁止。
 
-- 下达：`<dept>/emp-<id>/inbox/<ticket-id>/`
-- 上传：`<dept>/emp-<id>/projects/<project-id>/`，副本在 `<dept>/_outbox/<ticket-id>/`
-- 控制面副本：`_control/tickets/<ticket-id>/`
-- 指针：`_control/mailbox/board.json`
+- 任务文件夹：负责人个人文件夹下 `tasks/<ticket-id>/`（卡上「任务文件夹」给的就是这台电脑能打开的路径）。产出存进去就自动列为交付物。
+- 上传：卡上「添加文件」存在 `_control/tickets/<ticket-id>/`，只能经卡读。
+- 卡本身在服务器 `runtime/tickets.json`，员工桌上看不到这个文件，只经 `task_card` 工具和侧栏读写。
 
 ## 员工桌上怎么用
 
-这台桌**没有** `mailbox` 工具，也不要跑仓库工单脚本，不要 curl / POST 8443。
+用 `task_card` 工具，不要 curl / POST 8443，不要跑仓库工单脚本。
 
-- 等人从侧栏「任务」下达。`inbox` 空着是还没人给这把椅子派活。
-- 要给自己开卡：侧栏任务页的「+」。
-- 做完：侧栏「提交验收」。只说「做完了」不算。
+- `get` / `list`：读卡。`update`：写汇报草稿（下达人可改任务内容）。`attach`：挂已有文件。
+- `issue`：用户**明确说要给谁派活**时才用（「让小王周五前把报价发给客户」），带 `to`、`title`、`assignment`、`due`，下达后把谁、做什么、哪天截止复述给用户。员工只能给自己开卡，服务器会拒。
+- `comment`：留言，不改变状态；来回沟通写这里，不要改任务内容。`due`：下达人改或清除截止日期。
+- 改派、作废在卡上「跟进」里由下达人点；提交验收、审批只能由人在卡上点。
 
 ## 验收
 

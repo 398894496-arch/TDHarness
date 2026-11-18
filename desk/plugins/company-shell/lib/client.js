@@ -1508,7 +1508,7 @@ window.__ModuleLoader__.load({
 		// company-ticket-upload-v1: 添加文件立刻 upload；提交验收 harvest 椅子上同名产物
 		// company-ticket-thumb-v1: 缩略图走 POST action=file，不靠 GET img src
 		function isSubmittedState(state) {
-			return state === "待审批" || state === "待批示" || state === "已通过" || state === "未通过";
+			return state === "待审批" || state === "待批示" || state === "已通过" || state === "未通过" || state === "已作废";
 		}
 		function taskSubmitter(task) {
 			if (!task) return "";
@@ -1741,6 +1741,12 @@ window.__ModuleLoader__.load({
 			if (s.indexOf("board-unreadable") >= 0) return "任务板文件读不出来，所有改动都先停了。请管理员检查服务器上的 tickets.json（旁边的 tickets.bak 是上一次的正常版本）";
 			if (s.indexOf("file-path") >= 0) return "这个文件不在你能打开的范围里，不能挂到任务卡上";
 			if (s.indexOf("submit-role") >= 0) return "只有负责人自己能提交验收";
+			if (s.indexOf("due-role") >= 0) return "只有下达人能改截止时间";
+			if (s.indexOf("reassign-role") >= 0) return "只有下达人能改派，而且卡要还没提交";
+			if (s.indexOf("cancel-reason") >= 0) return "作废要写原因";
+			if (s.indexOf("cancel-role") >= 0) return "只有下达人能作废";
+			if (s.indexOf("comment-empty") >= 0) return "留言不能是空的";
+			if (s === "due" || s.indexOf("due") === 0) return "截止时间格式不对";
 			if (s.indexOf("verdict-role") >= 0) return "你不能审批这张卡（自己的工作不能自己审批）";
 			if (s.indexOf("login-bad") >= 0) return "登录名只能用小写字母、数字和 . _ -，2 到 32 位，不能用中文。中文请填在「显示名」里";
 			if (s.indexOf("login-taken") >= 0) return "这个登录名已经有人用了";
@@ -2314,7 +2320,7 @@ window.__ModuleLoader__.load({
 		function isTerminalTask(task) {
 			if (!task) return false;
 			if (task.archived) return true;
-			return task.state === "已通过" || task.state === "未通过" || task.state === "已放弃";
+			return task.state === "已通过" || task.state === "未通过" || task.state === "已放弃" || task.state === "已作废";
 		}
 
 		function dropPlaceholderSessions(task) {
@@ -3774,6 +3780,7 @@ window.__ModuleLoader__.load({
 		}
 		function stateBadge(state) {
 			if (state === "已通过") return badge("已通过", "ok", true);
+			if (state === "已作废") return badge("已作废", "err", true);
 			if (state === "未通过") return badge("被打回", "err", true);
 			if (state === "待审批" || state === "待批示") return badge("待审批", "warn", true);
 			return badge("进行中", "brand", true);
@@ -4089,6 +4096,86 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		// company-ticket-follow-v1: due time, hand to someone else, cancel (issuer / admin), comments (anyone who sees the card).
+		function dueInputValue(ms) {
+			const n = Number(ms) || 0;
+			if (!n) return "";
+			const d = new Date(n);
+			const pad = function (x) { return String(x).padStart(2, "0"); };
+			return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+		}
+		function CardFollow(props) {
+			const task = props.task;
+			const may = mayOf(task);
+			const dueHook = React.useState(dueInputValue(task.due));
+			const toHook = React.useState("");
+			const reasonHook = React.useState("");
+			const busyHook = React.useState(false);
+			const errHook = React.useState("");
+			React.useEffect(function () { dueHook[1](dueInputValue(task.due)); toHook[1](""); reasonHook[1](""); errHook[1](""); }, [task.id, task.due]);
+			if (!may.set_due && !may.reassign && !may.cancel) return null;
+			function run(body) {
+				busyHook[1](true);
+				errHook[1]("");
+				mailboxApi(Object.assign({ ticket: task.id }, body)).then(function () { busyHook[1](false); pulse(); }, function (err) {
+					busyHook[1](false);
+					errHook[1](peopleErr(err && err.message));
+				});
+			}
+			const people = issuableTo().filter(function (p) { return p.login !== task.to; });
+			return el(CardSection, { title: "跟进" },
+				may.set_due ? el("div", { className: "cs-tc-actions" },
+					el("span", null, "截止"),
+					el("input", { className: "cs-input", type: "date", value: dueHook[0], onChange: function (e) { dueHook[1](e.target.value); } }),
+					btn("保存", { small: true, disabled: busyHook[0] || dueHook[0] === dueInputValue(task.due), onClick: function () { run({ action: "set-due", due: dueHook[0] }); } }),
+					task.due ? btn("清除", { small: true, tone: "ghost", disabled: busyHook[0], onClick: function () { run({ action: "set-due", due: "" }); } }) : null
+				) : null,
+				may.reassign && people.length ? el("div", { className: "cs-tc-actions" },
+					el("span", null, "改派给"),
+					selectBox(toHook[0], [{ value: "", label: "选人" }].concat(people.map(function (p) { return { value: p.login, label: displayName(p) || p.login }; })), function (v) { toHook[1](v); }),
+					btn("改派", { small: true, disabled: busyHook[0] || !toHook[0], onClick: function () { run({ action: "reassign", to: toHook[0] }); } })
+				) : null,
+				may.cancel ? el("div", { className: "cs-tc-actions" },
+					el("input", { className: "cs-input", placeholder: "作废原因（必填）", value: reasonHook[0], onChange: function (e) { reasonHook[1](e.target.value); } }),
+					btn("作废", { small: true, tone: "danger", disabled: busyHook[0] || !reasonHook[0].trim(), onClick: function () { run({ action: "cancel", reason: reasonHook[0].trim() }); } })
+				) : null,
+				errHook[0] ? el("div", { className: "cs-tc-err" }, errHook[0]) : null
+			);
+		}
+		function CardComments(props) {
+			const task = props.task;
+			const textHook = React.useState("");
+			const busyHook = React.useState(false);
+			const errHook = React.useState("");
+			React.useEffect(function () { textHook[1](""); errHook[1](""); }, [task.id]);
+			if (isLocalDraft(task)) return null;
+			const rows = (task.comments || []).slice(-30);
+			function send() {
+				const text = textHook[0].trim();
+				if (!text) return;
+				busyHook[1](true);
+				errHook[1]("");
+				mailboxApi({ action: "comment", ticket: task.id, text: text }).then(function () {
+					busyHook[1](false);
+					textHook[1]("");
+					pulse();
+				}, function (err) {
+					busyHook[1](false);
+					errHook[1](peopleErr(err && err.message));
+				});
+			}
+			return el(CardSection, { title: "留言", aside: rows.length ? rows.length + " 条" : null },
+				rows.length ? el("ul", { className: "cs-tc-events" }, rows.map(function (c, i) {
+					return el("li", { key: i }, el("b", null, displayName(personOf(c.who)) || c.who), " " + c.text, el("span", null, cardTime(c.t)));
+				})) : null,
+				el("div", { className: "cs-tc-actions" },
+					el("textarea", { className: "cs-tc-text", rows: 2, placeholder: "留言不改变卡片状态，下达人和负责人都能看到", value: textHook[0], onChange: function (e) { textHook[1](e.target.value); } }),
+					btn(busyHook[0] ? "发送中…" : "留言", { small: true, tone: "primary", disabled: busyHook[0] || !textHook[0].trim(), onClick: send })
+				),
+				errHook[0] ? el("div", { className: "cs-tc-err" }, errHook[0]) : null
+			);
+		}
+
 		function NewCardForm(props) {
 			const task = props.task;
 			const people = issuableTo();
@@ -4096,6 +4183,7 @@ window.__ModuleLoader__.load({
 			const titleHook = React.useState(task.title && task.title !== "未命名报告" ? task.title : "");
 			const toHook = React.useState(task.toLogin || me);
 			const textHook = React.useState(task.assignment || "");
+			const newDueHook = React.useState("");
 			const busyHook = React.useState(false);
 			const errHook = React.useState("");
 			function create() {
@@ -4105,7 +4193,7 @@ window.__ModuleLoader__.load({
 				errHook[1]("");
 				task.title = title;
 				task.assignment = textHook[0].trim();
-				mailboxApi({ action: "issue", to: toHook[0] || me, title: title, assignment: task.assignment || title }).then(function (j) {
+				mailboxApi({ action: "issue", to: toHook[0] || me, title: title, assignment: task.assignment || title, due: newDueHook[0] }).then(function (j) {
 					busyHook[1](false);
 					const tid = j && j.ticket;
 					if (!tid) return;
@@ -4130,7 +4218,9 @@ window.__ModuleLoader__.load({
 						return { value: p.login, label: (displayName(p) || p.login) + (p.login === me ? "（我自己）" : "") };
 					}), function (v) { toHook[1](v); }, people.length <= 1)),
 				el("label", { className: "cs-field" }, el("span", null, "任务内容"),
-					el("textarea", { className: "cs-tc-text", rows: 6, value: textHook[0], placeholder: "要做什么、做到什么程度、交付什么、截止时间", onChange: function (e) { textHook[1](e.target.value); } })),
+					el("textarea", { className: "cs-tc-text", rows: 6, value: textHook[0], placeholder: "要做什么、做到什么程度、交付什么", onChange: function (e) { textHook[1](e.target.value); } })),
+				el("label", { className: "cs-field" }, el("span", null, "截止日期"),
+					el("input", { className: "cs-input", type: "date", value: newDueHook[0], onChange: function (e) { newDueHook[1](e.target.value); } })),
 				el("div", { className: "cs-tc-actions" },
 					el("p", { className: "cs-tc-note" }, task.pendingSession ? "创建后会关联当前会话。" : "创建后可以新建会话来处理它。"),
 					btn("取消", { tone: "ghost", onClick: function () { dropLocalDraft(task); } }),
@@ -4255,7 +4345,9 @@ window.__ModuleLoader__.load({
 						task.from && task.from !== task.to
 							? el("span", { className: "cs-tc-who" }, whoChip(task.from), el("span", { className: "cs-tc-arrow" }, "→"), whoChip(task.to))
 							: whoChip(task.to || task.from),
-						el("span", null, cardTime(task.created_at) || task.when || "")
+						el("span", null, cardTime(task.created_at) || task.when || ""),
+						task.due ? el("span", { className: "cs-tc-due" + (task.overdue ? " cs-tc-due-late" : ""), style: { color: task.overdue ? "#c0392b" : undefined, fontWeight: task.overdue ? 600 : undefined } },
+							(task.overdue ? "已超期 · 截止 " : "截止 ") + cardTime(task.due)) : null
 					),
 					local ? null : el(CardSteps, { state: task.state })
 				),
@@ -4265,10 +4357,12 @@ window.__ModuleLoader__.load({
 						: [
 							el(CardSection, { key: "a", title: "任务内容" },
 								el(CardText, { task: task, field: "assignment", editable: may.edit_assignment, rows: 4, placeholder: "要做什么、做到什么程度", emptyText: "没有写任务内容" })),
+							el(CardFollow, { key: "d", task: task }),
 							el(CardSessions, { key: "s", task: task }),
 							el(CardFiles, { key: "f", task: task }),
 							el(CardReport, { key: "r", task: task }),
 							el(CardReview, { key: "v", task: task }),
+							el(CardComments, { key: "c", task: task }),
 							el(CardEvents, { key: "e", task: task })
 						]
 				),
