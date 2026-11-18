@@ -129,7 +129,7 @@ async function proveServer() {
   const mod = await import(pathToFileURL(path.join(PLUGIN, 'index.js')).href);
   assert.deepStrictEqual(mod.inject, ['tools', 'webServer']);
   mod.apply(ctx, { baseURL: base + '/v1' });
-  assert.deepStrictEqual(tools.sort(), ['generate_image', 'generate_video']);
+  assert.deepStrictEqual(tools.sort(), ['generate_image']);
   const edit = routes['/company/media/region-edit'];
   const save = routes['/company/media/region-save'];
   assert.ok(edit && save, 'both routes registered');

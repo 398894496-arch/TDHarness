@@ -66,6 +66,8 @@ jobs:
         run: node scripts/prove-gw-tls.js
       - name: Prove pictures go to the GPT route without a Grok login, and gpt-6 takes pictures
         run: node scripts/prove-gpt-media.js
+      - name: Prove desktop control shows the model one tool (mcp-one.cjs)
+        run: node scripts/prove-mcp-one.js
       - name: Prove the company-share rights (throwaway accounts; fails if the share opens again)
         if: runner.os == 'Windows'
         shell: powershell

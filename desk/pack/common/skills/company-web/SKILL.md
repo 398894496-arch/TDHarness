@@ -21,7 +21,7 @@ disable-model-invocation: true
 - 只要缺一个数字才 `web_fetch` 那一条 URL。不要 `web_fetch` 搜页。不要开 `ego_*`。仓库详情 `web_fetch https://api.github.com/repos/<owner>/<name>`。
 - 出网只打公司 `8450/search` 和 `8450/fetch`。Cookie 不上 8450。引擎在办公 Win 上跑。
 
-默认楼梯 **Exa → 空就 Bing**。问 GitHub 时 **GitHub API → Bing**。B站 / YouTube 问到再走专用 API。Grok 只要请求体点名才打。官方 DeepSeek 搜默认关。
+默认楼梯 **Exa → 空就 Bing**。问 GitHub 时 **GitHub API → Bing**。B站 / YouTube 问到再走专用 API。官方 DeepSeek 搜默认关。
 
 ## 3. 站点用规（哪只手）
 

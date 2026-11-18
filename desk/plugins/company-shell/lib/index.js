@@ -1736,7 +1736,6 @@ const AGENTS_TEACH_SKILLS = new Set([
 	"company-dept",
 	"company-handoff",
 	"company-ticket",
-	"company-shop",
 ]);
 
 /** This-Mac video lane. Other skills stay retired. */
@@ -2109,14 +2108,13 @@ export function apply(ctx) {
 	registerPriorWorkTool(ctx);
 	registerMemoryWriteTool(ctx);
 	registerOpencliTool(ctx);
-	registerWatchVideoTool(ctx);
+	// watch_video (Grok only) and the shop tools (shop_recipe, shop_write) are not registered
+	// (2026-11-18): every tool is sent with every request, and these were dead weight.
 	registerTaskCardTool(ctx);
 	addTaskCardSection(ctx);
 	addKouboSection(ctx);
 	addWebSearchTipSection(ctx);
 	addOpencliSection(ctx);
-	registerShopRecipeTool(ctx);
-	registerShopWriteTool(ctx);
 	const web = typeof ctx.get === "function" ? ctx.get("webServer") : null;
 	if (web == null || typeof web.register !== "function") return;
 	ctx.effect(() =>

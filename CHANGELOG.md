@@ -22,6 +22,10 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
   - 加速：只有在要求优先档位、回复里也确实写着 priority 时才显示（ChatGPT 订阅经 CLIProxyAPI 会接受这个参数，但实际都走 default，所以不显示）；
   - 识图：发一张小图，真的回答了才标「识图」。
   通道答不出（过载、429、5xx）的模型不记结果，下次打开列表时再试；列出来但拒绝对话的模型不出现。证明：`scripts/prove-gpt-media.js`。
+- **员工端工具瘦身**：内核每一轮都会把全部工具定义发给模型，原来一共 70 个、约 98KB，带着这么多工具时 GPT 首字慢、结束信号也慢（实测同一请求 4～17 秒，不带工具 3 秒）。
+  - **桌面控制只剩一个工具**：新增 `desk/pack/common/mcp-one.cjs`，接在桌面控制服务前面，模型只看到一个 `desktop`（参数是动作 + 该动作的参数），说明里列出每个动作和它的参数名，调用时再转回原工具。Mac 的 Peekaboo 从 28 个、约 55KB 降到 1 个、5.4KB（用真机上的 Peekaboo 实测）；同时隐藏录屏 `capture`。Windows 的 Windows-MCP 原来 10 个，现在也只剩 1 个。证明：`scripts/prove-mcp-one.js`（CI）。
+  - **去掉只走 Grok 的工具**：`generate_video`（生视频）、`watch_video`（看视频）。生图 `generate_image` 保留，说明里不再写 Grok。
+  - **去掉电商**：工具 `shop_recipe`、`shop_write` 和 skill `company-shop`。
 - 对话框里的「文件」按钮去掉：它和直接把文件拖进对话框是同一件事。拖进来的图片照旧显示缩略图，其他文件放进工作区 `inbox/`，输入框里插入 `@inbox/文件名`。
 - GPT 模型的能力没测过时，员工登录拉模型列表就会触发网关在后台去测，不用等管理员打开「选择模型」；下一次拉列表时就带上测到的档位和识图。
 - 对话框里的「快速推理」开关对所有人关掉。它只给管理员显示，拨动后写的是员工电脑上的 `D:/dsh/shared/grok-fast.json`，网关和内核都不读这个文件：Grok 走不走优先档位由设置 → 模型 → Grok 里的「快速」决定，而且只对 Grok 有效。所以这个开关什么都没改，还会出现在 GPT 模型旁边，让人误会。
