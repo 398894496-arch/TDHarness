@@ -119,6 +119,18 @@ function proveClientPatch(py) {
   console.log('GW_TLS_PATCH_OK=1');
 }
 
+// The desk joins gateway paths onto gwBase(). With TLS that base ends in /gw, which a plain
+// new URL(path, base) drops; every company-shell call then got the download page.
+async function proveDeskJoin() {
+  const { pathToFileURL } = require('node:url');
+  const m = await import(pathToFileURL(path.join(ROOT, 'desk', 'plugins', 'company-shell', 'lib', 'index.js')).href);
+  assert.equal(m.gwUrl('https://tdh.local:8443/gw', '/v1/company-models').href, 'https://tdh.local:8443/gw/v1/company-models');
+  assert.equal(m.gwUrl('https://tdh.local:8443/gw/', '/channels').href, 'https://tdh.local:8443/gw/channels');
+  assert.equal(m.gwUrl('http://tdh.local:8450', '/grok-quota').href, 'http://tdh.local:8450/grok-quota');
+  assert.equal(m.gwUrl('https://tdh.local:8443/gw', 'channels').href, 'https://tdh.local:8443/gw/channels');
+  console.log('GW_TLS_DESK_JOIN_OK=1');
+}
+
 function proveAppHostSwitch(py) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tdh-gw-cs-'));
   const site = path.join(dir, 'site.yml');
@@ -140,6 +152,7 @@ function proveAppHostSwitch(py) {
 
 async function main() {
   await proveFetchGuard();
+  await proveDeskJoin();
   const py = python();
   if (!py) { console.log('GW_TLS_PY_SKIPPED=no-python'); } else { proveClientPatch(py); proveAppHostSwitch(py); }
   console.log('GW_TLS_PROVE_OK=1');

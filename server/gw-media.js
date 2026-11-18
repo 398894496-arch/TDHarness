@@ -1,5 +1,6 @@
 'use strict';
-// Company 8450 image/video door. Win only. Uses the same Grok OAuth as chat.
+// Company 8450 image/video door. Win only. Uses the same Grok OAuth as chat; without one,
+// images go to the server's GPT route (IMAGE_MODEL, default gpt-image-2). Video stays Grok only.
 // Employee clients POST here. Do not put api.x.ai in the zip.
 
 const IMAGE_MODEL = 'grok-imagine-image-2.0';
@@ -63,11 +64,69 @@ function fileFromB64(b64, index, kindHint) {
   };
 }
 
+// OpenAI-format size for an aspect ratio. gpt-image models take these three.
+function gptSize(ratio) {
+  const m = /^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/.exec(String(ratio || ''));
+  if (!m) return '1024x1024';
+  const r = Number(m[1]) / Number(m[2]);
+  if (r > 1.2) return '1536x1024';
+  if (r < 0.83) return '1024x1536';
+  return '1024x1024';
+}
+
+// The GPT door: the server's OpenAI route (OPENAI_API_KEY, and OPENAI_BASE_URL when it points at
+// another OpenAI-compatible endpoint). Used when no Grok login is bound.
+async function handleImagesGpt(res, j, prompt, n, ctx, gpt) {
+  const model = gpt.model;
+  const base = gpt.base.replace(/\/$/, '');
+  const size = gptSize(j.aspect_ratio);
+  let r;
+  if (j.image) {
+    const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String((j.image && j.image.url) || j.image));
+    if (!m) return fail(res, 400, 'image-missing');
+    const fd = new FormData();
+    fd.append('model', model);
+    fd.append('prompt', prompt);
+    fd.append('n', String(n));
+    fd.append('size', size);
+    fd.append('image', new Blob([Buffer.from(m[2], 'base64')], { type: m[1] }), 'image.' + (m[1] === 'image/jpeg' ? 'jpg' : m[1].slice(6)));
+    r = await ctx.upFetch(base + '/images/edits', { method: 'POST', headers: { authorization: 'Bearer ' + gpt.key, accept: 'application/json' }, body: fd });
+  } else {
+    r = await ctx.upFetch(base + '/images/generations', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + gpt.key, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ model, prompt, n, size })
+    });
+  }
+  const out = await asJson(r);
+  if (!out.ok) {
+    ctx.note('GW_IMG gpt status=' + out.status + ' pid=' + ctx.caller);
+    return fail(res, out.status >= 400 && out.status < 600 ? out.status : 502, errMsg(out.body, 'gpt-image-' + out.status));
+  }
+  const items = (out.body && out.body.data) || [];
+  const files = [];
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].b64_json) files.push(fileFromB64(items[i].b64_json, i));
+    else if (items[i].url) {
+      const raw = await fetchBytes(ctx.upFetch, items[i].url, '');
+      const kind = extOf(raw);
+      files.push({ name: 'image-' + (i + 1) + '.' + kind.ext, mime: kind.mime, b64: raw.toString('base64') });
+    }
+  }
+  if (!files.length) return fail(res, 502, 'gpt-image-empty');
+  ctx.note('GW_IMG gpt ok pid=' + ctx.caller + ' n=' + files.length);
+  res.statusCode = 200;
+  res.setHeader('content-type', 'application/json');
+  res.end(JSON.stringify({ files, model }));
+}
+
 async function handleImages(res, body, ctx) {
   const j = parseBody(body) || {};
   const prompt = String(j.prompt || '').trim();
   if (!prompt) return fail(res, 400, 'prompt-required');
   const n = Math.min(4, Math.max(1, Number(j.n) || 1));
+  const gpt = ctx.gptImage ? ctx.gptImage() : null;
+  if (gpt && !(ctx.hasGrok && ctx.hasGrok())) return handleImagesGpt(res, j, prompt, n, ctx, gpt);
   const resolution = j.resolution === '2k' ? '2k' : '1k';
   const payload = {
     model: IMAGE_MODEL,
@@ -176,4 +235,4 @@ async function handleVideos(res, body, ctx) {
   }));
 }
 
-module.exports = { handleImages, handleVideos };
+module.exports = { handleImages, handleVideos, gptSize };

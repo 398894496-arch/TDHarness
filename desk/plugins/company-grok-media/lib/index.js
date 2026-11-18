@@ -187,13 +187,13 @@ function apply(ctx, config) {
   registerRegionRoutes(ctx, door);
   ctx.tools.register({
     name: "generate_image",
-    description: "Generate an image through the company Grok Imagine door. Writes PNG/JPEG under artifacts/ and returns those workspace-relative paths. Optional image_path edits an existing workspace image. Do not call xAI yourself.",
+    description: "Generate an image through the company image door (the server picks the model). Writes PNG/JPEG under artifacts/ and returns those workspace-relative paths. Optional image_path edits an existing workspace image. Do not call a vendor yourself.",
     parameters: {
       type: "object",
       additionalProperties: false,
       properties: {
         prompt: { type: "string", description: "Scene, subject, style, and any in-image text." },
-        name: { type: "string", description: "Filename stem. ASCII only. Default grok-image." },
+        name: { type: "string", description: "Filename stem. ASCII only. Default image." },
         n: { type: "integer", description: "Variants of this prompt, 1-4. Default 1." },
         resolution: { type: "string", enum: ["1k", "2k"], description: "Default 1k. 2k takes longer." },
         aspect_ratio: { type: "string", description: "Optional, e.g. 1:1 or 16:9." },
@@ -226,52 +226,8 @@ function apply(ctx, config) {
       if (args.image_path) body.image = imagePayload(args.image_path);
       const out = await postMedia(door, "/images", body, 170000);
       return {
-        paths: writeFiles(out.files, safeStem(args.name, "grok-image") + "-" + stamp()),
+        paths: writeFiles(out.files, safeStem(args.name, "image") + "-" + stamp()),
         model: out.model || "grok-imagine-image-2.0"
-      };
-    }
-  });
-  ctx.tools.register({
-    name: "generate_video",
-    description: "Generate a short video through the company Grok Imagine door. Writes MP4 under artifacts/. Optional image_path is the first frame. Duration 1-15 seconds. Do not call xAI yourself.",
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        prompt: { type: "string", description: "Motion and camera. Keep one main axis." },
-        name: { type: "string", description: "Filename stem. ASCII only. Default grok-video." },
-        duration: { type: "integer", description: "Seconds, 1-15. Default 6." },
-        aspect_ratio: { type: "string", description: "Optional, e.g. 16:9." },
-        image_path: { type: "string", description: "Still image to animate. Workspace path." }
-      },
-      required: ["prompt"]
-    },
-    timeoutMs: 600000,
-    output: {
-      schema: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          paths: { type: "array", items: { type: "string" } },
-          model: { type: "string" }
-        },
-        required: ["paths"]
-      },
-      render(_args, value) {
-        return [{ type: "text", text: (value.paths || []).join("\n") }];
-      }
-    },
-    async execute(args) {
-      const body = {
-        prompt: String(args.prompt || ""),
-        duration: args.duration,
-        aspect_ratio: args.aspect_ratio
-      };
-      if (args.image_path) body.image = imagePayload(args.image_path);
-      const out = await postMedia(door, "/videos", body, 590000);
-      return {
-        paths: writeFiles(out.files, safeStem(args.name, "grok-video") + "-" + stamp()),
-        model: out.model || "grok-imagine-video-1.5"
       };
     }
   });

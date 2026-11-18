@@ -111,7 +111,8 @@
 - id: ui-sidebar-browser
   disabled: false
 # company-desktop-mac-v1
-# Mac desktop control: Peekaboo in <install>/peekaboo behind mcp-filter.cjs.
+# Mac desktop control: Peekaboo in <install>/peekaboo behind mcp-one.cjs, which shows the model
+# one tool (desktop: action + args) instead of Peekaboo's 24 (about 55 KB on every request).
 - insert:
     - id: mcp-mac
       name: '@deepseek-ai/dsh-mcp-client'
@@ -121,9 +122,13 @@
         transport: stdio
         command: !!js process.execPath
         args:
-          - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/peekaboo/mcp-filter.cjs')
+          - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/plugins/company-shell/lib/mcp-one.cjs')
+          - --name
+          - desktop
+          - --label
+          - Mac 桌面控制
           - --hide
-          - agent,analyze,browser
+          - agent,analyze,browser,capture
           - --
           - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/peekaboo/peekaboo')
           - mcp

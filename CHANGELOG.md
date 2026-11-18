@@ -4,6 +4,36 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.18
+
+**没绑 Grok 的站点也能生图、改图：走服务器的 GPT 通道；gpt-6 以后的模型能看图**
+- 员工端的 `generate_image` 原来只走 Grok Imagine，没绑 Grok 订阅的站点用不了。现在服务器没有 Grok 登录、但配了 OpenAI 通道（`OPENAI_API_KEY`，以及指向其他 OpenAI 兼容端点时的 `OPENAI_BASE_URL`）时，生图改走这条通道，模型由 `gateway.env` 的 `IMAGE_MODEL` 决定，默认 `gpt-image-2`。文生图发 JSON，改图（含局部改图）按 OpenAI 的 multipart 格式发原图。比例换成对应尺寸：横图 1536x1024、竖图 1024x1536，其余 1024x1024。绑了 Grok 的站点和原来一样。生视频仍然只走 Grok。
+- 网关原来只把 `gpt-5`、`gpt-4o` 一类标成「能看图」，`gpt-6.x` 被当成纯文字模型，员工发图片会被客户端直接拒绝。现在 `gpt-5` 及以后都算。其他模型实测能看图后，写进 `gateway.env` 的 `VISION_MODELS` 即可。
+- 修了装机卡死：`setup-server.ps1` 用 `net user` 建共享账号 `dshshare` 时，密码是 16 位，超过 14 位后 `net` 会停下来问 Y/N。后台无人值守装机没人回答，就一直卡在那里（一次现场装机卡了 20 分钟）。现在改用 `New-LocalUser` / `Set-LocalUser` 建账号，不会再卡；密码也不再出现在进程命令行里。
+- 修了打安装包失败（`site-emit-cs-failed`）：`server/pack-setup.ps1` 找 Python 时先找 `python3`，在没装 Store 版 Python 的 Windows 上，拿到的是系统自带的应用商店占位程序，它只会提示「Python was not found」。现在和其他脚本一样，跳过 `WindowsApps` 里的占位程序。
+- 修了全新装机最后一步必失败（`gui-prove-failed` / `zip-shell-missing-model-tab`）：`server/prove-gui.py` 检查客户端有没有「模型」设置页时，找的是旧写法 `label: "模型"`，2026.10 的客户端已经改成 `keep["模型"]`。因为这一步失败，后面的网关 TLS 切换和桌面客户端安装都没有执行。现在两种写法都认。
+- 修了全新装机后管理员初始密码丢失：登录服务第一次登录时把明文密码改存成哈希，走的是「改密码」那条路，顺手删掉了 `seed-admin.txt`。而第一次登录就是装机脚本自己的登录自检，所以初始密码还没给人看到就没了，装机结尾也不会再显示。现在只存成哈希不算改密码，`seed-admin.txt` 保留到管理员在设置里真正改密码为止。
+- 同一道 `prove-gui` 自检里，Mac 启动脚本那一项也是旧标准：只认「启动时跳过产品树校验」，可客户端补丁早就改成「后台校验」了（`mac-start-missing-skip`）。现在两种都认；只有在前台做全量校验时才判失败。
+- **修了网关走 TLS 后员工端「没有模型可选」、设置 → 模型一片空白**：员工端 `company-shell` 请求网关时用 `new URL("/v1/...", 网关地址)` 拼地址。网关切到 TLS 后，地址是 `https://<站点>:8443/gw`，这样拼会丢掉 `/gw`，请求落到下载页，返回的是 HTML，员工端解析失败后不报错，直接放弃。结果是登录时不同步模型列表，设置页也读不到订阅和 key 的状态。全新装机最后一步都会切到 TLS，所以每个新站点都会中。现在改成按文本拼接。这一条要发一次客户端更新（`publish-site-update.ps1 -BumpMark`）。证明：`scripts/prove-gw-tls.js` 新增 `GW_TLS_DESK_JOIN_OK`。
+- 设置 → 模型：OpenAI key 那一栏原来固定显示 `api.openai.com`，现在显示实际走的 `OPENAI_BASE_URL`。`gateway.env` 新增 `GPT_SUBSCRIPTION=1`，表示这条 OpenAI 通道其实是服务器上某个工具（如 CLIProxyAPI）代管并自动续期的 ChatGPT 订阅登录；设了以后「GPT 订阅」显示为已登录。
+- **GPT 模型改由管理员在「设置 → 模型 → GPT → 选择模型」里自己选**，跟 Grok 用同一个界面：勾选模型和档位，点「保存给全公司」。员工的模型菜单里只出现勾上的那些，下次登录时更新；管理员自己这台当场更新。选择存在服务器 `runtime\model-offer.json`，一直没选时，所有对话模型都列出。
+- 每个 GPT 模型能做什么，网关先实测一次，结果存在 `runtime\gpt-probe.json`，界面只显示测出来真有的：
+  - 思考档位：故意发一个不存在的档位，通道会在报错里列出它支持哪些；
+  - 加速：只有在要求优先档位、回复里也确实写着 priority 时才显示（ChatGPT 订阅经 CLIProxyAPI 会接受这个参数，但实际都走 default，所以不显示）；
+  - 识图：发一张小图，真的回答了才标「识图」。
+  通道答不出（过载、429、5xx）的模型不记结果，下次打开列表时再试；列出来但拒绝对话的模型不出现。证明：`scripts/prove-gpt-media.js`。
+- 侧栏左上角和会话首屏显示 TDH 自己的图标（来自 `server/tdharness.ico`，按遮罩画，深浅主题跟着界面颜色走）：侧栏收起时只有图标，展开时是图标加「TDHarness」。2026.10.11 源码进仓库时，去掉了原来写死的某一家公司的标志，此后左上角只剩文字。站点自己的品牌仍然只走站点补丁，不进仓库。
+- 新增站点品牌补丁 `server/site-patches/patch_site_brand.py`：发布时去读服务器上的 `D:\dsh\runtime\brand\`（也可以用环境变量 `TDH_SITE_BRAND` 指定目录），把 `wordmark.png`（侧栏展开时的字标）、`mark.png`（收起时和首屏的小标）、`label.txt`（品牌名）打进这个站点的客户端，有哪个换哪个；没有这个目录就保持 TDH 图标。品牌图只放在服务器上，不进仓库。证明：`scripts/prove-site-brand.py`（CI）。
+- **员工端工具瘦身**：内核每一轮都会把全部工具定义发给模型，原来一共 70 个、约 98KB，带着这么多工具时 GPT 首字慢、结束信号也慢（实测同一请求 4～17 秒，不带工具 3 秒）。
+  - **桌面控制只剩一个工具**：新增 `desk/plugins/company-shell/lib/mcp-one.cjs`（放在插件目录里，是因为客户端更新只会拷贝白名单目录里的文件，放在包根目录的新文件会被跳过），接在桌面控制服务前面，模型只看到一个 `desktop`（参数是动作 + 该动作的参数），说明里列出每个动作和它的参数名，调用时再转回原工具。Mac 的 Peekaboo 从 28 个、约 55KB 降到 1 个、5.4KB（用真机上的 Peekaboo 实测）；同时隐藏录屏 `capture`。Windows 的 Windows-MCP 原来 10 个，现在也只剩 1 个。证明：`scripts/prove-mcp-one.js`（CI）。
+  - **去掉只走 Grok 的工具**：`generate_video`（生视频）、`watch_video`（看视频）。生图 `generate_image` 保留，说明里不再写 Grok。
+  - **去掉电商**：工具 `shop_recipe`、`shop_write` 和 skill `company-shop`。
+- 对话框里的「文件」按钮去掉：它和直接把文件拖进对话框是同一件事。拖进来的图片照旧显示缩略图，其他文件放进工作区 `inbox/`，输入框里插入 `@inbox/文件名`。
+- GPT 模型的能力没测过时，员工登录拉模型列表就会触发网关在后台去测，不用等管理员打开「选择模型」；下一次拉列表时就带上测到的档位和识图。
+- 对话框里的「快速推理」开关对所有人关掉。它只给管理员显示，拨动后写的是员工电脑上的 `D:/dsh/shared/grok-fast.json`，网关和内核都不读这个文件：Grok 走不走优先档位由设置 → 模型 → Grok 里的「快速」决定，而且只对 Grok 有效。所以这个开关什么都没改，还会出现在 GPT 模型旁边，让人误会。
+- 生图和看图只改了服务器网关（`server/gw-media.js`、`server/gw-lite.js`），重启 `Autostart-Gateway` 生效；上面的 `/gw` 修复是员工端改动，要发一次客户端更新。
+- 证明：`scripts/prove-gpt-media.js`（CI）。用一个假的上游验证四件事：没有 Grok 时生图、改图都走 GPT 通道；用的是服务器的 key，不是员工令牌；`gpt-6`、`gpt-5` 和 `VISION_MODELS` 里的模型标成能看图，未知模型仍只收文字；生图模型不出现在对话模型列表里。
+
 ## 2026.11.10.2
 
 **员工在家也能用 TDH：客户端更新后自动加入公司的加密网络；新员工有「远程版」安装包**

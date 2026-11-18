@@ -84,7 +84,9 @@ window.__ModuleLoader__.load({
 		// chrome's label colour), the wordmark's width / height, and the name screen readers
 		// say. Without them the desk shows the product name as text. @@SITE_BRAND
 		const SITE_BRAND_WORDMARK = "";
-		const SITE_BRAND_MARK = "";
+		// The product mark (server/tdharness.ico as a mask: the square in ink, the letters cut out).
+		// A site's own brand still goes in through a site patch, never into this file.
+		const SITE_BRAND_MARK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAAGPklEQVR42u2dTWhcVRTHf+/NZGpjrdYP6idtYwqiwaihEhctbd341ZV1J4I7F4obBTcuggiCm4IuXBQ32oVKNwaErowNaGlBKYiITSklFGljWhqTJmlm5rm45yWH55uZ92bezJvOnD9cZubN3Hff/P/3nvt17r0eyeHLa1VetwLjwF7gWWAY2A4MAh69iQC4AVwGZoDTwDRwCliowVPL8ICC+jwGHJEHCCwQCBdHhJsQhSwyoq/ejwLfAGWVcBWoSKj2EeG1/ndZOBqtwWEqhLm+BEwAyyqhtT4jPIkga+rzsnBWinCZmvwhYCqisBFeP2iOpoTDVCL4ytbPWo5vuUTMqrrBT0r+08AVRb6R2lwIubsinNYVIfxiB3DJTE7mJumScBsrQtjULEm71nJ+e0rCtHC83kQtKEWqwIfAGxJhAENW8IXTXcLzj3It0MVhBFiRImMVbnsq5rJwPKJNUdhbO252v2P1wXFl+td7uWvSszOi2hsqwvWoNj9vAsXQJhnaPqBXFM7xZVTzULRIGNqGkONDwFZfhpR3iTK+8dORFlEgnI/7wD5RxcxPZ82QB+zzgT3GR27Y4wO7zf7nVg/s9oB/gS3GSS5Y9KSHZrk/p7rAKt8uaBIZTAATwGACmAAGE8AEMJgAJoDBBDABDCaACWDoAIpNxvsZuIDzngtamJSoANuAF9T1E8BVnNdeUCduCbgTeBA3v1pKkfYPwHWVRhF4NUG8Chv+Ux7Oz2c78Dwtzk+mDfszzAT3R+79cBP3uAd4Dfgl4fPfFXOP+QTxzsfEe6wVP6FmTdDdwCbgNsl5OgxIztJhIOZ3Ydz7Yu5dUE6shZi4Op2QvO+A54B3Egqm09iS0BwPyP/WcbflYYIWgNUUv6/U+e5a5HNZeehVE8QvKJMA8DlwEfi+TpxoGpUU1qLZuJkK8AywJH++qh5uAOcHf14REgAP4JaxltX1cDp0Z4KGwlO45a8VRcIKbvXJdXW/QHLmJPAB8Am3iI9KluFrJW4o8Psp4j8eaaENCslxv10S07Mz4m0Q+t//USNedKHEZimJjZ7tYsSlH9wa6Y7XAfWwFhE2LPKtZJCVGt8NAoeB39lwr/FVvI/6sR/gJbzW6j01bge+UIKHnh6TykRZR6zNOAg8qcj3gEXgpwwaCmRQkvuiJ7xflZiw1JxO0ZdI0vzuip5wt2Ik5tpfDeoXgJvA68AdNTbZCFt4c1luwtGLAtwbQ+61hObn2K00FtSt2BRzbTlFXC9Bi2zVBEiHpD3VVSsBrSOOxM0NmrfhaOhbMq5TjikJYR3wN3A0S3/aXhPgn5i+w9YE8UrAZyQbA/uy1fGfXm6G/hlzbThhb3s+pcAmAPETRURMxDjp9kjqqMXoJRM0A5xRdj2QIYqDNhRBJiO2jfC22GZPLQV9pR29134TwMPNntXCb7g52ROR5bYebvcXenFSvpNYAQ6wMSHjqT145nBj9HrLnZIMLbwHPGECtI4q8GuDUuyp9zeBl4BP6WG3lEZmrahaFV5KU1dUk/GVBi2USkyb/F3cJqpp0iikMIdF9UyVZrakbLcAy9Kb1GPniyniX40httKAlIeAF4X8JGZnPpLGYsJRzjXV266kGOzrqAAvA1+xMTC2iptUT4qjCR2zitLCeQR4NOUzHuP/jllJWks7cDvjRh2zWmph2Dpha4aaAAYTwAQwmAAmgMEEMAEMJoAJYDABTACDCdA/+xgb8kHg49ZZGfLBko+b2MZKQi5uNnM+cM4EyE2Acz7Om8yQD874wMnISnMDHXE2C4CTPu4w4gtq5bqBtvs5ecL5KR/n8z5p9UDH7f+kOoXbjrEix2OsPOAsbncRP8vVHwbiPPl84fpsWO/aUYY5HmVYUMdXXcZ5iB2QHxYsw2aKsvD7MfCt8ua242zJ8ThbO9C5Sw50tiPNu+BI86gIY7gtwcIbWcWcrsINyZ8VLlPNv4QV8BAwFVOcLDQ2OYFwN5RiGWysCCVgArfwIrAS0TDHB8LVhNpMtpDFlOUobnFCOZJwuNKk2meEx/3vsnA0muW0rxdRcAy3BmvGcv56mBFOxiIWxGt1M7y40lBVm2CMA3txWzcO45brDPbw0HYA3JBO6wxuO7RpGVFeqMFTXfwHCT8zDNoIFSMAAAAASUVORK5CYII=";
 		const SITE_BRAND_RATIO = 0;
 		const SITE_BRAND_LABEL = "TDHarness";
 
@@ -4376,6 +4378,32 @@ window.__ModuleLoader__.load({
 			const compact = props.wide === false;
 			const src = compact ? SITE_BRAND_MARK : SITE_BRAND_WORDMARK;
 			const h = compact ? (props.size || 24) : (props.size >= 30 ? 36 : (props.size || 20));
+			// Wide with only a mark: the mark, then the name in the chrome's ink.
+			if (!compact && !SITE_BRAND_WORDMARK && SITE_BRAND_MARK) {
+				const mh = props.size >= 30 ? 30 : (props.size || 20);
+				return React.createElement("span", {
+					className: props.className,
+					"data-company-shell": "brand-text",
+					role: "img",
+					"aria-label": SITE_BRAND_LABEL,
+					style: { display: "inline-flex", alignItems: "center", gap: Math.round(mh * 0.4) + "px", height: h + "px" }
+				},
+					React.createElement("span", {
+						"data-company-shell": "brand-mark",
+						"aria-hidden": "true",
+						style: {
+							width: mh + "px", height: mh + "px",
+							WebkitMaskImage: "url(" + SITE_BRAND_MARK + ")", maskImage: "url(" + SITE_BRAND_MARK + ")",
+							WebkitMaskRepeat: "no-repeat", maskRepeat: "no-repeat",
+							WebkitMaskPosition: "center", maskPosition: "center",
+							WebkitMaskSize: "contain", maskSize: "contain"
+						}
+					}),
+					React.createElement("span", {
+						style: { fontSize: Math.round(mh * 0.72) + "px", fontWeight: 700, letterSpacing: "0.02em", color: "var(--dsw-alias-label-primary)", whiteSpace: "nowrap" }
+					}, SITE_BRAND_LABEL)
+				);
+			}
 			if (!src) {
 				return React.createElement("span", {
 					className: props.className,
@@ -5167,32 +5195,34 @@ window.__ModuleLoader__.load({
 				if (mode === "model") loadLive(id);
 			}
 			function loadLive(id) {
-				if (id !== "grok") {
+				// GPT: the company's list, kept by the gateway (it tries each model once to learn
+				// its levels, pictures and tier). Grok: this desk's own list.
+				if (id !== "grok" && id !== "gpt") {
 					noteHook[1]("这个订阅还没接通，识别不到可调用模型。");
 					return;
 				}
-				postChannels({ action: "list-models", vendor: "grok" }).then(function (out) {
+				postChannels({ action: "list-models", vendor: id }).then(function (out) {
 					const j = out.j || {};
-					loadedHook[1](function (prev) { return Object.assign({}, prev, { grok: true }); });
+					loadedHook[1](function (prev) { const n = Object.assign({}, prev); n[id] = true; return n; });
 					if (!out.ok) { noteHook[1](channelsErr(out)); return; }
 					const cat = {};
 					for (const k in catHook[0]) cat[k] = catHook[0][k];
-					cat.grok = Array.isArray(j.models) ? j.models : [];
+					cat[id] = Array.isArray(j.models) ? j.models : [];
 					catHook[1](cat);
 					// Tick what this desk already lists, so the page shows the current
 					// choice instead of an empty form that looks like nothing was saved.
-					postChannels({ action: "picked-models", vendor: "grok" }).then(function (got) {
+					postChannels({ action: "picked-models", vendor: id }).then(function (got) {
 						const picked = got.ok && got.j && Array.isArray(got.j.models) ? got.j.models : [];
 						if (!picked.length) return;
 						const bag = {};
 						picked.forEach(function (m) {
-							const known = cat.grok.find(function (c) { return c.id === m.id; });
+							const known = cat[id].find(function (c) { return c.id === m.id; });
 							if (!known) return;
 							const efforts = {};
 							(m.efforts || []).forEach(function (e) { efforts[e] = true; });
 							bag[m.id] = { on: true, fast: !!known.fastOn, efforts: efforts, fastEffort: "" };
 						});
-						putBag("grok", bag);
+						putBag(id, bag);
 					});
 				});
 			}
@@ -5257,6 +5287,10 @@ window.__ModuleLoader__.load({
 				postChannels({ action: "apply-models", vendor: vendor, models: models }).then(function (out) {
 					if (!out.ok) { applyNote[1](channelsErr(out)); return; }
 					const fastNote = out.j && out.j.fast > 0 ? "其中 " + out.j.fast + " 个走加速通道。" : (out.j && out.j.fast < 0 ? "加速没记上，服务器网关需要更新。" : "");
+					if (out.j && out.j.company) {
+						applyNote[1]("已保存 " + models.length + " 个，全公司生效：" + (out.j.live ? "你这台现在就能选，" : "你这台关掉再打开就能选，") + "其他人下次登录时更新。");
+						return;
+					}
 					applyNote[1]((out.j && out.j.live
 						? "已应用 " + models.length + " 个，对话框里现在就能选。"
 						: "已写入 " + models.length + " 个。关掉再打开，对话框里就是勾上的。") + fastNote);
@@ -5266,7 +5300,9 @@ window.__ModuleLoader__.load({
 				const bag = bagOf(vendor);
 				if (!models || !models.length) {
 					return el("div", { className: "cs-vendor-msg" },
-						vendor === "grok" && !loadedHook[0].grok ? "正在向订阅要模型列表…" : "这个订阅还没接通，没有可识别的模型。");
+						(vendor === "grok" || vendor === "gpt") && !loadedHook[0][vendor]
+							? (vendor === "gpt" ? "正在向订阅要模型列表，第一次会逐个试一下每个模型能做什么，约一分钟…" : "正在向订阅要模型列表…")
+							: "这个订阅还没接通，没有可识别的模型。");
 				}
 				return el("div", { className: "cs-mlist" }, models.map(function (model) {
 					const row = bag[model.id] || {};
@@ -5312,23 +5348,26 @@ window.__ModuleLoader__.load({
 				const open = openHook[0] === row.id;
 				const mode = modeHook[0][row.id] || "sub";
 				const st = stateHook[0][row.id] || {};
-				const count = row.id === "grok" ? pickedCount("grok") : 0;
+				const picks = row.id === "grok" || row.id === "gpt";
+				const count = picks ? pickedCount(row.id) : 0;
 				const body = !open ? null : el("div", { className: "cs-vendor-body" },
 					el("div", { className: "cs-vendor-bar" },
 						el("div", { className: "cs-seg", role: "tablist" },
 							el("button", { type: "button", className: mode === "sub" ? "is-on" : "", onClick: function () { setMode(row.id, "sub"); } }, "登录订阅"),
 							el("button", { type: "button", className: mode === "model" ? "is-on" : "", onClick: function () { setMode(row.id, "model"); } }, "选择模型")
 						),
-						mode === "model" && row.id === "grok" ? el("span", { className: "cs-set-gx" }, "已选 " + count + " 个") : null
+						mode === "model" && picks ? el("span", { className: "cs-set-gx" }, "已选 " + count + " 个") : null
 					),
 					mode === "sub"
 						? el("div", { className: "cs-vendor-msg" }, st.bound
 							? "订阅已登录，由服务器网关代管登录态，过期会自动续。"
 							: "订阅登录要跳到对方账号页，这台还没有这个登录插件。")
 						: catalogRows(row.id, catHook[0][row.id] || []),
-					mode === "model" && row.id === "grok" ? el("div", { className: "cs-set-foot" },
-						el("p", { className: "cs-set-note" }, applyNote[0] || "勾选的模型和档位会出现在对话框的模型菜单里。"),
-						btn("应用到对话框", { tone: "primary", onClick: function () { applyVendor("grok"); } })
+					mode === "model" && picks ? el("div", { className: "cs-set-foot" },
+						el("p", { className: "cs-set-note" }, applyNote[0] || (row.id === "gpt"
+							? "勾选的模型和档位给全公司用，员工的模型菜单里只有这些。"
+							: "勾选的模型和档位会出现在对话框的模型菜单里。")),
+						btn(row.id === "gpt" ? "保存给全公司" : "应用到对话框", { tone: "primary", onClick: function () { applyVendor(row.id); } })
 					) : null
 				);
 				return el("div", { className: "cs-vendor" + (open ? " is-open" : ""), key: row.id },
@@ -6269,7 +6308,7 @@ window.__ModuleLoader__.load({
 			return Promise.all(jobs).then(function (parts) {
 				const body = parts.filter(Boolean).join(" ");
 				if (!body) {
-					window.alert("文件没写进工作区。点输入框旁的「文件」再选一次。");
+					window.alert("文件没写进工作区。再拖一次试试。");
 					return 0;
 				}
 				if (!deskInsertComposer(body, scope.sessionId)) {
@@ -6349,7 +6388,7 @@ window.__ModuleLoader__.load({
 				: Promise.resolve(fallback);
 			return ready.then(function (files) {
 				if (!files || !files.length) {
-					window.alert("没拿到文件。请点输入框旁的「文件」选择。");
+					window.alert("没拿到文件。从访达里直接拖文件进来再试一次。");
 					return 0;
 				}
 				return landDeskFiles(files);
@@ -6440,6 +6479,9 @@ window.__ModuleLoader__.load({
 		function DeskFileButton(props) {
 			const sessionId = props && props.sessionId;
 			composerSessionId = sessionId ? String(sessionId) : "";
+			// The 文件 button is gone (2026-11-18): dragging a file into the conversation does the
+			// same. This slot stays so a drop knows which conversation it lands in.
+			return null;
 			const inputRef = React.useRef(null);
 			const busyHook = React.useState(false);
 			return React.createElement("span", { className: "cs-desk-file", title: "添加文件，可多选" },

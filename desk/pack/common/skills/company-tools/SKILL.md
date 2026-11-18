@@ -17,7 +17,7 @@ disable-model-invocation: true
 - 查网：`web_search` / `web_fetch`，走公司 8450。`web_fetch` 已开。`company-docs` 拿整页走它。站点分路见 `company-web`。不要 Playwright。
 - 开网页 / 点选：OpenCLI。`ego_*` / `browser_*` 已换掉。没有 `opencli` 就代装（见 `company-web`），不要找旧点选手。
 - 公司知识：`company_knowledge`。`route=status` 看 `account` / `role` / `dept`。不要 curl 8443，不要自己报账号。
-- 看图：`read_image`。生图 / 生视频：`generate_image` / `generate_video`，走 8450。文件写到 `artifacts/`。盘快满时这两项会先失败，先腾本地盘。
+- 看图：`read_image`。生图：`generate_image`，走公司网关。文件写到 `artifacts/`。盘快满时会先失败，先腾本地盘。
 - 产物页：`artifact`。说明见 `writing-artifacts`。
 - 并行 / 长任务：官方 `subagent` / `subagent_fork` / `workflow` / `ralph` / `goal`。问人用 `ask_user_question`。禁止的是 `subagent-codex` 预设，不是委派本身。
 - 工单：没有 `mailbox` 工具。等人从侧栏「任务」下达，或自己点「+」给自己开卡。对话「做完了」不算。

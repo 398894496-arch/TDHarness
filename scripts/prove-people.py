@@ -61,6 +61,7 @@ def main() -> None:
         {"login": "tdh", "role": "admin", "dept": "company", "status": "active", "pid": "p-seed"},
     ]}), encoding="utf-8")
     (runtime / "caddy" / "PASSWORDS.txt").write_text("tdh:seed-pass-123\n", encoding="utf-8")
+    (runtime / "caddy" / "seed-admin.txt").write_text("tdh seed-pass-123\n", encoding="utf-8")
     # Two model calls by tdh, one by an unknown caller, one too old to count.
     usage = runtime / "usage"
     usage.mkdir()
@@ -87,6 +88,9 @@ def main() -> None:
 
         code, hit = call(port, "LOGIN", {"username": "tdh", "password": "seed-pass-123"})
         check(code == 200 and hit.get("ok"), "seed login")
+        # Storing the seed as a hash at its first sign-in is not a password change: setup's own
+        # login proof is that first sign-in, and the admin still needs the password it shows.
+        check((runtime / "caddy" / "seed-admin.txt").is_file(), "seed-admin.txt kept after the first sign-in")
         admin = hit["gw_token"]
 
         # Usage: the last 7 days by person and by model, older lines left out.

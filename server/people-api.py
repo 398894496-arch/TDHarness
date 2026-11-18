@@ -207,13 +207,14 @@ def verify_password(stored: str | None, pw: str) -> bool:
     return hmac.compare_digest(stored.encode("utf-8"), pw.encode("utf-8"))
 
 
-def set_password(login: str, pw: str) -> None:
-    """Replace one person's line in PASSWORDS.txt (or add it) with a hash; everything else stays."""
+def set_password(login: str, pw: str, changed: bool = True) -> None:
+    """Replace one person's line in PASSWORDS.txt (or add it) with a hash; everything else stays.
+    changed=False: the same password, only stored as a hash now (first sign-in on a plain line)."""
     drop_password(login)
     PASS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with PASS_FILE.open("a", encoding="utf-8") as fh:
         fh.write("%s:%s\n" % (login, hash_password(pw)))
-    if login == SEED_ADMIN:
+    if login == SEED_ADMIN and changed:
         # The install-time password shown by setup is no longer valid.
         try:
             SEED_FILE.unlink()
@@ -704,7 +705,9 @@ def check_login(username: str, password: str) -> dict | None:
     if not row or row.get("status") != "active":
         return None
     if not is_hashed(stored or ""):
-        set_password(login, password)
+        # Same password, now hashed. Not a change: setup's own login proof is the seed admin's
+        # first sign-in, and treating it as one deleted seed-admin.txt before anyone saw it.
+        set_password(login, password, changed=False)
     pid = str(row.get("pid") or ("p-" + login))
     ensure_personal_dir(row)
     # Own account first; the shared one only while the own one cannot be made.

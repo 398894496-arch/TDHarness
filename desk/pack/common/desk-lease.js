@@ -1417,13 +1417,14 @@ function pinClickOneHand(overlay) {
 
 function pinRoleUi(overlay, role) {
   let t = readOverlay(overlay);
-  const admin = role === 'admin';
+  void role;
   const sub =
     '- id: llm-subscriptions\n' +
     '  disabled: true\n';
-  const fast = admin
-    ? '- id: grok-fast-mode\n'
-    : '- id: grok-fast-mode\n  disabled: true\n';
+  // The composer's 快速推理 switch is off for everyone: it wrote D:/dsh/shared/grok-fast.json on
+  // the desk, which nothing reads (the gateway's priority tier follows Settings > 模型 > Grok, and
+  // only for Grok), so admins saw a switch that changed nothing, beside GPT models too.
+  const fast = '- id: grok-fast-mode\n  disabled: true\n';
   if (!/(^|\n)- id: llm-subscriptions\n/.test(t)) {
     t = t.replace(/(^|\n)- id: agent-presets\n/, '$1' + sub + '- id: agent-presets\n');
   } else {
@@ -1435,14 +1436,9 @@ function pinRoleUi(overlay, role) {
     t = t.replace(/(^|\n)- id: grok-fast-mode\n(?:  .*\n)*/m, '$1' + fast);
   }
   if (!/- id: llm-subscriptions\n  disabled: true/.test(t)) throw new Error('overlay-sub-pin');
-  if (admin) {
-    if (!/- id: grok-fast-mode\n/.test(t)) throw new Error('overlay-fast-pin-admin');
-    if (/- id: grok-fast-mode\n  disabled: true/.test(t)) throw new Error('overlay-fast-still-off');
-  } else if (!/- id: grok-fast-mode\n  disabled: true/.test(t)) {
-    throw new Error('overlay-fast-pin-emp');
-  }
+  if (!/- id: grok-fast-mode\n  disabled: true/.test(t)) throw new Error('overlay-fast-pin');
   fs.writeFileSync(overlay, t);
-  process.stdout.write('ROLE_UI_FAST=' + (admin ? '1' : '0') + '\n');
+  process.stdout.write('ROLE_UI_FAST=0\n');
   process.stdout.write('ROLE_UI_SUB=0\n');
 }
 
@@ -2055,8 +2051,8 @@ function cmdSelftest() {
   fs.writeFileSync(ovP, '- id: agent-presets\n  config:\n    default: standard\n    includeUserRoot: false\n- id: llm-subscriptions\n  disabled: true\n- id: grok-fast-mode\n  disabled: true\n');
   pinRoleUi(ovP, 'admin');
   const ovFastAdmin = fs.readFileSync(ovP, 'utf8');
-  if (!/- id: grok-fast-mode\n/.test(ovFastAdmin)) throw new Error('selftest-fast-admin-missing');
-  if (/- id: grok-fast-mode\n  disabled: true/.test(ovFastAdmin)) throw new Error('selftest-fast-admin-off');
+  // The 快速推理 switch did nothing for anyone, so admins get it off too.
+  if (!/- id: grok-fast-mode\n  disabled: true/.test(ovFastAdmin)) throw new Error('selftest-fast-admin-still-on');
   if (!/- id: llm-subscriptions\n  disabled: true/.test(ovFastAdmin)) throw new Error('selftest-sub-still-on');
   pinRoleUi(ovP, 'employee');
   const ovFastEmp = fs.readFileSync(ovP, 'utf8');

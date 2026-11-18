@@ -147,7 +147,9 @@ def main() -> None:
                 break
     if '"login": "tdh"' not in shell_js:
         raise SystemExit("zip-shell-missing-tdh")
-    if 'label: "模型"' not in shell_js:
+    # The admin's 模型 settings page: the shell keeps it by its heading (keep["模型"]) since the
+    # 2026.10 client; older shells named it in a tab list (label: "模型").
+    if 'keep["模型"]' not in shell_js and 'label: "模型"' not in shell_js:
         raise SystemExit("zip-shell-missing-model-tab")
     if office in shell_js:
         raise SystemExit("zip-shell-still-office")
@@ -166,9 +168,12 @@ def main() -> None:
             names = [n.replace("\\", "/") for n in zin.namelist()]
             start_name = "CompanyDesk/start.command" if "CompanyDesk/start.command" in names else "start.command"
             start = zin.read(start_name)
-        if b"tree-check skip-on-open" not in start:
+        # Opening must not wait on hashing the product tree: either skipped (older packs) or
+        # run in the background with the result in tree-check.last.txt (patch_client_scripts).
+        background = b"tree-check background" in start
+        if b"tree-check skip-on-open" not in start and not background:
             raise SystemExit("mac-start-missing-skip")
-        if b'tree-check.js" --root' in start:
+        if b'tree-check.js" --root' in start and not background:
             raise SystemExit("mac-start-still-hashes-tree")
         print("MAC_OPEN_SKIP=1")
 

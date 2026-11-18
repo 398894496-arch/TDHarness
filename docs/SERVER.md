@@ -52,6 +52,8 @@ The Grok OAuth file comes from signing in to xAI's Grok CLI login with a tool su
 
 ChatGPT Plus/Pro and Claude Pro/Max are personal plans and are not relayed to a team here. Use OpenAI and Anthropic API keys, which are meant for teams and programs.
 
+**Pictures.** The desk's `generate_image` goes to `/images` on the gateway. With a Grok login it uses Grok Imagine; without one it uses the OpenAI route (`OPENAI_API_KEY`, `OPENAI_BASE_URL`) with `IMAGE_MODEL` (default `gpt-image-2`): text to image as JSON, edits as multipart. Video stays Grok only. A model is offered as taking pictures when its id starts with `grok-`, `claude-`, `gpt-4o`, `gpt-4.1`, `gpt-5` or later, `o3`, `o4`, `glm-4v` or is a kimi vision model; add other ids the site has checked to `VISION_MODELS` in `gateway.env`. Without that mark the desk refuses a message that carries a picture. `node scripts/prove-gpt-media.js` proves both against a stand-in vendor (`GPT_MEDIA_PROVE_OK=1`).
+
 Every desk lists exactly the models this server can reach (fetched from `/v1/company-models` at login), so the picker never offers one the gateway would refuse. New sessions start on `DEFAULT_MODEL` / `DEFAULT_EFFORT` from `gateway.env`; without it, on the first available model (subscription first). People can still switch per session.
 
 ### Who the gateway answers

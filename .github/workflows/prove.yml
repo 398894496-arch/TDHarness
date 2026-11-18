@@ -64,6 +64,12 @@ jobs:
         run: node scripts/prove-gw-auth.js
       - name: Prove the TLS gateway switch and the /fetch guard
         run: node scripts/prove-gw-tls.js
+      - name: Prove pictures go to the GPT route without a Grok login, and gpt-6 takes pictures
+        run: node scripts/prove-gpt-media.js
+      - name: Prove desktop control shows the model one tool (mcp-one.cjs)
+        run: node scripts/prove-mcp-one.js
+      - name: Prove a site's brand comes from the server only (patch_site_brand.py)
+        run: python scripts/prove-site-brand.py
       - name: Prove the company-share rights (throwaway accounts; fails if the share opens again)
         if: runner.os == 'Windows'
         shell: powershell

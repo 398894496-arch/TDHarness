@@ -364,8 +364,16 @@ function writeGrokModelsFile(models) {
 	return { ok: true, written: 1, count: models.length, live: false };
 }
 
+// The gateway address plus a path. Joined as text: with the TLS gateway gwBase() is
+// https://<site>:8443/gw, and new URL("/v1/...", base) drops "/gw", so every call reached the
+// download page instead (2026-11-18: no models on a fresh site, 设置 → 模型 empty).
+export function gwUrl(base, pathName) {
+	const p = String(pathName || "");
+	return new URL(String(base || "").replace(/\/+$/, "") + (p.charAt(0) === "/" ? p : "/" + p));
+}
+
 function proxyGw(pathName, method, body) {
-	const u = new URL(pathName, gwBase() + "/");
+	const u = gwUrl(gwBase(), pathName);
 	const tok = gwToken();
 	const lib = u.protocol === "http:" ? http : https;
 	const headers = { Accept: "application/json" };
@@ -1728,7 +1736,6 @@ const AGENTS_TEACH_SKILLS = new Set([
 	"company-dept",
 	"company-handoff",
 	"company-ticket",
-	"company-shop",
 ]);
 
 /** This-Mac video lane. Other skills stay retired. */
@@ -2101,14 +2108,13 @@ export function apply(ctx) {
 	registerPriorWorkTool(ctx);
 	registerMemoryWriteTool(ctx);
 	registerOpencliTool(ctx);
-	registerWatchVideoTool(ctx);
+	// watch_video (Grok only) and the shop tools (shop_recipe, shop_write) are not registered
+	// (2026-11-18): every tool is sent with every request, and these were dead weight.
 	registerTaskCardTool(ctx);
 	addTaskCardSection(ctx);
 	addKouboSection(ctx);
 	addWebSearchTipSection(ctx);
 	addOpencliSection(ctx);
-	registerShopRecipeTool(ctx);
-	registerShopWriteTool(ctx);
 	const web = typeof ctx.get === "function" ? ctx.get("webServer") : null;
 	if (web == null || typeof web.register !== "function") return;
 	ctx.effect(() =>
@@ -2251,6 +2257,27 @@ export function apply(ctx) {
 					}
 				}
 				const out = await proxyGw("/channels", method, body);
+				// GPT's list is the company's, kept by the gateway. Saved: this desk takes it now
+				// instead of at its next sign-in.
+				if (method === "POST" && out.status === 200) {
+					let ask = null;
+					try { ask = JSON.parse(body.toString("utf8") || "{}"); } catch { ask = null; }
+					if (ask && ask.action === "apply-models" && String(ask.vendor || "").toLowerCase() === "gpt") {
+						try {
+							const cm = await proxyGw("/v1/company-models", "GET", Buffer.alloc(0));
+							const j = cm.status === 200 ? JSON.parse(cm.body.toString("utf8")) : null;
+							const models = cleanModelPicks((j && Array.isArray(j.models) ? j.models : []).map((m) => ({
+								id: m && m.id, efforts: m && m.efforts, image: !!(m && m.image), context: m && m.context, fast: false,
+							})));
+							if (models.length) {
+								const done = await writeGrokModels(ctx, models);
+								const told = JSON.parse(out.body.toString("utf8"));
+								told.live = !!(done && done.live);
+								out.body = Buffer.from(JSON.stringify(told));
+							}
+						} catch { /* the desk takes it at its next sign-in */ }
+					}
+				}
 				res.writeHead(out.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
 				res.end(out.body);
 			},

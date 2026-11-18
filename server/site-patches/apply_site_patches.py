@@ -59,6 +59,7 @@ class Patcher:
         self.kbf = load(pdir / "patch_kb_frame.py")
         self.gtls = load(pdir / "patch_gw_tls.py")
         self.kwatch = load(pdir / "patch_kernel_watch.py")
+        self.brand = load(pdir / "patch_site_brand.py")
         # This server's Caddy root (export-ca.ps1). Given: desks reach the gateway over
         # TLS on the login port and trust this root. Not given: plain 8450 as before.
         self.ca = Path(ca_path).read_bytes() if ca_path else None
@@ -119,6 +120,10 @@ class Patcher:
             data, how3 = text_patch(self.kbn.patch, data)
             if str(how3).startswith("patched"):
                 how = ("patched+" if str(how).startswith("patched") else "") + "kb-notice"
+            # This site's own brand, from the server only (runtime\brand); none: the TDH mark.
+            data, how4 = text_patch(self.brand.patch, data)
+            if str(how4).startswith("patched"):
+                how = ("patched+" if str(how).startswith("patched") else "") + "site-brand"
             return data, how
         if rel.endswith("company-grok-media/lib/index.js"):
             data, how = text_patch(self.media.patch, data)

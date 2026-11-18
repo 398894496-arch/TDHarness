@@ -112,7 +112,8 @@
   disabled: false
 # company-desktop-mcp-v1
 # Windows desktop control (Windows-MCP) shipped in <install>/windows-mcp.
-# Registry and PowerShell tools stay off: the desk has its own shell.
+# Registry and PowerShell tools stay off: the desk has its own shell. Behind mcp-one.cjs the
+# model sees one tool (desktop: action + args) instead of ten.
 - insert:
     - id: mcp-windows
       name: '@deepseek-ai/dsh-mcp-client'
@@ -120,8 +121,20 @@
       config:
         serverName: windows
         transport: stdio
-        command: !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/windows-mcp/python.exe')
-        args: [-m, windows_mcp, serve, --tools, 'App,Snapshot,Screenshot,Click,Type,Scroll,Move,Shortcut,Wait,WaitFor']
+        command: !!js process.execPath
+        args:
+          - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/plugins/company-shell/lib/mcp-one.cjs')
+          - --name
+          - desktop
+          - --label
+          - Windows 桌面控制
+          - --
+          - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/windows-mcp/python.exe')
+          - -m
+          - windows_mcp
+          - serve
+          - --tools
+          - App,Snapshot,Screenshot,Click,Type,Scroll,Move,Shortcut,Wait,WaitFor
         env:
           ANONYMIZED_TELEMETRY: "false"
           WINDOWS_MCP_DISABLE_FLASH: "1"

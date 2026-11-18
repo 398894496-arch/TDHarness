@@ -21,9 +21,10 @@ if (-not (Test-Path -LiteralPath $Ico)) { throw 'ico-missing' }
 if (-not (Test-Path -LiteralPath $SiteYml)) { throw 'site-yml-missing' }
 
 $py = $null
+# Skip the Microsoft Store stub (WindowsApps\python3.exe): it only prints "Python was not found".
 foreach ($n in 'python3', 'python', 'py') {
   $c = Get-Command $n -ErrorAction SilentlyContinue
-  if ($c) { $py = $c.Source; break }
+  if ($c -and $c.Source -and ($c.Source -notmatch 'WindowsApps')) { $py = $c.Source; break }
 }
 if (-not $py) { throw 'python-missing' }
 

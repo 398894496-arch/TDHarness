@@ -56,13 +56,13 @@ def patch(t: str) -> tuple[str, str]:
              "    async execute(args, exec) {\n      const body = {\n        prompt: String(args.prompt || \"\"),\n        n: args.n,", "exec-sig")
     old_ret = """      const out = await postMedia(door, "/images", body, 170000);
       return {
-        paths: writeFiles(out.files, safeStem(args.name, "grok-image") + "-" + stamp()),
+        paths: writeFiles(out.files, safeStem(args.name, "image") + "-" + stamp()),
         model: out.model || "grok-imagine-image-2.0"
       };
 """
     new_ret = """      const out = await postMedia(door, "/images", body, 170000);
       const value = {
-        paths: writeFiles(out.files, safeStem(args.name, "grok-image") + "-" + stamp()),
+        paths: writeFiles(out.files, safeStem(args.name, "image") + "-" + stamp()),
         model: out.model || "grok-imagine-image-2.0"
       };
       await stageImageContent(ctx, exec, out.files, value);
