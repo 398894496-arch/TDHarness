@@ -131,6 +131,16 @@ async function main() {
     assert.match(text, /name="image"; filename="image\.png"/);
     assert.ok(ed.raw.indexOf(PNG) >= 0, 'the picture travels as bytes');
 
+    // Settings > 模型: the key row names the route really used; the GPT subscription card stays
+    // unbound until the site says the route is a subscription login (GPT_SUBSCRIPTION=1).
+    r = await call(port, 'GET', '/channels', token);
+    assert.equal(r.status, 200, JSON.stringify(r.obj));
+    assert.equal(r.obj.models.find((m) => m.id === 'gpt').up, base);
+    assert.equal(r.obj.subscriptions.find((m) => m.id === 'gpt').bound, false);
+    fs.appendFileSync(path.join(root, 'gateway.env'), 'GPT_SUBSCRIPTION=1\n');
+    r = await call(port, 'GET', '/channels', token);
+    assert.equal(r.obj.subscriptions.find((m) => m.id === 'gpt').bound, true, 'GPT_SUBSCRIPTION=1 shows the subscription signed in');
+
     // No token, no picture.
     r = await call(port, 'POST', '/images', 'dsh_wrong', { prompt: 'a cat' });
     assert.equal(r.status, 401);

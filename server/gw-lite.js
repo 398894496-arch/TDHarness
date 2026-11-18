@@ -834,7 +834,7 @@ function subOf(id, label, extras, hint) {
 function channelSnapshot(env) {
   const models = [
     { id: 'deepseek', kind: 'key', label: 'DeepSeek', bound: boundEnv(env, 'DEEPSEEK_API_KEY'), up: 'https://api.deepseek.com' },
-    { id: 'gpt', kind: 'key', label: 'OpenAI', bound: boundEnv(env, 'OPENAI_API_KEY'), up: 'https://api.openai.com' },
+    { id: 'gpt', kind: 'key', label: 'OpenAI', bound: boundEnv(env, 'OPENAI_API_KEY'), up: String(env.OPENAI_BASE_URL || '').trim() || 'https://api.openai.com' },
     { id: 'opus', kind: 'key', label: 'Anthropic', bound: boundEnv(env, 'ANTHROPIC_API_KEY'), up: 'https://api.anthropic.com' }
   ];
   const extras = loadChannels();
@@ -859,7 +859,15 @@ function channelSnapshot(env) {
       subOf('grok', 'Grok', extras, ''),
       subOf('gpt', 'GPT', extras, 'sub-use-key'),
       subOf('claude', 'Claude', extras, 'sub-use-key')
-    ].map((row) => row.id === 'grok' ? Object.assign({}, row, { bound: xaiBound() }) : row),
+    ].map((row) => {
+      if (row.id === 'grok') return Object.assign({}, row, { bound: xaiBound() });
+      // GPT_SUBSCRIPTION=1: the OpenAI route (OPENAI_BASE_URL) is a ChatGPT subscription login held
+      // by a tool on this server that renews it itself (e.g. CLIProxyAPI), so the 订阅 card says so.
+      if (row.id === 'gpt' && String(env.GPT_SUBSCRIPTION || '').trim() === '1' && boundEnv(env, 'OPENAI_API_KEY') && String(env.OPENAI_BASE_URL || '').trim()) {
+        return Object.assign({}, row, { bound: true, hint: 'via-openai-route' });
+      }
+      return row;
+    }),
     models
   };
 }

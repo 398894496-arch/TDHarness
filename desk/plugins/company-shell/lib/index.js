@@ -364,8 +364,16 @@ function writeGrokModelsFile(models) {
 	return { ok: true, written: 1, count: models.length, live: false };
 }
 
+// The gateway address plus a path. Joined as text: with the TLS gateway gwBase() is
+// https://<site>:8443/gw, and new URL("/v1/...", base) drops "/gw", so every call reached the
+// download page instead (2026-11-18: no models on a fresh site, 设置 → 模型 empty).
+export function gwUrl(base, pathName) {
+	const p = String(pathName || "");
+	return new URL(String(base || "").replace(/\/+$/, "") + (p.charAt(0) === "/" ? p : "/" + p));
+}
+
 function proxyGw(pathName, method, body) {
-	const u = new URL(pathName, gwBase() + "/");
+	const u = gwUrl(gwBase(), pathName);
 	const tok = gwToken();
 	const lib = u.protocol === "http:" ? http : https;
 	const headers = { Accept: "application/json" };
