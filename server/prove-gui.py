@@ -147,7 +147,9 @@ def main() -> None:
                 break
     if '"login": "tdh"' not in shell_js:
         raise SystemExit("zip-shell-missing-tdh")
-    if 'label: "模型"' not in shell_js:
+    # The admin's 模型 settings page: the shell keeps it by its heading (keep["模型"]) since the
+    # 2026.10 client; older shells named it in a tab list (label: "模型").
+    if 'keep["模型"]' not in shell_js and 'label: "模型"' not in shell_js:
         raise SystemExit("zip-shell-missing-model-tab")
     if office in shell_js:
         raise SystemExit("zip-shell-still-office")
