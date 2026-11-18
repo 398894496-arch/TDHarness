@@ -16,6 +16,8 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 - 同一道 `prove-gui` 自检里，Mac 启动脚本那一项也是旧标准：只认「启动时跳过产品树校验」，可客户端补丁早就改成「后台校验」了（`mac-start-missing-skip`）。现在两种都认；只有在前台做全量校验时才判失败。
 - **修了网关走 TLS 后员工端「没有模型可选」、设置 → 模型一片空白**：员工端 `company-shell` 请求网关时用 `new URL("/v1/...", 网关地址)` 拼地址。网关切到 TLS 后，地址是 `https://<站点>:8443/gw`，这样拼会丢掉 `/gw`，请求落到下载页，返回的是 HTML，员工端解析失败后不报错，直接放弃。结果是登录时不同步模型列表，设置页也读不到订阅和 key 的状态。全新装机最后一步都会切到 TLS，所以每个新站点都会中。现在改成按文本拼接。这一条要发一次客户端更新（`publish-site-update.ps1 -BumpMark`）。证明：`scripts/prove-gw-tls.js` 新增 `GW_TLS_DESK_JOIN_OK`。
 - 设置 → 模型：OpenAI key 那一栏原来固定显示 `api.openai.com`，现在显示实际走的 `OPENAI_BASE_URL`。`gateway.env` 新增 `GPT_SUBSCRIPTION=1`，表示这条 OpenAI 通道其实是服务器上某个工具（如 CLIProxyAPI）代管并自动续期的 ChatGPT 订阅登录；设了以后「GPT 订阅」显示为已登录。
+- `gateway.env` 新增 `OFFER_MODELS`：只给员工列出这几个模型，顺序照写的来，服务器连不到的会跳过。留空就是全部列出。
+- 对话框里的「快速推理」开关对所有人关掉。它只给管理员显示，拨动后写的是员工电脑上的 `D:/dsh/shared/grok-fast.json`，网关和内核都不读这个文件：Grok 走不走优先档位由设置 → 模型 → Grok 里的「快速」决定，而且只对 Grok 有效。所以这个开关什么都没改，还会出现在 GPT 模型旁边，让人误会。
 - 生图和看图只改了服务器网关（`server/gw-media.js`、`server/gw-lite.js`），重启 `Autostart-Gateway` 生效；上面的 `/gw` 修复是员工端改动，要发一次客户端更新。
 - 证明：`scripts/prove-gpt-media.js`（CI）。用一个假的上游验证四件事：没有 Grok 时生图、改图都走 GPT 通道；用的是服务器的 key，不是员工令牌；`gpt-6`、`gpt-5` 和 `VISION_MODELS` 里的模型标成能看图，未知模型仍只收文字；生图模型不出现在对话模型列表里。
 

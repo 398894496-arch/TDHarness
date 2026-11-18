@@ -37,6 +37,23 @@ function call(port, method, url, token, body) {
   });
 }
 
+function gwEnv(root, port) {
+  return {
+    TDH_ROOT: root,
+    TDH_GW_TOKENS: path.join(root, 'gw-tokens.json'),
+    TDH_ROSTER: path.join(root, 'roster.json'),
+    TDH_USAGE_DIR: path.join(root, 'usage'),
+    TDH_GW_ENV: path.join(root, 'gateway.env'),
+    TDH_CHANNELS: path.join(root, 'channels.json'),
+    TDH_XAI_OAUTH: path.join(root, 'no-xai-login.json'),
+    TDH_GROK_FAST: path.join(root, 'grok-fast.json'),
+    TDH_GW_PORT: String(port),
+    TDH_GW_SERVICE_TOKEN_FILE: path.join(root, 'gw-service.token'),
+    TDH_COMPANY_CA: path.join(root, 'company-ca.crt'),
+    TDH_GW_LEGACY: path.join(root, 'gw-legacy.json')
+  };
+}
+
 async function main() {
   assert.equal(gptSize('16:9'), '1536x1024');
   assert.equal(gptSize('9:16'), '1024x1536');
@@ -73,23 +90,7 @@ async function main() {
     'OPENAI_API_KEY=stand-in-sub-key\nOPENAI_BASE_URL=' + base + '\nVISION_MODELS=site-checked-model\n');
 
   const port = await freePort();
-  const gw = spawn(process.execPath, [GW], {
-    env: Object.assign({}, process.env, {
-      TDH_ROOT: root,
-      TDH_GW_TOKENS: path.join(root, 'gw-tokens.json'),
-      TDH_ROSTER: path.join(root, 'roster.json'),
-      TDH_USAGE_DIR: path.join(root, 'usage'),
-      TDH_GW_ENV: path.join(root, 'gateway.env'),
-      TDH_CHANNELS: path.join(root, 'channels.json'),
-      TDH_XAI_OAUTH: path.join(root, 'no-xai-login.json'),
-      TDH_GROK_FAST: path.join(root, 'grok-fast.json'),
-      TDH_GW_PORT: String(port),
-      TDH_GW_SERVICE_TOKEN_FILE: path.join(root, 'gw-service.token'),
-      TDH_COMPANY_CA: path.join(root, 'company-ca.crt'),
-      TDH_GW_LEGACY: path.join(root, 'gw-legacy.json')
-    }),
-    stdio: ['ignore', 'pipe', 'inherit']
-  });
+  const gw = spawn(process.execPath, [GW], { env: Object.assign({}, process.env, gwEnv(root, port)), stdio: ['ignore', 'pipe', 'inherit'] });
   await new Promise((resolve, reject) => {
     gw.stdout.on('data', (c) => { if (String(c).indexOf('LISTEN=') >= 0) resolve(); });
     gw.on('exit', (code) => reject(new Error('gateway-exited-' + code)));
@@ -146,6 +147,21 @@ async function main() {
     assert.equal(r.status, 401);
   } finally {
     gw.kill();
+  }
+  // OFFER_MODELS, on a fresh gateway (the model list is cached).
+  fs.appendFileSync(path.join(root, 'gateway.env'), 'OFFER_MODELS=gpt-5.6-terra, gpt-6.2-sol not-reachable\nDEFAULT_MODEL=gpt-6.2-sol\n');
+  const port2 = await freePort();
+  const gw2 = spawn(process.execPath, [GW], { env: Object.assign({}, process.env, gwEnv(root, port2)), stdio: ['ignore', 'pipe', 'inherit'] });
+  await new Promise((resolve, reject) => {
+    gw2.stdout.on('data', (c) => { if (String(c).indexOf('LISTEN=') >= 0) resolve(); });
+    gw2.on('exit', (code) => reject(new Error('gateway-exited-' + code)));
+  });
+  try {
+    const r2 = await call(port2, 'GET', '/v1/company-models', token);
+    assert.deepEqual(r2.obj.models.map((m) => m.id), ['gpt-5.6-terra', 'gpt-6.2-sol'], 'only the listed, in order');
+    assert.equal(r2.obj.default.model, 'gpt-6.2-sol');
+  } finally {
+    gw2.kill();
     vendor.close();
   }
   console.log('GPT_MEDIA_PROVE_OK=1');

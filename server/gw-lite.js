@@ -719,6 +719,14 @@ async function companyModels(env) {
   for (const row of loadChannels()) {
     if (row && row.custom && row.env && keyOk(env[row.env]) && Array.isArray(row.models)) add(row.models.map((id) => ({ id: id })), row.id);
   }
+  // OFFER_MODELS in gateway.env (comma or space separated): offer only these, in this order, of
+  // what the server can reach. Empty: offer everything reachable.
+  const offer = String(env.OFFER_MODELS || '').split(/[,\s]+/).filter(Boolean);
+  if (offer.length) {
+    const kept = offer.map((id) => out.find((m) => m.id === id)).filter(Boolean);
+    out.length = 0;
+    for (const m of kept) out.push(m);
+  }
   // Site default: DEFAULT_MODEL / DEFAULT_EFFORT in gateway.env when set and reachable; else the
   // first model of the first vendor that has one (subscription first, then keys in table order).
   let pick = out.find((m) => m.id === String(env.DEFAULT_MODEL || '').trim()) || null;
