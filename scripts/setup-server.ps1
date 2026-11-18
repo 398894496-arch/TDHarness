@@ -221,15 +221,14 @@ if (-not (Test-Path -LiteralPath $sharePassPath)) {
   $sharePass = ([IO.File]::ReadAllText($sharePassPath).Trim().Split("`n")[0]).Trim()
 }
 if (-not $sharePass) { throw 'dshshare-pass-empty' }
-$prevShare = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
-& net.exe user dshshare $sharePass /add 2>&1 | Out-Null
-& net.exe user dshshare $sharePass 2>&1 | Out-Null
-$ErrorActionPreference = $prevShare
-# Do not trust net.exe: on a site install it failed silently here and every remote desk got
-# company-disk-not-mounted. Verify, fall back to New-LocalUser, then stop. people-api heals it too.
-if (-not (Get-LocalUser -Name dshshare -ErrorAction SilentlyContinue)) {
-  New-LocalUser -Name dshshare -Password (ConvertTo-SecureString $sharePass -AsPlainText -Force) -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'TDH company share (SMB only)' | Out-Null
+# Not net.exe: it failed silently on one site install (every remote desk got
+# company-disk-not-mounted), and with a password over 14 characters it stops to ask Y/N, which
+# hangs an unattended setup for good. It also put the password on a command line.
+$shareSec = ConvertTo-SecureString $sharePass -AsPlainText -Force
+if (Get-LocalUser -Name dshshare -ErrorAction SilentlyContinue) {
+  Set-LocalUser -Name dshshare -Password $shareSec
+} else {
+  New-LocalUser -Name dshshare -Password $shareSec -PasswordNeverExpires -UserMayNotChangePassword -AccountNeverExpires -Description 'TDH company share (SMB only)' | Out-Null
 }
 $shareUser = Get-LocalUser -Name dshshare -ErrorAction SilentlyContinue
 if (-not $shareUser) { throw 'dshshare-account-missing' }
