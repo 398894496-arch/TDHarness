@@ -403,6 +403,103 @@ async function probeModel(id, token) {
   return { rev: PROBE_REV, usable: true, fast: fast, image: seen.status === 200 };
 }
 
+// GPT through the OpenAI route (OPENAI_API_KEY, OPENAI_BASE_URL). What each model can do is asked
+// once and kept in runtime\gpt-probe.json, so the settings page and the desks show only what is
+// real: reasoning levels as the route itself names them (it answers an unknown level with the
+// valid list), the priority tier only when an answer comes back ON it, pictures only when one is
+// answered. A ChatGPT subscription through CLIProxyAPI accepts service_tier and answers on
+// "default" (measured 2026-11-18), so it shows no fast tier.
+const GPT_PROBE_PATH = process.env.TDH_GPT_PROBE || path.join(ROOT, 'runtime', 'gpt-probe.json');
+// The admin's choice of what desks may pick, by vendor: { gpt: [{ id, efforts }] }. Settings > 模型.
+const OFFER_PATH = process.env.TDH_MODEL_OFFER || path.join(ROOT, 'runtime', 'model-offer.json');
+const GPT_PROBE_REV = 1;
+const EFFORT_NAME = /^[a-z]{1,12}$/;
+
+function readStateFile(p, fallback) {
+  try { const j = JSON.parse(fs.readFileSync(p, 'utf8')); return j && typeof j === 'object' ? j : fallback; } catch (e) { return fallback; }
+}
+
+function writeStateFile(p, obj) {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  const tmp = p + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 2) + '\n');
+  fs.renameSync(tmp, p);
+}
+
+function gptRoute(env) {
+  if (!keyOk(env.OPENAI_API_KEY)) return null;
+  return { base: String(env.OPENAI_BASE_URL || 'https://api.openai.com/v1').trim().replace(/\/$/, ''), key: env.OPENAI_API_KEY.trim() };
+}
+
+async function probeGptModel(id, route) {
+  const url = route.base + '/chat/completions';
+  const ask = { model: id, max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] };
+  const plain = await postJson(url, route.key, ask);
+  if (undecided(plain.status)) return null;
+  if (plain.status !== 200) return { rev: GPT_PROBE_REV, usable: false, efforts: [], fast: false, image: false };
+  let efforts = [];
+  const odd = await postJson(url, route.key, Object.assign({ reasoning_effort: 'tdhprobe' }, ask));
+  if (undecided(odd.status)) return null;
+  const said = String((odd.obj && odd.obj.error && odd.obj.error.message) || '');
+  const listed = /valid levels?:\s*([a-z][a-z,\s]*)/i.exec(said);
+  if (listed) efforts = listed[1].split(/[,\s]+/).map((x) => x.trim().toLowerCase()).filter((x) => EFFORT_NAME.test(x));
+  const tiered = await postJson(url, route.key, Object.assign({ service_tier: 'priority' }, ask));
+  const fast = tiered.status === 200 && !!(tiered.obj && tiered.obj.service_tier === 'priority');
+  const seen = await postJson(url, route.key, {
+    model: id,
+    max_tokens: 16,
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }, { type: 'image_url', image_url: { url: PIXEL } }] }]
+  });
+  if (undecided(seen.status)) return null;
+  return { rev: GPT_PROBE_REV, usable: true, efforts: efforts, fast: fast, image: seen.status === 200 };
+}
+
+let gptProbing = null;
+
+async function probeGptMissing(ids, route) {
+  const state = readStateFile(GPT_PROBE_PATH, {});
+  const todo = ids.filter((id) => !state[id] || state[id].rev !== GPT_PROBE_REV);
+  if (!todo.length) return state;
+  if (!gptProbing) {
+    gptProbing = (async () => {
+      const got = {};
+      // A few at a time: the route is one subscription login.
+      for (let i = 0; i < todo.length; i += 4) {
+        const rows = await Promise.all(todo.slice(i, i + 4).map((id) => probeGptModel(id, route).then((r) => [id, r], () => [id, null])));
+        for (const [id, r] of rows) if (r) got[id] = r;
+      }
+      const fresh = readStateFile(GPT_PROBE_PATH, {});
+      Object.assign(fresh, got);
+      writeStateFile(GPT_PROBE_PATH, fresh);
+      return fresh;
+    })().finally(() => { gptProbing = null; });
+  }
+  return gptProbing;
+}
+
+/** Chat models on the OpenAI route, with what was learned about each. */
+async function gptCatalog(env, probe) {
+  const route = gptRoute(env);
+  if (!route) return null;
+  const up = await listUpstream(route.base + '/models', route.key);
+  if (up.status !== 200) return { status: up.status, rows: [] };
+  const ids = up.rows.map((r) => (r && typeof r.id === 'string' ? r.id : '')).filter((id) => MODEL_ID.test(id) && !NOT_CHAT.test(id));
+  const seen = probe ? await probeGptMissing(ids, route) : readStateFile(GPT_PROBE_PATH, {});
+  const rows = [];
+  for (const id of ids) {
+    const p = seen[id] && seen[id].rev === GPT_PROBE_REV ? seen[id] : null;
+    if (p && p.usable === false) continue;
+    rows.push({ id: id, efforts: p ? p.efforts : [], fast: !!(p && p.fast), fastOn: false, image: p ? !!p.image : seesImages(id, env), probed: !!p });
+  }
+  return { status: 200, rows: rows };
+}
+
+function offerOf(vendor) {
+  const all = readStateFile(OFFER_PATH, {});
+  const list = Array.isArray(all[vendor]) ? all[vendor] : [];
+  return list.filter((m) => m && typeof m.id === 'string' && MODEL_ID.test(m.id));
+}
+
 let probing = null;
 
 async function probeMissing(ids, token) {
@@ -711,6 +808,23 @@ async function companyModels(env) {
   }
   for (const v of VENDORS) {
     if (!keyOk(env[v.env]) || (v.id === 'grok' && xai)) continue;
+    if (v.id === 'gpt') {
+      // What the admin picked in Settings > 模型 (in that order), else every chat model; levels
+      // and pictures as probed. Probing happens when the admin lists models, not at sign-in.
+      const cat = await gptCatalog(env, false);
+      if (!cat || cat.status !== 200) continue;
+      const offer = offerOf('gpt');
+      const rows = offer.length
+        ? offer.map((o) => {
+          const known = cat.rows.find((r) => r.id === o.id);
+          if (!known) return null;
+          const efforts = Array.isArray(o.efforts) ? o.efforts.filter((e) => known.efforts.indexOf(e) >= 0) : known.efforts;
+          return { id: known.id, efforts: efforts, image: known.image };
+        }).filter(Boolean)
+        : cat.rows.map((r) => ({ id: r.id, efforts: r.efforts, image: r.image }));
+      add(rows, 'gpt');
+      continue;
+    }
     const base = String(env[v.baseEnv] || v.base).replace(/\/$/, '');
     const extra = v.id === 'claude' ? { 'x-api-key': env[v.env].trim(), 'anthropic-version': '2023-06-01' } : null;
     const up = await listUpstream(base + '/models', env[v.env].trim(), extra);
@@ -718,14 +832,6 @@ async function companyModels(env) {
   }
   for (const row of loadChannels()) {
     if (row && row.custom && row.env && keyOk(env[row.env]) && Array.isArray(row.models)) add(row.models.map((id) => ({ id: id })), row.id);
-  }
-  // OFFER_MODELS in gateway.env (comma or space separated): offer only these, in this order, of
-  // what the server can reach. Empty: offer everything reachable.
-  const offer = String(env.OFFER_MODELS || '').split(/[,\s]+/).filter(Boolean);
-  if (offer.length) {
-    const kept = offer.map((id) => out.find((m) => m.id === id)).filter(Boolean);
-    out.length = 0;
-    for (const m of kept) out.push(m);
   }
   // Site default: DEFAULT_MODEL / DEFAULT_EFFORT in gateway.env when set and reachable; else the
   // first model of the first vendor that has one (subscription first, then keys in table order).
@@ -947,6 +1053,28 @@ async function handleChannels(req, body, env) {
     }
     saveChannels(loadChannels().filter((r) => r && r.id !== id));
     return { status: 200, obj: channelSnapshot(loadEnv(ENV_PATH)) };
+  }
+  if ((action === 'list-models' || action === 'picked-models' || action === 'apply-models') && String(payload.vendor || '').toLowerCase() === 'gpt') {
+    if (action === 'picked-models') return { status: 200, obj: { ok: true, vendor: 'gpt', models: offerOf('gpt') } };
+    const cat = await gptCatalog(env, true);
+    if (!cat) return { status: 400, obj: { ok: false, error: 'login-not-installed', hint: '服务器没有 GPT 通道（gateway.env 的 OPENAI_API_KEY / OPENAI_BASE_URL）。', models: [] } };
+    if (cat.status !== 200) return { status: 502, obj: { ok: false, error: 'upstream-' + cat.status, models: [] } };
+    if (action === 'list-models') return { status: 200, obj: { ok: true, vendor: 'gpt', models: cat.rows } };
+    // apply-models: the company's list. Desks take it at their next sign-in; the admin's own desk at once.
+    const picks = [];
+    for (const m of Array.isArray(payload.models) ? payload.models : []) {
+      const id = m && typeof m.id === 'string' ? m.id : '';
+      const known = cat.rows.find((r) => r.id === id);
+      if (!known || picks.some((p) => p.id === id)) continue;
+      const efforts = (Array.isArray(m.efforts) ? m.efforts : []).filter((e) => known.efforts.indexOf(e) >= 0);
+      picks.push({ id: id, efforts: efforts });
+    }
+    if (!picks.length) return { status: 400, obj: { ok: false, error: 'models', hint: '先勾选要给大家用的模型。' } };
+    const all = readStateFile(OFFER_PATH, {});
+    all.gpt = picks;
+    writeStateFile(OFFER_PATH, all);
+    companyModelsCache = { at: 0, val: null };
+    return { status: 200, obj: { ok: true, vendor: 'gpt', company: true, models: picks, fast: 0 } };
   }
   if (action === 'list-models') {
     const vendor = String(payload.vendor || '').toLowerCase();

@@ -2259,6 +2259,27 @@ export function apply(ctx) {
 					}
 				}
 				const out = await proxyGw("/channels", method, body);
+				// GPT's list is the company's, kept by the gateway. Saved: this desk takes it now
+				// instead of at its next sign-in.
+				if (method === "POST" && out.status === 200) {
+					let ask = null;
+					try { ask = JSON.parse(body.toString("utf8") || "{}"); } catch { ask = null; }
+					if (ask && ask.action === "apply-models" && String(ask.vendor || "").toLowerCase() === "gpt") {
+						try {
+							const cm = await proxyGw("/v1/company-models", "GET", Buffer.alloc(0));
+							const j = cm.status === 200 ? JSON.parse(cm.body.toString("utf8")) : null;
+							const models = cleanModelPicks((j && Array.isArray(j.models) ? j.models : []).map((m) => ({
+								id: m && m.id, efforts: m && m.efforts, image: !!(m && m.image), context: m && m.context, fast: false,
+							})));
+							if (models.length) {
+								const done = await writeGrokModels(ctx, models);
+								const told = JSON.parse(out.body.toString("utf8"));
+								told.live = !!(done && done.live);
+								out.body = Buffer.from(JSON.stringify(told));
+							}
+						} catch { /* the desk takes it at its next sign-in */ }
+					}
+				}
 				res.writeHead(out.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
 				res.end(out.body);
 			},

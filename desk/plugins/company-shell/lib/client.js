@@ -5167,32 +5167,34 @@ window.__ModuleLoader__.load({
 				if (mode === "model") loadLive(id);
 			}
 			function loadLive(id) {
-				if (id !== "grok") {
+				// GPT: the company's list, kept by the gateway (it tries each model once to learn
+				// its levels, pictures and tier). Grok: this desk's own list.
+				if (id !== "grok" && id !== "gpt") {
 					noteHook[1]("这个订阅还没接通，识别不到可调用模型。");
 					return;
 				}
-				postChannels({ action: "list-models", vendor: "grok" }).then(function (out) {
+				postChannels({ action: "list-models", vendor: id }).then(function (out) {
 					const j = out.j || {};
-					loadedHook[1](function (prev) { return Object.assign({}, prev, { grok: true }); });
+					loadedHook[1](function (prev) { const n = Object.assign({}, prev); n[id] = true; return n; });
 					if (!out.ok) { noteHook[1](channelsErr(out)); return; }
 					const cat = {};
 					for (const k in catHook[0]) cat[k] = catHook[0][k];
-					cat.grok = Array.isArray(j.models) ? j.models : [];
+					cat[id] = Array.isArray(j.models) ? j.models : [];
 					catHook[1](cat);
 					// Tick what this desk already lists, so the page shows the current
 					// choice instead of an empty form that looks like nothing was saved.
-					postChannels({ action: "picked-models", vendor: "grok" }).then(function (got) {
+					postChannels({ action: "picked-models", vendor: id }).then(function (got) {
 						const picked = got.ok && got.j && Array.isArray(got.j.models) ? got.j.models : [];
 						if (!picked.length) return;
 						const bag = {};
 						picked.forEach(function (m) {
-							const known = cat.grok.find(function (c) { return c.id === m.id; });
+							const known = cat[id].find(function (c) { return c.id === m.id; });
 							if (!known) return;
 							const efforts = {};
 							(m.efforts || []).forEach(function (e) { efforts[e] = true; });
 							bag[m.id] = { on: true, fast: !!known.fastOn, efforts: efforts, fastEffort: "" };
 						});
-						putBag("grok", bag);
+						putBag(id, bag);
 					});
 				});
 			}
@@ -5257,6 +5259,10 @@ window.__ModuleLoader__.load({
 				postChannels({ action: "apply-models", vendor: vendor, models: models }).then(function (out) {
 					if (!out.ok) { applyNote[1](channelsErr(out)); return; }
 					const fastNote = out.j && out.j.fast > 0 ? "其中 " + out.j.fast + " 个走加速通道。" : (out.j && out.j.fast < 0 ? "加速没记上，服务器网关需要更新。" : "");
+					if (out.j && out.j.company) {
+						applyNote[1]("已保存 " + models.length + " 个，全公司生效：" + (out.j.live ? "你这台现在就能选，" : "你这台关掉再打开就能选，") + "其他人下次登录时更新。");
+						return;
+					}
 					applyNote[1]((out.j && out.j.live
 						? "已应用 " + models.length + " 个，对话框里现在就能选。"
 						: "已写入 " + models.length + " 个。关掉再打开，对话框里就是勾上的。") + fastNote);
@@ -5266,7 +5272,9 @@ window.__ModuleLoader__.load({
 				const bag = bagOf(vendor);
 				if (!models || !models.length) {
 					return el("div", { className: "cs-vendor-msg" },
-						vendor === "grok" && !loadedHook[0].grok ? "正在向订阅要模型列表…" : "这个订阅还没接通，没有可识别的模型。");
+						(vendor === "grok" || vendor === "gpt") && !loadedHook[0][vendor]
+							? (vendor === "gpt" ? "正在向订阅要模型列表，第一次会逐个试一下每个模型能做什么，约一分钟…" : "正在向订阅要模型列表…")
+							: "这个订阅还没接通，没有可识别的模型。");
 				}
 				return el("div", { className: "cs-mlist" }, models.map(function (model) {
 					const row = bag[model.id] || {};
@@ -5312,23 +5320,26 @@ window.__ModuleLoader__.load({
 				const open = openHook[0] === row.id;
 				const mode = modeHook[0][row.id] || "sub";
 				const st = stateHook[0][row.id] || {};
-				const count = row.id === "grok" ? pickedCount("grok") : 0;
+				const picks = row.id === "grok" || row.id === "gpt";
+				const count = picks ? pickedCount(row.id) : 0;
 				const body = !open ? null : el("div", { className: "cs-vendor-body" },
 					el("div", { className: "cs-vendor-bar" },
 						el("div", { className: "cs-seg", role: "tablist" },
 							el("button", { type: "button", className: mode === "sub" ? "is-on" : "", onClick: function () { setMode(row.id, "sub"); } }, "登录订阅"),
 							el("button", { type: "button", className: mode === "model" ? "is-on" : "", onClick: function () { setMode(row.id, "model"); } }, "选择模型")
 						),
-						mode === "model" && row.id === "grok" ? el("span", { className: "cs-set-gx" }, "已选 " + count + " 个") : null
+						mode === "model" && picks ? el("span", { className: "cs-set-gx" }, "已选 " + count + " 个") : null
 					),
 					mode === "sub"
 						? el("div", { className: "cs-vendor-msg" }, st.bound
 							? "订阅已登录，由服务器网关代管登录态，过期会自动续。"
 							: "订阅登录要跳到对方账号页，这台还没有这个登录插件。")
 						: catalogRows(row.id, catHook[0][row.id] || []),
-					mode === "model" && row.id === "grok" ? el("div", { className: "cs-set-foot" },
-						el("p", { className: "cs-set-note" }, applyNote[0] || "勾选的模型和档位会出现在对话框的模型菜单里。"),
-						btn("应用到对话框", { tone: "primary", onClick: function () { applyVendor("grok"); } })
+					mode === "model" && picks ? el("div", { className: "cs-set-foot" },
+						el("p", { className: "cs-set-note" }, applyNote[0] || (row.id === "gpt"
+							? "勾选的模型和档位给全公司用，员工的模型菜单里只有这些。"
+							: "勾选的模型和档位会出现在对话框的模型菜单里。")),
+						btn(row.id === "gpt" ? "保存给全公司" : "应用到对话框", { tone: "primary", onClick: function () { applyVendor(row.id); } })
 					) : null
 				);
 				return el("div", { className: "cs-vendor" + (open ? " is-open" : ""), key: row.id },

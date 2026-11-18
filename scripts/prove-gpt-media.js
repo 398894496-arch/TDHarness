@@ -47,6 +47,8 @@ function gwEnv(root, port) {
     TDH_CHANNELS: path.join(root, 'channels.json'),
     TDH_XAI_OAUTH: path.join(root, 'no-xai-login.json'),
     TDH_GROK_FAST: path.join(root, 'grok-fast.json'),
+    TDH_GPT_PROBE: path.join(root, 'gpt-probe.json'),
+    TDH_MODEL_OFFER: path.join(root, 'model-offer.json'),
     TDH_GW_PORT: String(port),
     TDH_GW_SERVICE_TOKEN_FILE: path.join(root, 'gw-service.token'),
     TDH_COMPANY_CA: path.join(root, 'company-ca.crt'),
@@ -62,8 +64,12 @@ async function main() {
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tdh-gpt-media-'));
   const token = 'dsh_' + crypto.randomBytes(12).toString('hex');
-  fs.writeFileSync(path.join(root, 'roster.json'), JSON.stringify({ people: [{ pid: 'p1', login: 'amy', role: 'employee', status: 'active' }] }));
-  fs.writeFileSync(path.join(root, 'gw-tokens.json'), JSON.stringify({ tokens: [{ pid: 'p1', token, revoked_at: '' }] }));
+  const boss = 'dsh_' + crypto.randomBytes(12).toString('hex');
+  fs.writeFileSync(path.join(root, 'roster.json'), JSON.stringify({ people: [
+    { pid: 'p1', login: 'amy', role: 'employee', status: 'active' },
+    { pid: 'p0', login: 'boss', role: 'admin', status: 'active' }
+  ] }));
+  fs.writeFileSync(path.join(root, 'gw-tokens.json'), JSON.stringify({ tokens: [{ pid: 'p1', token, revoked_at: '' }, { pid: 'p0', token: boss, revoked_at: '' }] }));
 
   const seen = [];
   const vendor = await listen((req, res) => {
@@ -74,7 +80,22 @@ async function main() {
       seen.push({ url: req.url, auth: req.headers.authorization || '', type: String(req.headers['content-type'] || ''), raw });
       res.setHeader('content-type', 'application/json');
       if (req.url === '/v1/models') {
-        res.end(JSON.stringify({ data: ['gpt-6.2-sol', 'gpt-5.6-terra', 'gpt-image-2', 'site-checked-model', 'plain-text-model'].map((id) => ({ id })) }));
+        res.end(JSON.stringify({ data: ['gpt-6.2-sol', 'gpt-5.6-terra', 'gpt-image-2', 'site-checked-model', 'plain-text-model', 'refuses-chat'].map((id) => ({ id })) }));
+        return;
+      }
+      if (req.url === '/v1/chat/completions') {
+        // gpt-6.2-sol: levels low/medium/high, no priority tier, takes pictures.
+        // plain-text-model: no pictures, no levels. refuses-chat: listed, but refuses chat.
+        const j = JSON.parse(raw.toString('utf8'));
+        const pic = Array.isArray(j.messages[0].content);
+        if (j.model === 'refuses-chat') { res.statusCode = 404; res.end(JSON.stringify({ error: { message: 'model not supported' } })); return; }
+        if (j.reasoning_effort && ['low', 'medium', 'high'].indexOf(j.reasoning_effort) < 0) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: { message: 'level "' + j.reasoning_effort + '" not supported, valid levels: low, medium, high', type: 'invalid_request_error' } }));
+          return;
+        }
+        if (pic && j.model !== 'gpt-6.2-sol') { res.statusCode = 400; res.end(JSON.stringify({ error: { message: 'image input not supported' } })); return; }
+        res.end(JSON.stringify({ id: 'x', service_tier: 'default', choices: [{ message: { role: 'assistant', content: 'ok' } }] }));
         return;
       }
       if (req.url === '/v1/images/generations' || req.url === '/v1/images/edits') {
@@ -148,8 +169,9 @@ async function main() {
   } finally {
     gw.kill();
   }
-  // OFFER_MODELS, on a fresh gateway (the model list is cached).
-  fs.appendFileSync(path.join(root, 'gateway.env'), 'OFFER_MODELS=gpt-5.6-terra, gpt-6.2-sol not-reachable\nDEFAULT_MODEL=gpt-6.2-sol\n');
+  // Settings > 模型 > GPT: the admin lists the route's chat models, each tried once (levels as the
+  // route names them, priority tier only when answered on it, pictures only when answered), picks
+  // some, and desks are offered exactly those. A fresh gateway: the model list is cached.
   const port2 = await freePort();
   const gw2 = spawn(process.execPath, [GW], { env: Object.assign({}, process.env, gwEnv(root, port2)), stdio: ['ignore', 'pipe', 'inherit'] });
   await new Promise((resolve, reject) => {
@@ -157,9 +179,24 @@ async function main() {
     gw2.on('exit', (code) => reject(new Error('gateway-exited-' + code)));
   });
   try {
-    const r2 = await call(port2, 'GET', '/v1/company-models', token);
-    assert.deepEqual(r2.obj.models.map((m) => m.id), ['gpt-5.6-terra', 'gpt-6.2-sol'], 'only the listed, in order');
-    assert.equal(r2.obj.default.model, 'gpt-6.2-sol');
+    let r2 = await call(port2, 'POST', '/channels', token, { action: 'list-models', vendor: 'gpt' });
+    assert.equal(r2.status, 403, 'an employee cannot list or change the company models');
+    r2 = await call(port2, 'POST', '/channels', boss, { action: 'list-models', vendor: 'gpt' });
+    assert.equal(r2.status, 200, JSON.stringify(r2.obj));
+    const cat = Object.fromEntries(r2.obj.models.map((m) => [m.id, m]));
+    assert.deepEqual(cat['gpt-6.2-sol'].efforts, ['low', 'medium', 'high'], 'levels as the route names them');
+    assert.equal(cat['gpt-6.2-sol'].fast, false, 'priority asked, answered on default: no fast tier');
+    assert.equal(cat['gpt-6.2-sol'].image, true);
+    assert.equal(cat['plain-text-model'].image, false, 'a model that refuses pictures says so');
+    assert.equal(cat['refuses-chat'], undefined, 'a listed model that refuses chat is not offered');
+    assert.equal(cat['gpt-image-2'], undefined, 'the image model is not a chat model');
+    r2 = await call(port2, 'POST', '/channels', boss, { action: 'apply-models', vendor: 'gpt', models: [{ id: 'gpt-6.2-sol', efforts: ['high', 'medium', 'bogus'] }, { id: 'not-listed', efforts: [] }] });
+    assert.equal(r2.status, 200, JSON.stringify(r2.obj));
+    assert.equal(r2.obj.company, true);
+    r2 = await call(port2, 'POST', '/channels', boss, { action: 'picked-models', vendor: 'gpt' });
+    assert.deepEqual(r2.obj.models, [{ id: 'gpt-6.2-sol', efforts: ['high', 'medium'] }], 'only listed models and levels are kept');
+    r2 = await call(port2, 'GET', '/v1/company-models', token);
+    assert.deepEqual(r2.obj.models.map((m) => [m.id, m.efforts, m.image]), [['gpt-6.2-sol', ['high', 'medium'], true]], 'desks get exactly the pick');
   } finally {
     gw2.kill();
     vendor.close();
