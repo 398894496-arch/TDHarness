@@ -2052,6 +2052,66 @@ function registerTaskCardTool(ctx) {
 	});
 }
 
+// company-ext-v1. One door for extension packs (an industry pack, a site's own tool):
+// POST JSON to /company/ext/<pack>/<route> on the company site with this person's
+// login token, the way the task card and knowledge tools reach the server. A pack
+// adds its Caddy route (runtime/caddy/ext) and its skills (_skills); it adds no tool,
+// so the tool list sent with every request does not grow per pack.
+const EXT_PACK_RE = /^[a-z][a-z0-9-]{1,30}$/;
+const EXT_ROUTE_RE = /^\/[A-Za-z0-9_\/-]{1,80}$/;
+const EXT_TEXT_MAX = 20000;
+
+export async function companyExtCall(args, root) {
+	const a = args || {};
+	const pack = String(a.pack || "");
+	const route = String(a.route || "");
+	if (!EXT_PACK_RE.test(pack)) return { ok: false, error: "pack must be a short lowercase name, like mfg" };
+	if (!EXT_ROUTE_RE.test(route) || route.indexOf("..") >= 0) return { ok: false, error: "route must look like /quote" };
+	const body = Buffer.from(JSON.stringify(a.body && typeof a.body === "object" ? a.body : {}));
+	const out = await proxyCompany("/company/ext/" + pack + route, "POST", body);
+	let j = null;
+	try { j = JSON.parse(out.body.toString("utf8")); } catch { j = null; }
+	if (j == null) return { ok: false, error: "ext " + pack + " answered " + out.status + " (not JSON; is the pack installed?)" };
+	// Files a pack wrote on the company share come back company-relative; add the path this desk opens.
+	if (Array.isArray(j.files)) {
+		const base = root == null ? deskCompanyRoot() : root;
+		j.desk_files = j.files.map((f) => (base ? base + "/" + String(f).replace(/^\/+/, "") : String(f)));
+	}
+	return { ok: out.status < 400 && j.ok !== false, status: out.status, value: j };
+}
+
+function registerExtTool(ctx) {
+	const tools = typeof ctx.get === "function" ? ctx.get("tools") : ctx.tools;
+	if (tools == null || typeof tools.register !== "function") return;
+	tools.register({
+		name: "company_ext",
+		description:
+			"Call a company extension pack installed on the company server (for example pack=mfg: quotes, drawings, production progress). " +
+			"Use it only when a company skill tells you the pack, route and body. The answer is the pack's JSON.",
+		parameters: {
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				pack: { type: "string", description: "Pack name, e.g. mfg." },
+				route: { type: "string", description: "Route inside the pack, e.g. /quote." },
+				body: { type: "object", description: "JSON body the skill describes." },
+			},
+			required: ["pack", "route"],
+		},
+		output: {
+			schema: { type: "object", additionalProperties: true, properties: { ok: { type: "boolean" } } },
+			render(_args, value) {
+				const v = value || {};
+				const text = v.value !== undefined ? JSON.stringify(v.value, null, 1) : String(v.error || "failed");
+				return [{ type: "text", text: (v.ok ? "" : "company_ext: ") + text.slice(0, EXT_TEXT_MAX) }];
+			},
+		},
+		async execute(args) {
+			return companyExtCall(args);
+		},
+	});
+}
+
 const TASK_CARD_PROMPT = "公司任务卡：会话可以关联一张任务卡（用户消息开头会有一行【任务卡】指针）。用户问到任务、进度、交付、汇报时，先调用 task_card 的 get 读卡再回答；产出文件存进卡上的任务文件夹；汇报写好后用 task_card 的 update 写进卡里，并告诉用户去卡上点「提交验收」。不要说任务已提交或已通过。";
 
 function addTaskCardSection(ctx) {
@@ -2161,6 +2221,7 @@ export function apply(ctx) {
 	// watch_video (Grok only) and the shop tools (shop_recipe, shop_write) are not registered
 	// (2026-11-18): every tool is sent with every request, and these were dead weight.
 	registerTaskCardTool(ctx);
+	registerExtTool(ctx);
 	addTaskCardSection(ctx);
 	addKouboSection(ctx);
 	addWebSearchTipSection(ctx);
