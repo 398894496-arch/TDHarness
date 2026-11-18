@@ -683,7 +683,12 @@ function recordUsage(row) {
 // gateway would refuse. Cached; a key added or removed in Settings clears the cache.
 let companyModelsCache = { at: 0, val: null };
 const NOT_CHAT = /(embed|tts|whisper|dall-e|davinci|babbage|audio|realtime|moderation|transcribe|search|computer-use|instruct|image|imagine|video)/i;
-const VISION = /^(grok-|claude-|gpt-4o|gpt-4\.1|gpt-5|o3|o4|glm-4v|kimi-.*vision)/i;
+const VISION = /^(grok-|claude-|gpt-4o|gpt-4\.1|gpt-[5-9]|o3|o4|glm-4v|kimi-.*vision)/i;
+// VISION_MODELS in gateway.env: extra model ids (comma or space separated) this site has seen answer pictures.
+function seesImages(id, env) {
+  if (VISION.test(id)) return true;
+  return String((env && env.VISION_MODELS) || '').split(/[,\s]+/).filter(Boolean).indexOf(id) >= 0;
+}
 
 async function companyModels(env) {
   if (companyModelsCache.val && Date.now() - companyModelsCache.at < 10 * 60 * 1000) return companyModelsCache.val;
@@ -693,7 +698,7 @@ async function companyModels(env) {
     for (const r of rows) {
       if (!r || !r.id || seen.has(r.id) || !MODEL_ID.test(r.id) || NOT_CHAT.test(r.id)) continue;
       seen.add(r.id);
-      out.push(Object.assign({ vendor: vendor, efforts: [], image: VISION.test(r.id) }, r));
+      out.push(Object.assign({ vendor: vendor, efforts: [], image: seesImages(r.id, env) }, r));
     }
   };
   const xai = await loadXai();
@@ -1026,6 +1031,10 @@ const server = http.createServer(async (req, res) => {
       upFetch: (u, init) => fetch(u, init),
       note: (line) => { try { console.log(line); } catch (e) { /* log only */ } },
       caller: callerOf(req) || 'desk',
+      hasGrok: () => xaiBound(),
+      gptImage: () => keyOk(env.OPENAI_API_KEY)
+        ? { key: env.OPENAI_API_KEY.trim(), base: String(env.OPENAI_BASE_URL || 'https://api.openai.com/v1'), model: String(env.IMAGE_MODEL || 'gpt-image-2').trim() }
+        : null,
       grokBearer: async () => { const x = await loadXai(); if (!x) throw new Error(xaiDownMessage() || 'grok-not-bound'); return x.access_token; },
       grokUp: () => XAI_BASE
     };
