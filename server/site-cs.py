@@ -279,7 +279,7 @@ def put_zip_dir(src: Path, folder: Path, prefix: str) -> int:
 
 
 def put_zip_archive(src: Path, archive: Path, prefix: str, keep: list) -> int:
-    """Put the files of a vendor's own release archive (.zip or .tar.gz) under `prefix` in a pack,
+    """Put the files of a vendor's own release archive (.zip, .tar.gz, or a folder) under `prefix` in a pack,
     as the vendor shipped them: the archive's top folder is dropped, and Unix mode bits are kept
     (a Mac binary unpacked on this Windows server would lose them). `keep` lists what to take:
     a path (`cua-driver.exe`) or a folder (`CuaDriver.app/`) relative to that top folder. What
@@ -297,7 +297,15 @@ def put_zip_archive(src: Path, archive: Path, prefix: str, keep: list) -> int:
 
     files = []  # (relative name, bytes, mode)
     name = archive.name.lower()
-    if name.endswith(".zip"):
+    if archive.is_dir():
+        # A folder already laid out as the pack wants it (fetch-opencli.ps1 builds one): no top
+        # folder to drop. Built on Windows, so there are no mode bits to keep: plain files.
+        for f in sorted(archive.rglob("*")):
+            if f.is_file():
+                rel = f.relative_to(archive).as_posix()
+                if wanted(rel):
+                    files.append((rel, f.read_bytes(), 0o644))
+    elif name.endswith(".zip"):
         with zipfile.ZipFile(archive) as z:
             for i in z.infolist():
                 n = i.filename.replace("\\", "/")

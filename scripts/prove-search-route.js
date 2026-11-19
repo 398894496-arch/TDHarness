@@ -21,7 +21,7 @@ const REACH = FAKE;
 fs.writeFileSync(FAKE, `
 const fs = require('fs');
 const a = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ a, home: process.env.HOME }) + '\\n');
+fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ a, home: process.env.HOME, proxy: process.env.HTTPS_PROXY || '' }) + '\\n');
 const say = (o) => process.stdout.write(JSON.stringify(Object.assign({ schema_version: 1 }, o)));
 if (a[0] === 'bilibili') say({ ok: false, items: [], error: { code: 'NEED_SETUP', message: 'bili is not installed' } });
 else if (a[0] === 'read') say({ ok: true, items: [{ title: 'gumyr/build123d', url: a[1], text: 'A python CAD library.' }] });
@@ -54,7 +54,7 @@ const fail = (w) => { console.error('SEARCH_ROUTE_PROVE_FAIL ' + w); process.exi
   cn.engines.so360 = async (q) => row('so360 ' + q);
   cn.engines.bing = async (q) => row('bing ' + q);
   cn.engines.baidu = async () => [];
-  const ctx = (sub) => ({ upFetch: async () => { throw new Error('offline'); }, port: door.address().port, note() {}, caller: 'proof', hasGptSearch: () => sub });
+  const ctx = (sub) => ({ upFetch: async () => { throw new Error('offline'); }, port: door.address().port, note() {}, caller: 'proof', hasGptSearch: () => sub, searchProxy: () => 'http://127.0.0.1:7999' });
 
   let out = await gw.runSearch(ctx(true), '深搜 聚氨酯筛板标准', 5);
   if (!out.engines.length || out.engines[0].id !== 'gpt-deep') fail('深搜 did not go to deep search: ' + JSON.stringify(out.engines));
@@ -89,6 +89,11 @@ const fail = (w) => { console.error('SEARCH_ROUTE_PROVE_FAIL ' + w); process.exi
   const ids = out.engines.map((e) => e.id).join(',');
   if (ids !== 'reach:web,so360,bingcn') fail('Chinese question not asked of Agent Reach and the engines in China together: ' + ids);
   if (!out.sources.some((x) => x.url === 'https://reach.example/web') || !out.sources.some((x) => /so360/.test(x.url))) fail('Chinese results not woven');
+  if (c.proxy && c.proxy !== process.env.HTTPS_PROXY) fail('web search was sent through the outbound proxy');
+  // YouTube is blocked from inside China: its calls carry the outbound proxy.
+  out = await gw.runSearch(ctx(true), 'youtube polyurethane screen panel', 5);
+  c = calls().pop();
+  if (c.a[0] !== 'youtube' || c.proxy !== 'http://127.0.0.1:7999') fail('YouTube search not sent through the outbound proxy: ' + JSON.stringify(c));
   out = await gw.runSearch(ctx(true), 'github build123d', 5);
   if (out.engines[0].id !== 'reach:github') fail('GitHub question not on Agent Reach github: ' + JSON.stringify(out.engines));
   out = await gw.runSearch(ctx(true), 'bilibili 聚氨酯筛板', 5);
