@@ -206,11 +206,13 @@ async function main() {
     { pid: 'p5', token: T.eve, revoked_at: '' },
     { pid: 'p6', token: T.adm, revoked_at: '' },
   ] }));
+  // company-kb-zones-v1: ops shares its handbook (the shared knowledge base); sales is kept apart.
+  fs.writeFileSync(path.join(dir, 'kb-zones.json'), JSON.stringify({ private: ['sales'] }));
   const port = await freePort();
   const log = path.join(dir, 'know.log');
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'server', 'knowledge-search.js')], {
     env: { ...process.env, TDH_BRAIN: brain, TDH_COMPANY: company, TDH_KNOW_PORT: String(port), TDH_ROSTER: path.join(dir, 'roster.json'),
-      TDH_GW_TOKENS: path.join(dir, 'gw-tokens.json'), TDH_KNOW_LOG: log, TDH_KB_CACHE: path.join(dir, 'kb-cache'),
+      TDH_GW_TOKENS: path.join(dir, 'gw-tokens.json'), TDH_KNOW_LOG: log, TDH_KB_CACHE: path.join(dir, 'kb-cache'), TDH_KB_ZONES: path.join(dir, 'kb-zones.json'), TDH_KROUTER_CACHE: path.join(dir, 'krouter-cache'),
       TDH_OCR_EXE: process.execPath, TDH_OCR_ARGS: JSON.stringify([stub]),
       TDH_LEGACY_EXE: py, TDH_LEGACY_ARGS: JSON.stringify([path.join(__dirname, '..', 'server', 'legacy-office.py')]) },
     stdio: ['ignore', 'pipe', 'inherit'],
@@ -259,8 +261,9 @@ async function main() {
         no: ['11-l1/ops/amy/2026-10-08.md', 'company/content/emp-amy/_memory/02-methods/note.md', 'company/_handbook/sales/script.md'] },
       dan: { yes: ['company/_handbook/ops/warehouse.xlsx', '11-l1/ops/amy/2026-10-08.md'],
         no: ['company/content/emp-amy/_memory/02-methods/note.md', '20-l2/sales/lesson.md', 'company/_shared/_memory/01-projects/salary.md'] },
-      eve: { yes: ['company/_handbook/sales/script.md', '20-l2/sales/lesson.md'],
-        no: ['company/_handbook/ops/warehouse.xlsx', '11-l1/ops/amy/2026-10-08.md', 'company/_shared/_memory/01-projects/salary.md'] },
+      // ops' handbook is shared, so sales finds it; sales' is kept apart, so ops does not (above).
+      eve: { yes: ['company/_handbook/sales/script.md', '20-l2/sales/lesson.md', 'company/_handbook/ops/warehouse.xlsx'],
+        no: ['11-l1/ops/amy/2026-10-08.md', 'company/_shared/_memory/01-projects/salary.md'] },
       adm: { yes: ['company/_handbook/ops/warehouse.xlsx', 'company/_handbook/sales/script.md', '11-l1/ops/amy/2026-10-08.md', '20-l2/sales/lesson.md', 'company/_shared/_memory/01-projects/salary.md'],
         no: ['company/content/emp-amy/_memory/02-methods/note.md'] },
     };

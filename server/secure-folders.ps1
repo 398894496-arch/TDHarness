@@ -6,7 +6,10 @@
 # Company share (D:\dsh\company), from the roster, one Windows account per person (smb-<login>):
 #   root, _skills, _control, content    everyone reads, admins change
 #   _handbook (and _handbook\_company)  everyone reads, admins change
-#   _handbook\<dept>                    that department reads, its director and admins change
+#   _handbook\<dept>                    the shared knowledge base: everyone reads, its director
+#                                       and admins change (company-kb-zones-v1). A department kept
+#                                       apart (runtime\kb-zones.json "private", default: a name with
+#                                       the two characters for finance in it): only it reads.
 #   _shared (company memory)            everyone reads, admins and directors change
 #   _office                             admins
 #   each person's folder (personal) and content\emp-<login>: the person changes, the
@@ -87,12 +90,25 @@ if (-not $ServerOnly) {
   foreach ($s in $staff) { Grant $shared $s 'R' }
   foreach ($s in @($admins + $directors)) { Grant $shared $s 'M' }
   foreach ($s in $admins) { Grant (Join-Path $Company '_office') $s 'M' }
+  # Departments kept apart (the same list the knowledge search uses).
+  $apart = @{}
+  $zonesFile = Join-Path $Runtime 'kb-zones.json'
+  if (Test-Path -LiteralPath $zonesFile) {
+    $z = Get-Content -LiteralPath $zonesFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($x in @($z.private)) { if ($x) { $apart[[string]$x] = $true } }
+  } else {
+    $finance = [string]::new([char[]](0x8D22, 0x52A1))
+    foreach ($dd in @($roster.depts)) { if ($dd -and ([string]$dd.name).Contains($finance)) { $apart[[string]$dd.id] = $true } }
+  }
+  Write-Output ('KB_APART=' + (@($apart.Keys) -join ','))
   foreach ($d in $depts) {
     $hb = Join-Path $Company ('_handbook\' + $d)
-    foreach ($p in ($people | Where-Object { $_.dept -eq $d })) {
-      Grant $hb $seat[[string]$p.login] 'R'
-      if ($p.role -eq 'director') { Grant $hb $own[[string]$p.login] 'M' }
+    if ($apart.ContainsKey($d)) {
+      foreach ($p in ($people | Where-Object { $_.dept -eq $d })) { Grant $hb $seat[[string]$p.login] 'R' }
+    } else {
+      foreach ($s in $staff) { Grant $hb $s 'R' }
     }
+    foreach ($p in ($people | Where-Object { $_.dept -eq $d -and $_.role -eq 'director' })) { Grant $hb $own[[string]$p.login] 'M' }
     foreach ($s in $admins) { Grant $hb $s 'M' }
   }
   $companyFull = [IO.Path]::GetFullPath($Company).TrimEnd('\')

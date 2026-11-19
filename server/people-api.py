@@ -480,6 +480,52 @@ def ensure_share_account(pass_path: Path) -> None:
 
 
 
+# company-krouter-memory-v1: every person's memory is a KRouter memory bank of its own (and so is the
+# company memory). Each gets the layered folders TDH writes into and krouter-zones.psv, which maps
+# KRouter's default layer names onto them, so the knowledge search can ask each bank on its own.
+MEMORY_ZONES = (
+    ("01 项目", "01-projects"),
+    ("02 经验与方法", "02-methods"),
+    ("03 资料与证据", "03-evidence"),
+    ("04 已完成与复盘", "04-reviews"),
+    ("05 时间日志", "05-logs"),
+    ("90 系统文件", "90-system"),
+)
+ZONES_TEXT = (
+    "# KRouter layer names -> this memory's folders (written by people-api; company-krouter-memory-v1)\n"
+    + "".join("%s|%s\n" % pair for pair in MEMORY_ZONES)
+    + "Agent第二大脑.md|README.md\n"
+)
+
+
+def memory_dir(row: dict) -> Path | None:
+    login = str((row or {}).get("login") or "")
+    if not LOGIN_RE.match(login):
+        return None
+    if str((row or {}).get("role") or "") == "admin":
+        return ROOT / "company" / "_office" / "_memory"
+    return ROOT / "company" / "content" / ("emp-" + login) / "_memory"
+
+
+def ensure_memory_bank(folder: Path | None) -> None:
+    """The layered folders and the zone map; nothing that is there already is touched."""
+    if folder is None:
+        return
+    try:
+        company = (ROOT / "company").resolve()
+        target = folder.resolve()
+        if company not in target.parents:
+            return
+        for _, name in MEMORY_ZONES:
+            (target / name).mkdir(parents=True, exist_ok=True)
+        zones = target / "krouter-zones.psv"
+        if not zones.exists():
+            zones.write_text(ZONES_TEXT, encoding="utf-8")
+    except Exception as e:  # noqa: BLE001  a memory folder must never block sign-in
+        sys.stdout.write("MEMORY_BANK error %s\n" % str(e)[:200])
+        sys.stdout.flush()
+
+
 def ensure_personal_dir(row: dict) -> None:
     """员工个人工作区（emp-<login>）。2026-10-08 实测：「添加人员」只写花名册不建目录，
     新员工登录报 company-workspace-missing。添加时建、登录时再补，只建公司盘下面的路径。"""
@@ -495,6 +541,7 @@ def ensure_personal_dir(row: dict) -> None:
     except Exception as e:  # noqa: BLE001  建不了不挡登录，客户端会报 workspace-missing
         sys.stdout.write("PERSONAL_DIR error %s\n" % str(e)[:200])
         sys.stdout.flush()
+    ensure_memory_bank(memory_dir(row))
 
 
 # Per-person share accounts. Everyone used to mount the company share as dshshare, whose
@@ -1177,7 +1224,20 @@ def notify_loop() -> None:
             pass
 
 
+def ensure_memory_banks() -> None:
+    """At start: the company memory and everyone already on the roster get their bank too."""
+    ensure_memory_bank(ROOT / "company" / "_shared" / "_memory")
+    try:
+        people = load_roster().get("people") or []
+    except Exception:  # noqa: BLE001
+        people = []
+    for p in people:
+        if isinstance(p, dict) and (p.get("status") or "active") == "active":
+            ensure_memory_bank(memory_dir(p))
+
+
 def main() -> None:
+    ensure_memory_banks()
     if NOTIFY_EVERY > 0:
         threading.Thread(target=notify_loop, name="notify", daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)

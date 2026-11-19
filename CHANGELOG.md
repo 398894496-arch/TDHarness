@@ -4,6 +4,30 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.11
+
+**员工自己改密码；记忆层接 KRouter，每个账号自动建自己的记忆库；企业知识库分「行政财务」和「共享」两块**
+- **自己改密码**（`company-self-password-v1`）：设置 → 账号 →「修改密码」，填旧密码、新密码、再输一次。
+  - 新密码至少 6 位；旧密码不对、两次不一样、新旧一样都会说清楚；
+  - 改完这台电脑不用重新登录，下次登录用新密码；忘了旧密码找管理员在「人员」里重设。
+  - 共享盘账号用的是服务器单独生成的密码，不受影响。
+  - 这个入口原来是发布时由站点补丁插进去的，现在写进 `company-shell` 源码，补丁只留措辞部分。
+- **KRouter 接进记忆层**（`company-krouter-memory-v1`）：
+  - **版本**：KRouter 的检索代码固定在 `3db52f6`（v2.1.2 之后的 main），放在 `server/vendor/krouter`，MIT。
+  - **怎么查**：知识库服务起一个常驻的 `server/krouter-recall.py`，查记忆时把这个人能看的库一个一个问（他自己的记忆、公司记忆），所以排序和拒答都不会用到他看不到的页。KRouter 有把握的记忆页排在最前面，摘出的是这一页里回答问题的那一段。
+  - **兜底**：手册检索和拒答门照旧用 TDH 的引擎；KRouter 不在时，知识库照常回答（`TDH_KROUTER=0` 可以关掉）。
+  - KRouter 要调模型的功能（答案卡、夜间整理、拿不准时请模型判断）这次都没开。
+- **每个账号自动建好记忆库**：新建账号、每次登录、人员服务启动时，都会给这个人建好记忆库。公司记忆也一样处理。
+  - 内容是 6 个分区目录（`01-projects` 到 `90-system`），加一份 `krouter-zones.psv`，让 KRouter 认得 TDH 的分区名；
+  - 位置：员工在 `content/emp-<登录名>/_memory`，管理员在 `_office/_memory`；
+  - 已有的文件不动。
+- **企业知识库分区**（`company-kb-zones-v1`）：
+  - 除了不共享的部门，各部门的手册都归进**共享知识库**，所有人都能搜到、能在共享盘上打开；
+  - `runtime/kb-zones.json` 里列为不共享的部门（这台服务器上是「行政财务」），只有本部门的人和管理员能看；
+  - 没有这个文件时，部门名里带「财务」的默认不共享；
+  - 知识库检索和共享盘文件夹权限（`secure-folders.ps1`）读同一份表，员工绕不过去。
+- 新增测试：`scripts/prove-krouter-memory.js`；`prove-people.py` 加了「新账号有记忆库」；`prove-knowledge.js` 和共享盘权限测试改成「共享 + 不共享」两种部门各测一个。
+
 ## 2026.11.19.10
 
 **DeepSeek 模型进模型菜单、可以选开放哪些；内核自带的模型列表藏起来；GPT 额度加刷新**

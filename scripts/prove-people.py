@@ -132,6 +132,11 @@ def main() -> None:
         check(got.get("error") == "password-too-short", "short password")
         code, got = call(port, "POST", {"action": "add", "login": "liu6", "password": "123456", "dept": "company"}, admin)
         check(got.get("ok") is True, "a six-digit password is enough %r" % got)
+        # company-krouter-memory-v1: a new account comes with its own memory bank, layered as TDH
+        # writes it and mapped for KRouter.
+        bank = root / "company" / "content" / "emp-liu6" / "_memory"
+        check(all((bank / z).is_dir() for z in ("01-projects", "02-methods", "03-evidence", "04-reviews", "05-logs", "90-system")), "new account has its memory layers")
+        check("02 经验与方法|02-methods" in (bank / "krouter-zones.psv").read_text(encoding="utf-8"), "new account's memory is mapped for KRouter")
         code, got = call(port, "POST", {"action": "add", "login": "zhangsan", "password": "longenough1", "dept": "nope"}, admin)
         check(got.get("error") == "dept-unknown", "unknown department")
         code, got = call(port, "POST", {"action": "add", "login": "zhangsan", "name": "张三", "password": "longenough1", "dept": ops}, admin)
