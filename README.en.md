@@ -8,7 +8,7 @@
 [![release](https://img.shields.io/github/v/release/398894496-arch/TDHarness?label=release)](https://github.com/398894496-arch/TDHarness/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Version: 2026.11.19.3**
+**Version: 2026.11.19.8**
 
 ![The agent read a sales sheet in the workspace, summed it by region and wrote the review file in 28 seconds](docs/screenshots/00-agent-at-work.jpg)
 
@@ -88,7 +88,7 @@ An admin runs `server\publish-site-update.ps1`; desks offer the update on their 
 - **Task cards with hand-in and review.** Each card has a state and an owner; opening one starts a conversation pinned to it. Deliverables go on the company disk, and only 提交验收 counts as done, not saying so in chat.
 - **A knowledge base filled every night.** Task `TDH-Brain-Daily` (00:15) distils each person's conversations of the day. Company documents go in the handbook folders on the company share: Word, Excel, PowerPoint (new and old formats), WPS, PDF, and scans or photos through OCR in the background. Search is ranked (BM25, Chinese by two-character terms), answers only a live login token, and is scoped by person and department. Details: [docs/KNOWLEDGE.md](docs/KNOWLEDGE.md).
 - **Web search through the gateway.** Chinese queries go to domestic engines first with Exa alongside; GitHub, Bilibili and YouTube have their own channels. A query starting with `深搜 ` is answered by Grok's own web search with sources.
-- **Browser and desktop apps.** The Windows client ships OpenCLI with its Chrome extension and [Windows-MCP](https://github.com/CursorTouch/Windows-MCP); the Mac client ships [Peekaboo](https://github.com/openclaw/Peekaboo). Exporting, overwriting, deleting or sending waits for the person's yes.
+- **Browser and desktop apps.** Browser work goes through OpenCLI with its Chrome extension; desktop apps through [Cua Driver](https://github.com/trycua/cua), the Windows build on Windows and the Mac build on a Mac, working in the background without taking the cursor or the front window. Exporting, overwriting, deleting or sending waits for the person's yes.
 - **Generated images and videos in the conversation**, each with a download button. An image can be marked up on a canvas so only the marked region is changed.
 - **Workspaces that follow the person.** Conversations live in the person's own folder on the company share and are there on the next computer they sign in from.
 - **Long conversations.** Context is compacted automatically at 80% of the model's window; `/compact` does it by hand.

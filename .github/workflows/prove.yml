@@ -95,6 +95,16 @@ jobs:
         run: node desk-lease.js selftest
       - name: Prove knowledge-search recall (right page first, off-topic refused, synonyms)
         run: node scripts/prove-kb-recall.js
+      - name: Prove the gateway ends a stream at [DONE] when the vendor keeps the socket open
+        run: node scripts/prove-gw-sse-done.js
+      - name: Prove the model list carries each model's window and learns a refused limit
+        run: node scripts/prove-gw-context.js
+      - name: Prove deep search is the GPT subscription and asks for it only when it is worth it
+        run: node scripts/prove-search-route.js
+      - name: Prove a vendor archive goes into a pack as shipped (Cua Driver)
+        run: python3 scripts/prove-put-zip-archive.py
+      - name: Prove pictures in the conversation keep their proportions
+        run: python3 scripts/prove-inline-media-aspect.py
       - name: Prove desk skills cache lays the site's _skills over the bundled skills
         run: node scripts/prove-sync-skills.js
       - name: Prove the Caddyfile imports extension routes inside the site

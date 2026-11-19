@@ -8,7 +8,7 @@
 [![release](https://img.shields.io/github/v/release/398894496-arch/TDHarness?label=release)](https://github.com/398894496-arch/TDHarness/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**当前版本 / Version: 2026.11.19.3**
+**当前版本 / Version: 2026.11.19.8**
 
 ![AI 读了工作区里的销售表，按地区汇总并写出复盘文件，用时 28 秒](docs/screenshots/00-agent-at-work.jpg)
 
@@ -86,7 +86,7 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-all.ps1
 - **任务卡加验收。** 每张卡有状态和负责人，点开就带着任务开工。交付物放公司盘，只有「提交验收」才算做完，聊天里说做完了不算。
 - **知识库每晚自己长。** 每天 00:15 整理当天所有人的对话；公司文档放进公司盘的手册目录即可，Word、Excel、PowerPoint（新旧格式）、WPS、PDF 直接读，扫描件和照片在后台 OCR。检索只认登录令牌，按人和部门控制范围。详见 [docs/KNOWLEDGE.md](docs/KNOWLEDGE.md)。
 - **联网搜索走公司网关。** 中文问题先走国内搜索引擎，GitHub、B 站、YouTube 有专门通道。
-- **操作浏览器和桌面软件。** Windows 客户端自带 OpenCLI 和 [Windows-MCP](https://github.com/CursorTouch/Windows-MCP)，Mac 客户端自带 [Peekaboo](https://github.com/openclaw/Peekaboo)。导出、覆盖、删除、发送之前先问员工。
+- **操作浏览器和桌面软件。** 浏览器用 OpenCLI，桌面软件用 [Cua Driver](https://github.com/trycua/cua)（Windows 和 Mac 各带各的版本，在后台操作，不抢鼠标和前台）。导出、覆盖、删除、发送之前先问员工。
 - **生成的图片和视频在对话里直接看、直接下载。** 图片还能在画布上涂出要改的地方，只改那一块。
 - **工位跟着人走。** 对话存在公司盘上自己的工位里，换一台电脑登录还在。
 - **长对话自动压缩。** 上下文到模型窗口的 80% 自动压缩，也可以用 `/compact` 手动压。

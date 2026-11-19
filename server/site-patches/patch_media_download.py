@@ -8,6 +8,9 @@
 4. 内核 dsh-client-ui-deliverables/lib/client.js：AI 交付（present）的文件卡片，图片在对话里
    显示缩略图（点开在侧边栏看大图），视频显示播放器，每张卡片加「下载」按钮；字节走
    dsh-better-sidebar 的 /sidebar/file 路由（两个客户端包都带）。
+5. 同一处：图片、视频按原始宽高比显示（company-inline-media-aspect-v1）。外面是纵向 flex，
+   默认把子元素横向拉满，高度又被 maxHeight 卡住，图就被拉扁了。改成靠左、宽高 auto、
+   object-fit: contain。已经打过 4 的包只补这一处。
 """
 import sys
 from pathlib import Path
@@ -16,6 +19,15 @@ MARK_RESOLVE = "company-sidebar-relative-path-v1"
 MARK_BUTTON = "company-sidebar-download-button-v1"
 MARK_MEDIA = "company-media-absolute-paths-v1"
 MARK_CARD = "company-presented-inline-media-v1"
+MARK_ASPECT = "company-inline-media-aspect-v1"
+
+BOX_V1 = '\t\t\tconst box = { display: "block", maxWidth: "100%", maxHeight: 360, borderRadius: 8, marginTop: 6, background: "#000" };\n'
+BOX_V2 = (
+    "\t\t\t// " + MARK_ASPECT + ": keep the picture's own proportions. The card is a flex column, which\n"
+    "\t\t\t// stretches children to its width while maxHeight caps the height.\n"
+    '\t\t\tconst box = { display: "block", maxWidth: "100%", maxHeight: 360, width: "auto", height: "auto", '
+    'alignSelf: "flex-start", objectFit: "contain", borderRadius: 8, marginTop: 6, background: "#000" };\n'
+)
 
 
 def edit_text(text: str, marker: str, old: str, new: str) -> tuple[str, str]:
@@ -123,7 +135,7 @@ CARD_HELPERS = """		// company-presented-inline-media-v1: inline image/video and
 
 def patch_presented_card(t: str) -> tuple[str, str]:
     if MARK_CARD in t:
-        return t, "already"
+        return edit_text(t, MARK_ASPECT, BOX_V1, BOX_V2)
     steps = [
         ("\t\tfunction PresentedFileCard({ file, cwd, phase, host, onPreview, actions, t }) {\n",
          CARD_HELPERS + "\t\tfunction PresentedFileCard({ file, cwd, phase, host, onPreview, actions, t, sessionId }) {\n"
@@ -180,7 +192,7 @@ def patch_presented_card(t: str) -> tuple[str, str]:
         if t.count(old) != 1:
             raise SystemExit("card-anchor-missing:" + old[:60].replace("\n", "|"))
         t = t.replace(old, new, 1)
-    return t, "patched"
+    return edit_text(t, MARK_ASPECT, BOX_V1, BOX_V2)
 
 
 # rel 后缀 -> 补丁函数（rel 是相对 CompanyDesk/ 的路径）

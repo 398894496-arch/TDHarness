@@ -1,6 +1,6 @@
 // Web search and page fetch for the gateway: several search engines behind
 // one call. The engines inside China are read the way a browser reads them
-// (no account, no key); Grok's search goes through the subscription the
+// (no account, no key); deep search goes through the ChatGPT subscription the
 // gateway already holds. Each engine returns [{url, title, snippet}].
 'use strict';
 const https = require('https');
@@ -170,16 +170,17 @@ async function sogou(query, limit) {
   return clean(rows, limit);
 }
 
-// Grok's own web search, through the gateway's subscription. Slow (half a
-// minute or more) and thorough: it reads the pages and answers with sources.
-// The desk gives any tool call one minute, so the answer has to be back well
-// inside that: `ms` is how long Grok gets before the caller moves on.
-function grok(query, limit, port, ms) {
+// Deep search: the ChatGPT subscription searches the web itself (its web_search tool, low
+// reasoning: about 15-20 s, measured 2026-11-19), through the gateway's own model door, and
+// answers with the pages it opened. The desk gives any tool call one minute, so `ms` is how
+// long it gets before the caller moves on.
+function deep(query, limit, port, ms) {
   return new Promise((resolve, reject) => {
     const raw = Buffer.from(JSON.stringify({
-      model: process.env.TDH_SEARCH_GROK_MODEL || 'grok-4.7',
+      model: process.env.TDH_SEARCH_GPT_MODEL || 'gpt-6.2-sol',
       input: '联网检索并用简体中文回答。最多搜索 2 次，找到权威来源就停。先用两三句话给结论，再列出最权威的 3 个来源（标题、机构、年份、网址）。只引用你实际打开核对过的页面，不要编造网址。\n\n问题：' + query,
       tools: [{ type: 'web_search' }],
+      reasoning: { effort: process.env.TDH_SEARCH_GPT_EFFORT || 'low' },
       stream: false
     }));
     // The gateway's own model door: it trusts no address, so send its service token.
@@ -191,17 +192,17 @@ function grok(query, limit, port, ms) {
       res.on('end', () => {
         try {
           const j = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          if (res.statusCode !== 200) throw new Error((j.error && (j.error.message || j.error)) || ('grok ' + res.statusCode));
+          if (res.statusCode !== 200) throw new Error((j.error && (j.error.message || j.error)) || ('deep ' + res.statusCode));
           const msg = (j.output || []).filter((o) => o.type === 'message').pop();
           const part = msg && (msg.content || []).find((c) => c.type === 'output_text');
-          if (!part) throw new Error('grok-no-answer');
+          if (!part) throw new Error('deep-no-answer');
           const rows = [];
           for (const a of part.annotations || []) if (a && a.url) rows.push({ url: a.url, title: a.title || a.url, snippet: '' });
           resolve({ content: part.text, sources: clean(rows, limit) });
         } catch (e) { reject(e); }
       });
     });
-    req.on('timeout', () => req.destroy(new Error('grok-timeout')));
+    req.on('timeout', () => req.destroy(new Error('deep-timeout')));
     req.on('error', reject);
     req.end(raw);
   });
@@ -209,14 +210,14 @@ function grok(query, limit, port, ms) {
 
 // One search. Everyday questions go to the engines inside China (about a
 // second): 360 and Baidu together, since each misses things the other finds.
-// A query that starts with 深搜 goes to Grok instead; so does one the
+// A query that starts with 深搜 goes to deep search instead; so does one the
 // engines found nothing for.
 async function search(query, limit, opts) {
   opts = opts || {};
   limit = Math.max(1, Math.min(20, Number(limit) || 8));
   let q = String(query || '').trim();
-  const deep = /^(深搜|深度搜索|grok)[\s:：]+/i.test(q);
-  q = q.replace(/^(深搜|深度搜索|grok)[\s:：]+/i, '');
+  const deep = /^(深搜|深度搜索)[\s:：]+/i.test(q);
+  q = q.replace(/^(深搜|深度搜索)[\s:：]+/i, '');
   if (!q) throw new Error('empty-query');
   if (!deep) {
     // Bing (China) and 360 answer every time; Baidu joins when it is not asking for a human
@@ -225,11 +226,11 @@ async function search(query, limit, opts) {
     for (let i = 0; i < limit; i++) for (const rows of got) if (rows[i]) mixed.push(rows[i]);
     const sources = clean(mixed, limit);
     if (sources.length) {
-      return { content: '境内搜索（必应中国 + 360 + 百度）。要查权威出处、论文、指南，把问题改成以「深搜 」开头再搜一次（Grok 联网检索，约 40 秒）。', sources, truncated: false };
+      return { content: '境内搜索（必应中国 + 360 + 百度）。要查权威出处、论文、指南，把问题改成以「深搜 」开头再搜一次（模型联网检索，约 20–40 秒）。', sources, truncated: false };
     }
   }
   if (!opts.port) throw new Error('no-results');
-  const out = await grok(q, limit, opts.port);
+  const out = await deep(q, limit, opts.port);
   return { content: out.content, sources: out.sources, truncated: false };
 }
 
@@ -249,4 +250,4 @@ async function fetchPage(url, guard) {
   return { url: res.url, statusCode: res.status, body: { kind: /html/.test(type) || /<html/i.test(html.slice(0, 2000)) ? 'html' : 'text', content: html }, truncated: cut };
 }
 
-module.exports = { get, decode, text, clean, search, fetchPage, engines: { bing, baidu, so360, sogou, grok } };
+module.exports = { get, decode, text, clean, search, fetchPage, engines: { bing, baidu, so360, sogou, deep } };

@@ -105,6 +105,16 @@ export function cleanModelPicks(models) {
 	return out;
 }
 
+// company-context-v1: the window the kernel budgets by. 5% under what the gateway reports, since
+// the kernel's token counts are estimates (Codex budgets the same 95% of a model's window). No
+// `maxTokens` here on purpose: the kernel would send it as the answer's cap and a long answer
+// would be cut off; the GPT windows already leave room for the answer. A model the gateway knows
+// nothing about gets 128000: compacting early only costs a summary, overflowing costs the turn.
+const CONTEXT_FALLBACK = 128000;
+function windowOf(m) {
+	return m.context ? Math.floor(m.context * 0.95) : CONTEXT_FALLBACK;
+}
+
 function grokProviderLines(models, baseURL) {
 	const lines = [
 		"      office:",
@@ -128,7 +138,7 @@ function grokProviderLines(models, baseURL) {
 		lines.push(
 			"          - id: " + m.id,
 			"            name: " + m.id,
-			"            contextWindow: " + (m.context || 256000),
+			"            contextWindow: " + windowOf(m),
 			// Without `image` here the kernel refuses a message that carries a
 			// picture, and the composer just hands the draft back with no reason.
 			"            input: " + (m.image ? "[text, image]" : "[text]"),
@@ -207,7 +217,7 @@ function grokProviderObject(models, baseURL) {
 		supportsUsageInStreaming: true,
 	};
 	office.models = models.map((m) => {
-		const row = { id: m.id, name: m.id, contextWindow: m.context || 256000, input: m.image ? ["text", "image"] : ["text"] };
+		const row = { id: m.id, name: m.id, contextWindow: windowOf(m), input: m.image ? ["text", "image"] : ["text"] };
 		if (m.efforts.length) {
 			row.reasoningEfforts = {};
 			for (const e of m.efforts) row.reasoningEfforts[levelOf(e)] = e;
@@ -2148,6 +2158,24 @@ function addTaskCardSection(ctx) {
 	else systemPrompt.section(row);
 }
 
+// company-inline-image-default-v1: a picture for the person shows in the conversation, not only
+// as a file in the sidebar. present() puts it in the chat at its own proportions (the card's
+// image style is fixed by the site patch company-inline-media-aspect-v1).
+const INLINE_IMAGE_PROMPT =
+	"给员工看的图片（效果图、图纸预览、照片、生成或改过的图）默认直接显示在对话里：图片文件存好后，用 present 交出它，对话里就会直接显示这张图。" +
+	"没有调用 present 时，在最后的回复里用 Markdown 图片语法嵌进去。" +
+	"不要只给侧边栏工件或下载链接，也不要用两种方式重复显示同一张图。" +
+	"图片保持原始宽高比：不拉伸、不裁切，不要为了铺满改成别的尺寸。" +
+	"交互页面或矢量原稿可以另外给，但不能代替对话里的这张图。";
+
+function addInlineImageSection(ctx) {
+	const systemPrompt = ctx.systemPrompt;
+	if (systemPrompt == null || typeof systemPrompt.section !== "function") return;
+	const row = { name: "company-inline-image-default", order: 41, text: INLINE_IMAGE_PROMPT };
+	if (typeof ctx.effect === "function") ctx.effect(() => systemPrompt.section(row), row.name);
+	else systemPrompt.section(row);
+}
+
 // Talking-head rough cut (koubo): present only on a machine where the tool
 // is installed, so other desks are not told about a command they do not have.
 function kouboHome() {
@@ -2179,7 +2207,7 @@ function addWebSearchTipSection(ctx) {
 	const row = {
 		name: "company-web-search-tip",
 		order: 42,
-		text: "联网搜索（web_search）有两档。普通查询走境内搜索引擎（必应中国、360、百度），约一秒，给网页列表，适合常识、新闻、找某个网页。查询词以「深搜 」开头则由 Grok 联网检索，约 40–70 秒，会打开页面核对并给出结论和来源，适合查权威出处、论文、指南、需要核实的事实。同一个问题不要两档都反复搜；拿到结果要点开关键来源（web_fetch）再下结论。搜索报错时如实说搜不了，不要凭记忆编来源。",
+		text: "联网搜索（web_search）有两档。普通搜索由服务器上的 Agent Reach 分路：中文问题 Agent Reach（Exa）和 360、必应中国一起查；英文和技术问题走 Agent Reach（Exa）；GitHub、B 站、YouTube 走它各自的通道。几秒出结果，给网页列表，适合常识、新闻、价格、找某个网页或公司。深搜：查询词以「深搜 」开头，由模型联网检索，约 20–40 秒，会打开页面核对，给结论和来源，适合要权威出处的（国家/行业标准、法规条例、论文、官方指南）、要多个来源互相核对的、普通搜索没找到的。问标准号、法规、论文时服务器会自动走深搜，不用加前缀。同一个问题不要两档都反复搜；普通搜索拿到列表后，点开关键来源（web_fetch）再下结论；深搜已经给了结论和来源的，不用再逐个打开。搜索报错时如实说搜不了，不要凭记忆编来源。",
 	};
 	if (typeof ctx.effect === "function") ctx.effect(() => systemPrompt.section(row), row.name);
 	else systemPrompt.section(row);
@@ -2249,6 +2277,7 @@ export function apply(ctx) {
 	registerTaskCardTool(ctx);
 	registerExtTool(ctx);
 	addTaskCardSection(ctx);
+	addInlineImageSection(ctx);
 	addKouboSection(ctx);
 	addWebSearchTipSection(ctx);
 	addOpencliSection(ctx);

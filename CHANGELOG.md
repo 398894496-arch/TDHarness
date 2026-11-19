@@ -4,6 +4,66 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.8
+
+**图片默认直接显示在对话里，按原始比例，不再被拉扁**
+- **拉扁的原因**：AI 交出来的图片（`present`），卡片下面的预览图放在一个纵向 flex 容器里。容器默认把子元素横向拉满，高度又被 `maxHeight: 360` 卡住，宽图就被拉成扁的（现场截图里的零件估测图就是这样）。现在图片和视频共用的样式改成宽高 `auto`、靠左对齐、`object-fit: contain`，按原图比例缩放（`company-inline-media-aspect-v1`，在 `patch_media_download.py` 里）。已经打过内联预览补丁的包只补这一处。
+- **默认在对话里显示**：员工端提示加了一条（`company-inline-image-default-v1`，写在 `company-shell` 源码里）：给员工看的图片存好后用 `present` 交出来，对话里直接显示；没调用 `present` 就用 Markdown 嵌图；不要只给侧边栏工件或下载链接，也不要重复显示同一张图；不拉伸、不裁切。
+- 这件事原来是另一个会话在做，做到一半停了，留下两处还没提交的改动。这里接手：提示改为直接写进源码，不再用站点补丁往 `company-shell` 里插；比例的修法从只改图片样式扩大到图片、视频共用的样式。
+- 新增 `scripts/prove-inline-media-aspect.py`。
+- **还没实测**：在客户端里真的出一张宽图看效果，要等这次更新装上。
+
+## 2026.11.19.7
+
+**三个核心工具换掉：搜索路由用 Agent Reach，桌面软件用 Cua Driver（Windows / Mac 各用各的版本），浏览器仍是 OpenCLI**
+- **搜索路由：Agent Reach**（`company-search-reach-v1`）。服务器装上 Agent Reach 1.6.1（`server/install-agent-reach.ps1`：uv 0.13.9 和 Agent Reach 的官方 release 包，版本和 SHA-256 写死；装在 `D:\dsh\tools`，配置在 `D:\dsh\runtime\agent-reach-home`，不落到服务账户的用户目录）。普通搜索的分路：
+  - 英文、技术问题：Agent Reach 网页搜索（Exa）→ 直连 Exa → 必应；
+  - 中文问题：Agent Reach 网页搜索和 360、必应中国一起查，结果交错合并（Agent Reach 没有国内的搜索引擎，国内网页靠后两个）；
+  - GitHub、B 站、YouTube：先走 Agent Reach 各自的通道，再退回网关原来的接口；
+  - GitHub、B 站、YouTube、V2EX 等站点的链接，`web_fetch` 用 Agent Reach 按站点读正文。
+  - 服务器上没装、或者某个通道出错，自动退回原来的做法，搜索不会断。
+  - 服务器实测：网页、GitHub、读链接都在 1.3–1.7 秒；中文问「聚氨酯筛板 烟台 厂家」第一条就是客户官网。B 站要先 `agent-reach add bilibili`（已在这台服务器上装好）。YouTube（yt-dlp）从这台服务器 60 秒都没出结果，超时后退回网页搜索。
+- **深搜仍是 GPT 订阅的联网搜索**（2026.11.19.6），和 Agent Reach 并存：一个管日常的快搜，一个管要权威出处的深搜。
+- **桌面软件：Cua Driver 0.54.0**（`company-desktop-cua-v1`，trycua/cua，MIT）。在后台操作桌面软件，不抢员工的鼠标和前台窗口。
+  - Windows：包里的 `cua-driver\`（`cua-driver.exe` 和 UI Automation 辅助程序），`cua-driver.exe mcp` 直接当 MCP 服务。
+  - Mac：包里带 `cua-driver/CuaDriver.app`（Developer ID 签名并已公证）。驱动只认 `/Applications/CuaDriver.app`（路径写死在驱动里，系统的「辅助功能」「屏幕录制」权限也挂在这个 App 上），所以 `start.command` 在没装或者版本更旧时把它拷过去，比它新的不动；拷不进去时，技能会告诉员工怎么办。
+  - 模型只看到一个 `desktop` 工具（`mcp-one.cjs`）。新加了 `--only` 白名单：只放桌面操作要用的 26 个动作；网页类 `browser_*` 交给 OpenCLI；录屏、光标主题、扩展、自更新、改配置都不放。驱动以后新加的工具，不加进白名单就不会露出来。
+  - 匿名统计和自动检查更新都关掉（环境变量；Mac 的后台进程另外执行一次 `telemetry disable`）。
+  - 服务器发布时把官方包直接塞进客户端包（`server/fetch-cua-driver.ps1` 下载并核对 SHA-256，`site-cs.py put-zip-archive` 照原样放进去，Mac 程序的可执行权限和 App 签名都保留）。本机实测：塞进包再解出来，`codesign --verify --deep --strict` 通过，`spctl` 显示 Notarized Developer ID。
+  - 客户端更新范围加了 `cua-driver/`。原来的 Windows-MCP 和 Peekaboo 还留在包里，只是不再启用，等 Cua Driver 在员工电脑上跑稳了再删。
+  - 两份 `company-desktop` 技能按 Cua Driver 重写：先看窗口拿到元素编号再点，连续几步用 `run_steps` 一次做完，Mac 第一次带员工给 CuaDriver 开权限。
+- **浏览器：OpenCLI**，没有变化。旧的点选工具都关着。包里是 1.8.8；npm 上已有 2.0.3，是大版本升级，要和员工浏览器里的扩展一起实测后再升。
+- 新增测试：`scripts/prove-search-route.js` 加了 Agent Reach 的分路、中文合并、出错退回、读链接、没装时退回；`scripts/prove-mcp-one.js` 加了白名单；新增 `scripts/prove-put-zip-archive.py`。
+- **还没实测**：Cua Driver 在真员工电脑上点剪映（Windows 和 Mac 都要）；Mac 往「应用程序」里拷 App 的那一步（要等这台 Mac 收到更新）。
+
+## 2026.11.19.6
+
+**深搜改用 GPT 订阅，Grok 搜索删掉；该深搜的问题自动走深搜**
+- **原来**：深搜（查询以「深搜 」开头）只能用 Grok。这个站点撤掉 Grok 以后，深搜悄悄退回普通搜索，员工看到的还是一串网页列表，也不说深搜没成功。
+- **现在**：深搜由 GPT 订阅自带的联网搜索来做（`gpt-6.2-sol`，低推理），经网关自己的模型通道走。服务器实测：问「聚氨酯筛板国家标准编号」，17 秒答出 GB/T 33091—2016，来源是国家标准全文公开系统的原页。Grok 搜索的代码（Grok 通道、Grok 兜底）全部删掉。
+- **什么时候深搜**（`company-search-route-v2`）：查询以「深搜 / 深度搜索」开头；或者问的是标准号、国家/行业标准、法规条例、论文文献、官方出处这类要权威原文的问题（服务器自动判断，不用加前缀）；或者普通搜索什么都没找到。其余（常识、新闻、价格、找厂家、找某个网页）走普通搜索，几秒出结果。
+- **普通搜索**和本机的 Agent Reach 是同一种分法：中文问题 360 + 必应中国 + Exa 一起查；英文和技术问题走 Exa，必应兜底；GitHub、B 站、YouTube 走各自的通道。员工端提示里原来写的「必应中国、360、百度」和实际不符，已经改对。
+- 没有 GPT 订阅的站点，深搜会直说「这台服务器没有接 GPT 订阅，深搜做不了」，不再提示员工加「深搜」前缀。
+- 新增 `scripts/prove-search-route.js`。
+
+## 2026.11.19.5
+
+**上下文预算按模型的真实窗口算；超长时记住厂商说的上限**
+- **原来**：员工端给每个模型都按 256k 写窗口（网关只给 Grok 报过窗口），压缩点 = 256k 的 80%。GPT-6.2 Sol 实际有 500k，白白提前压缩；Astra 是 272k，差不多；换成窗口更小的模型时，会在厂商拒绝之前都不压缩。
+- **网关**（`company-context-v1`）：模型列表给每个模型带上 `context`。来源按优先级：厂商因为太长拒绝时报文里写的上限（记在 `runtime\context-learned.json`，下次列表就带上）> 厂商目录自带的数 > GPT 订阅用 Codex 官方模型目录里的 `context_window`（Sol 500000、Astra 272000，6 小时刷新一次，存 `runtime\gpt-context.json`）> DeepSeek 官方文档写的 1M。
+- **员工端**：窗口按网关报的数打 95 折（内核的 token 数是估算，Codex 自己也按 95% 算）；网关不知道的模型按 128k 算，宁可早压缩，不让一轮对话因为超长失败。没有给模型写 `maxTokens`：实测内核会把它当成回答长度上限发给厂商，长回答会被截断；GPT 目录里的窗口本来就已经扣掉了回答的空间。
+- 现在的压缩点：Sol 约 38 万 token，Astra 约 17.4 万，DeepSeek（1M）约 76 万，不认识的模型约 6.2 万。
+- 新增 `scripts/prove-gw-context.js`：DeepSeek 带 1M；厂商回「maximum context length is 131,072 tokens」后，列表里这个模型变成 131072，别的模型不受影响；改动前的网关跑这个测试会失败。
+
+## 2026.11.19.4
+
+**现场第二轮反馈：首屏标语、API key 输入框、6 位密码、额度显示；流式回复按时结束**
+- **首屏**：这个版本的内核把标语放在 `titleGroup` 里，原来隐藏规则写的 `headlineText` 在这个版本里不存在，所以「探索未至之境」一直没藏住。现在显示站点字标时（单色或彩色），整个 `titleGroup` 都隐藏。
+- **API key 输入框**：2026.11.19 把员工端自带的 key 框藏起来以后，界面上就没有地方填 key 了。原来写好的公司「加入模型」表单（`SubSection`）从 2026.10.11 起就没有挂到页面上。现在模型页的订阅卡片下面加了一块「服务器模型密钥」，只有管理员能看到：选提供商（DeepSeek 排在第一个），粘贴 key，点「保存到服务器」，key 存进 `gateway.env`，员工电脑上不留。旁边会显示服务器上已经存了哪些提供商的 key。
+- **6 位密码**：登录密码最短改成 6 位（`PASSWORD_MIN`），发放账号、自己改密码都按这个来。连续登录失败会锁 15 分钟，所以 6 位数字没法在线上被猜出来。`prove-people.py` 加了「6 位能发放」的用例。
+- **额度显示**：OpenAI 用量接口报的「已用」是整数，0 的意思是不到 1%。原来显示成「剩余 100%」，看起来像完全没用过；现在显示「>99%」，并注明「本周已用不到 1%（OpenAI 按整数报）」。
+- **流式回复按时结束**：网关看到 `data: [DONE]` 就结束给员工端的回复，不再等上游关连接。原来上游如果发完 `[DONE]` 却不关连接，员工端会一直等，直到空闲超时（网关 180 秒、员工端 300 秒）才结束。新增 `prove-gw-sse-done.js`：假的上游发完 `[DONE]` 后不关连接；这个测试在旧代码上，员工端 5 秒内收不到结束，新代码上马上结束。已加进 CI。
+
 ## 2026.11.19.3
 
 **彩色站点 Logo 的位置和大小**

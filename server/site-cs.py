@@ -278,6 +278,66 @@ def put_zip_dir(src: Path, folder: Path, prefix: str) -> int:
     return len(files)
 
 
+def put_zip_archive(src: Path, archive: Path, prefix: str, keep: list) -> int:
+    """Put the files of a vendor's own release archive (.zip or .tar.gz) under `prefix` in a pack,
+    as the vendor shipped them: the archive's top folder is dropped, and Unix mode bits are kept
+    (a Mac binary unpacked on this Windows server would lose them). `keep` lists what to take:
+    a path (`cua-driver.exe`) or a folder (`CuaDriver.app/`) relative to that top folder. What
+    the pack had under `prefix` before is dropped, so an update leaves no stale files."""
+    import stat
+    import tarfile
+    import zipfile
+
+    prefix = prefix.replace("\\", "/")
+    if not prefix.endswith("/"):
+        prefix += "/"
+
+    def wanted(rel):
+        return any(rel == k or (k.endswith("/") and rel.startswith(k)) for k in keep)
+
+    files = []  # (relative name, bytes, mode)
+    name = archive.name.lower()
+    if name.endswith(".zip"):
+        with zipfile.ZipFile(archive) as z:
+            for i in z.infolist():
+                n = i.filename.replace("\\", "/")
+                if n.endswith("/"):
+                    continue
+                rel = n.split("/", 1)[1] if "/" in n else n
+                if wanted(rel):
+                    mode = (i.external_attr >> 16) & 0o777 or (0o755 if rel.endswith(".exe") else 0o644)
+                    files.append((rel, z.read(i), mode))
+    elif name.endswith((".tar.gz", ".tgz")):
+        with tarfile.open(archive, "r:gz") as t:
+            for m in t.getmembers():
+                if m.issym() or m.islnk():
+                    raise SystemExit("put-zip-archive-link-not-supported:" + m.name)
+                if not m.isfile():
+                    continue
+                rel = m.name.split("/", 1)[1] if "/" in m.name else m.name
+                if wanted(rel):
+                    files.append((rel, t.extractfile(m).read(), m.mode & 0o777))
+    else:
+        raise SystemExit("put-zip-archive-unknown-kind:" + archive.name)
+    missing = [k for k in keep if not any(f[0] == k or (k.endswith("/") and f[0].startswith(k)) for f in files)]
+    if missing:
+        raise SystemExit("put-zip-archive-missing:" + ",".join(missing))
+    tmp = src.with_suffix(src.suffix + ".tmp")
+    with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            if item.filename.replace("\\", "/").startswith(prefix):
+                continue
+            zout.writestr(item, zin.read(item.filename))
+        for rel, data, mode in sorted(files):
+            zi = zipfile.ZipInfo(prefix + rel, date_time=(2026, 10, 11, 0, 0, 0))
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.create_system = 3  # Unix, so unzip on a Mac applies the mode bits
+            zi.external_attr = (stat.S_IFREG | mode) << 16
+            zout.writestr(zi, data)
+    tmp.replace(src)
+    return len(files)
+
+
 MAC_TREE_RUN = (
     b"# Tree check is log-only. Do not pop on a dirty local tree (hot plant).\n"
     b"# Update already ran before the desk started.\n"
@@ -602,7 +662,7 @@ def main() -> None:
     ap.add_argument("--site", required=True)
     ap.add_argument(
         "cmd",
-        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip"),
+        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip", "put-zip-archive"),
     )
     ap.add_argument("--out")
     ap.add_argument("--src")
@@ -611,6 +671,8 @@ def main() -> None:
     ap.add_argument("--file")
     ap.add_argument("--old")
     ap.add_argument("--plugins")
+    ap.add_argument("--archive")
+    ap.add_argument("--keep", help="put-zip-archive: comma-separated paths or folders/ inside the archive")
     ap.add_argument("--if-present", action="append", default=[], metavar="NAME=FILE",
                     help="replace-zip: also replace NAME with FILE when the pack has it")
     args = ap.parse_args()
@@ -659,6 +721,13 @@ def main() -> None:
             raise SystemExit("put-zip needs --src --file <folder> --name <prefix in the zip>")
         n = put_zip_dir(Path(args.src), Path(args.file), args.name)
         sys.stdout.write("PUT=%s\n" % n)
+        return
+    if args.cmd == "put-zip-archive":
+        if not args.src or not args.archive or not args.name or not args.keep:
+            raise SystemExit("put-zip-archive needs --src --archive --name <prefix in the zip> --keep a,b/")
+        keep = [x.strip() for x in args.keep.split(",") if x.strip()]
+        n = put_zip_archive(Path(args.src), Path(args.archive), args.name, keep)
+        sys.stdout.write("PUT_ARCHIVE=%s\n" % n)
         return
     if args.cmd == "replace-zip":
         if not args.src or not args.out or not args.name or not args.file:

@@ -130,7 +130,7 @@ powershell -ExecutionPolicy Bypass -File server\smb-accounts.ps1 -RotateShared  
 
 Optional, not run by setup: `powershell -ExecutionPolicy Bypass -File server\koubo\install.ps1` for the talking-head editing tool (needs Python 3.10–3.12 and Jianying on the machine that opens the drafts).
 
-Both client packages (Windows, and Mac for Apple silicon and Intel) carry OpenCLI for browser work. Each person loads its Chrome extension once; the agent guides them through it. The Windows package also carries Windows-MCP (`windows-mcp/`, its own Python 3.14) and the Mac package carries Peekaboo (`peekaboo/`) for desktop apps; nothing to install. On a Mac the person turns on Accessibility and Screen Recording once, guided by the agent.
+Both client packages (Windows, and Mac for Apple silicon and Intel) carry OpenCLI for browser work. Each person loads its Chrome extension once; the agent guides them through it. For desktop apps both packages carry Cua Driver (`cua-driver/`): the Windows build runs from there; the Mac build is `CuaDriver.app`, which the desk copies to /Applications on launch (the driver only runs from there). Nothing to install. On a Mac the person turns on Accessibility and Screen Recording for CuaDriver once, guided by the agent. The server puts Cua Driver into the packs at publish time from `D:\dsh\runtime\vendor\cua-driver\<version>\` (`server/fetch-cua-driver.ps1`). The older Windows-MCP (`windows-mcp/`) and Peekaboo (`peekaboo/`) stay in the packs, unused.
 
 Needs: Windows, Administrator, Python 3, Node 22+, Git LFS (`git lfs pull`).
 
