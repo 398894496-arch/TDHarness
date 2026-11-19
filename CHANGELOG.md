@@ -6,6 +6,9 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 
 ## 2026.11.19.15
 
+**修 Mac 打开后一直停在「正在打开本机 Agent」**（`company-mac-login-fix-v1`）
+- .14 的「记住上次登录的账号」在 Mac 的 `start.command` 里读 `last.login`；脚本开着 `set -euo pipefail`，这台 Mac 第一次用新版时还没有这个文件，读它的那条命令失败，整个启动脚本在弹账号框之前就退出了，窗口一直等。现在文件不存在时当作空。同样的写法在 `tree-restore.sh`（磁盘检查）和 `mac-mount-company.sh`（取 IPv4）里也加了保护。
+
 **KRouter 自己的夜间作业接进 TDH：每天把经验蒸馏进共享知识库，热周期按 60 天算**（`company-krouter-nightly-v1`）
 - 服务器每天 00:15 的作业（`TDH-Brain-Daily` → `server/brain/run-daily.ps1`）接上 `server/krouter-nightly.js`，用的是 KRouter 原样的代码（`server/vendor/krouter`），TDH 只补它缺的：
   1. 读昨天每个人在公司盘上的对话（DSH 的 `.dsh-desk/sessions`），转成 KRouter 认的 Claude Code 格式；

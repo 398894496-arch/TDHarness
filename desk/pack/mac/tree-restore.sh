@@ -74,8 +74,8 @@ if [[ -z "$ZIP" ]]; then
     exit 2
   fi
   # company-compat-v1: 400 MB down and 1 GB unpacked must both fit; say so instead of failing half way.
-  tmp_kb="$(df -Pk /tmp 2>/dev/null | awk 'NR==2 { print $4 }')"
-  root_kb="$(df -Pk "$ROOT" 2>/dev/null | awk 'NR==2 { print $4 }')"
+  tmp_kb="$( { df -Pk /tmp 2>/dev/null || true; } | awk 'NR==2 { print $4 }')"
+  root_kb="$( { df -Pk "$ROOT" 2>/dev/null || true; } | awk 'NR==2 { print $4 }')"
   for kb in "$tmp_kb" "$root_kb"; do
     if [[ "$kb" =~ ^[0-9]+$ ]] && (( kb < 1572864 )); then
       echo "TREE_RESTORE_DISK_FULL=1 free_kb=$kb need_kb=1572864" >&2

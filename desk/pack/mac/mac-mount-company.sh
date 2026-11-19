@@ -107,7 +107,7 @@ chmod 600 "$PASSFILE" 2>/dev/null || true
 v4_of() {
   local h="$1" ip=""
   if [[ "$h" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "$h"; return; fi
-  ip="$(dscacheutil -q host -a name "$h" 2>/dev/null | awk '/^ip_address:/ { print $2; exit }')"
+  ip="$( { dscacheutil -q host -a name "$h" 2>/dev/null || true; } | awk '/^ip_address:/ { print $2; exit }')"
   # Only an office or tailnet address; a proxy's fake IP (198.18.x) or anything else keeps the name.
   case "$ip" in
     10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) ;;
