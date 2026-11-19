@@ -253,6 +253,96 @@ async function grokQuota() {
   return val;
 }
 
+// GPT 订阅额度（company-gpt-quota-v1）：ChatGPT 的用量接口（Codex 的 /status 用的同一个，
+// chatgpt.com/backend-api/wham/usage），用 CLIProxyAPI 存在本机的订阅登录去查；令牌不出这台服务器。
+// 回来的窗口按长度取最长的那个（Pro 现在只有每周）。经代理出去（CLIProxyAPI 自己也走它）。
+const CLIPROXY_DIR = process.env.CLIPROXY_DIR || 'C:\\ProgramData\\cliproxyapi';
+let gptQuotaCache = { at: 0, val: null };
+
+function readCodexAuth() {
+  const dir = process.env.CLIPROXY_AUTH_DIR || path.join(CLIPROXY_DIR, 'auths');
+  let names = [];
+  try { names = fs.readdirSync(dir).filter((n) => /^codex-.*\.json$/i.test(n)).sort(); } catch (e) { return null; }
+  for (const n of names) {
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
+      if (j && !j.disabled && j.access_token && j.account_id) return j;
+    } catch (e) { /* next */ }
+  }
+  return null;
+}
+
+function quotaProxy(auth, env) {
+  const own = String((auth && auth.proxy_url) || env.GPT_QUOTA_PROXY || '').trim();
+  if (own) return own;
+  try {
+    const m = /^\s*proxy-url:\s*"?([^"\s#]+)"?/m.exec(fs.readFileSync(path.join(CLIPROXY_DIR, 'config.yaml'), 'utf8'));
+    return m ? m[1] : '';
+  } catch (e) { return ''; }
+}
+
+// GET JSON over HTTPS, through an HTTP proxy (CONNECT) when one is given.
+function httpsGetJson(url, headers, proxy, ms) {
+  const tls = require('tls');
+  const u = new URL(url);
+  return new Promise((resolve, reject) => {
+    const done = (fn, v) => { clearTimeout(timer); fn(v); };
+    const timer = setTimeout(() => reject(new Error('timeout')), ms || 10000);
+    const request = (socket) => {
+      const req = https.request({ host: u.hostname, path: u.pathname + u.search, method: 'GET', headers, servername: u.hostname, agent: false,
+        createConnection: socket ? () => tls.connect({ socket, servername: u.hostname }) : undefined }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          if ((res.statusCode || 0) >= 400) return done(reject, new Error('http-' + res.statusCode));
+          try { done(resolve, JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (e) { done(reject, new Error('bad-json')); }
+        });
+      });
+      req.on('error', (e) => done(reject, e));
+      req.end();
+    };
+    if (!proxy) return request(null);
+    const p = new URL(proxy);
+    const c = http.request({ host: p.hostname, port: p.port || 80, method: 'CONNECT', path: u.hostname + ':443' });
+    c.on('connect', (res, socket) => (res.statusCode === 200 ? request(socket) : done(reject, new Error('proxy-' + res.statusCode))));
+    c.on('error', (e) => done(reject, e));
+    c.end();
+  });
+}
+
+function gptSubOn(env) {
+  return String(env.GPT_SUBSCRIPTION || '').trim() === '1' && String(env.OPENAI_BASE_URL || '').trim() !== '';
+}
+
+async function gptQuota(env) {
+  if (gptQuotaCache.val && Date.now() - gptQuotaCache.at < 60 * 1000) return gptQuotaCache.val;
+  const auth = readCodexAuth();
+  if (!auth) return null;
+  const o = await httpsGetJson('https://chatgpt.com/backend-api/wham/usage', {
+    Authorization: 'Bearer ' + auth.access_token,
+    'chatgpt-account-id': String(auth.account_id),
+    'User-Agent': 'codex_cli_rs',
+    Accept: 'application/json'
+  }, quotaProxy(auth, env), 10000);
+  const rl = (o && o.rate_limit) || {};
+  const wins = [rl.primary_window, rl.secondary_window].filter((w) => w && w.used_percent != null);
+  if (!wins.length) return null;
+  const w = wins.sort((a, b) => Number(b.limit_window_seconds || 0) - Number(a.limit_window_seconds || 0))[0];
+  const used = Math.max(0, Math.min(100, Number(w.used_percent)));
+  const plan = String(o.plan_type || '').trim();
+  const val = {
+    vendor: 'gpt',
+    usedPercent: used,
+    remainingPercent: 100 - used,
+    kind: Number(w.limit_window_seconds) >= 6 * 86400 ? 'weekly' : 'window',
+    resetsAt: w.reset_at ? new Date(Number(w.reset_at) * 1000).toISOString() : '',
+    plan: plan ? 'ChatGPT ' + plan.charAt(0).toUpperCase() + plan.slice(1) : 'ChatGPT',
+    limitReached: !!rl.limit_reached
+  };
+  gptQuotaCache = { at: Date.now(), val };
+  return val;
+}
+
 function modelName(body) {
   if (!body || !body.length) return '';
   try {
@@ -974,11 +1064,15 @@ function channelSnapshot(env) {
   return {
     ok: true,
     mark: 'company-channels-v1',
+    // SITE_SUBSCRIPTIONS in gateway.env (e.g. "gpt"): the subscription rows this site offers; empty: all three.
     subscriptions: [
       subOf('grok', 'Grok', extras, ''),
       subOf('gpt', 'GPT', extras, 'sub-use-key'),
       subOf('claude', 'Claude', extras, 'sub-use-key')
-    ].map((row) => {
+    ].filter((row) => {
+      const allow = String(env.SITE_SUBSCRIPTIONS || '').toLowerCase().split(/[,\s]+/).filter(Boolean);
+      return !allow.length || allow.indexOf(row.id) >= 0;
+    }).map((row) => {
       if (row.id === 'grok') return Object.assign({}, row, { bound: xaiBound() });
       // GPT_SUBSCRIPTION=1: the OpenAI route (OPENAI_BASE_URL) is a ChatGPT subscription login held
       // by a tool on this server that renews it itself (e.g. CLIProxyAPI), so the 订阅 card says so.
@@ -1151,6 +1245,14 @@ const server = http.createServer(async (req, res) => {
     let err = '';
     try { q = await grokQuota(); } catch (e) { err = String((e && e.message) || e); }
     send(res, 200, Object.assign({ ok: true, enabled: !!q, grokBound: true, kind: 'oauth', usedPercent: null, remainingPercent: null, plan: '', resetsAt: '' }, q || {}, err ? { quotaError: err } : {}));
+    return;
+  }
+  if (url === '/grok-quota' && gptSubOn(env)) {
+    // The desks ask one quota door; with no Grok bound it answers for the GPT subscription.
+    let q = null;
+    let err = '';
+    try { q = await gptQuota(env); } catch (e) { err = String((e && e.message) || e); }
+    send(res, 200, Object.assign({ ok: true, enabled: !!q, grokBound: false, kind: 'oauth', vendor: 'gpt', usedPercent: null, remainingPercent: null, plan: '', resetsAt: '' }, q || {}, err ? { quotaError: err } : {}));
     return;
   }
   if (url === '/grok-quota' || url === '/grok-fast') {

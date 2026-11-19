@@ -4727,6 +4727,7 @@ window.__ModuleLoader__.load({
 						plan: (out.ok && j.plan) || "",
 						kind: (out.ok && j.kind) || "",
 						resetsAt: (out.ok && j.resetsAt) || "",
+						vendor: (out.ok && j.vendor) || "grok",
 						err: out.ok ? "" : ((j.error && j.error.message) || j.error || ("http-" + out.status))
 					});
 				});
@@ -5241,7 +5242,9 @@ window.__ModuleLoader__.load({
 			openai: { id: "gpt" },
 			anthropic: { id: "opus" },
 			kimi: { id: "kimi" },
-			glm: { id: "glm" }
+			glm: { id: "glm" },
+			deepseek: { id: "deepseek" },
+			xai: { id: "grok-key" }
 		};
 
 		function QuotaBanner() {
@@ -5310,11 +5313,14 @@ window.__ModuleLoader__.load({
 						next[id] = { bound: s.bound === true, model: s.model || "", hint: s.hint || "" };
 					});
 					stateHook[1](next);
+					const first = PROXY_ROWS.filter(function (r) { return next[r.id]; })[0];
+					if (first && !next[openHook[0]]) openHook[1](first.id);
+					const live = next.grok ? "grok" : (first && first.id === "gpt" ? "gpt" : "");
+					if (live) loadLive(live);
 				});
 			}
 			React.useEffect(function () {
 				loadSubs();
-				loadLive("grok");
 			}, []);
 			function setMode(id, mode) {
 				const cur = modeHook[0];
@@ -5475,7 +5481,9 @@ window.__ModuleLoader__.load({
 					);
 				}));
 			}
-			const cards = PROXY_ROWS.map(function (row) {
+			// Only the subscriptions this site offers (SITE_SUBSCRIPTIONS on the server); before the list arrives, none.
+			const offered = PROXY_ROWS.filter(function (row) { return Object.prototype.hasOwnProperty.call(stateHook[0], row.id); });
+			const cards = offered.map(function (row) {
 				const open = openHook[0] === row.id;
 				const mode = modeHook[0][row.id] || "sub";
 				const st = stateHook[0][row.id] || {};
@@ -5523,7 +5531,7 @@ window.__ModuleLoader__.load({
 			return el("div", { className: "cs-set", "data-mark": "company-proxy-fold-v1" },
 				el("div", { className: "cs-quota" },
 					el("div", { className: "cs-quota-main" },
-						el("div", { className: "cs-quota-k" }, "Grok 订阅剩余额度"),
+						el("div", { className: "cs-quota-k" }, (q.vendor === "gpt" ? "GPT" : "Grok") + " 订阅剩余额度"),
 						el("div", { className: "cs-quota-v" }, pct == null ? "—" : Math.round(pct) + "%", el("small", null, quotaSub(q))),
 						meter(pct)
 					)
@@ -5549,6 +5557,7 @@ window.__ModuleLoader__.load({
 						plan: (out.ok && j.plan) || "",
 						kind: (out.ok && j.kind) || "",
 						resetsAt: (out.ok && j.resetsAt) || "",
+						vendor: (out.ok && j.vendor) || "grok",
 						err: out.ok ? "" : ((j.error && j.error.message) || j.error || ("http-" + out.status))
 					});
 				});
@@ -5751,10 +5760,12 @@ window.__ModuleLoader__.load({
 						disabled: busyHook[0],
 						onChange: function (e) { applyPreset(e.target.value); }
 					},
+						React.createElement("option", { value: "deepseek" }, "DeepSeek"),
 						React.createElement("option", { value: "openai" }, "OpenAI / GPT"),
 						React.createElement("option", { value: "anthropic" }, "Anthropic / Claude"),
 						React.createElement("option", { value: "kimi" }, "Kimi"),
 						React.createElement("option", { value: "glm" }, "智谱 GLM"),
+						React.createElement("option", { value: "xai" }, "xAI / Grok API key"),
 						React.createElement("option", { value: "custom" }, "自定义")
 					)
 				),
@@ -5783,6 +5794,7 @@ window.__ModuleLoader__.load({
 				React.createElement("label", null, "API key（只写 Win，界面不回显）",
 					React.createElement("input", {
 						type: "password",
+						"data-company-key": "1",
 						value: keyHook[0],
 						disabled: busyHook[0],
 						onChange: function (e) { keyHook[1](e.target.value); },
@@ -5911,7 +5923,7 @@ window.__ModuleLoader__.load({
 			return setPage("同事", "谁在线、最近用了多少 token。用量来自服务器网关，经网关的模型调用都算在内。",
 				el("div", { className: "cs-stats" },
 					el("div", { className: "cs-stat" },
-						el("div", { className: "cs-stat-k" }, "订阅剩余"),
+						el("div", { className: "cs-stat-k" }, q.vendor === "gpt" ? "GPT 订阅剩余" : "订阅剩余"),
 						el("div", { className: "cs-stat-v" }, pct == null ? "—" : Math.round(pct), pct == null ? null : el("small", null, "%")),
 						meter(pct),
 						el("div", { className: "cs-stat-s" }, quotaSub(q))
@@ -5959,6 +5971,7 @@ window.__ModuleLoader__.load({
 			const newDeptHook = React.useState("");
 			const renameHook = React.useState(null);
 			const noteHook = React.useState("");
+			const toneHook = React.useState("");   // "err" paints the note red
 			const busyHook = React.useState(false);
 			const pendingHook = React.useState(null);
 			const rowsHook = React.useState(PEOPLE.filter(function (p) { return p && p.login; }));
@@ -5977,6 +5990,7 @@ window.__ModuleLoader__.load({
 				if (busyHook[0]) return;
 				busyHook[1](true);
 				noteHook[1]("");
+				toneHook[1]("");
 				pendingHook[1](null);
 				peopleApi(body).then(function (j) {
 					refreshRows();
@@ -5988,6 +6002,7 @@ window.__ModuleLoader__.load({
 					}
 				}, function (err) {
 					busyHook[1](false);
+					toneHook[1]("err");
 					noteHook[1](peopleErr(err && err.message));
 				});
 			}
@@ -6096,10 +6111,19 @@ window.__ModuleLoader__.load({
 				ev.preventDefault();
 				const login = String(loginHook[0] || "").trim().toLowerCase();
 				const password = String(passHook[0] || "");
-				if (!login || password.length < 8) {
-					noteHook[1]("登录名和至少 8 位的初始密码都要填。");
+				// Say which box is wrong: "both are required" read like a bug when only the
+				// password was too short (a 6-digit password was refused without saying so).
+				toneHook[1]("err");
+				if (!login) { noteHook[1]("先填登录名。"); return; }
+				if (!/^[a-z0-9][a-z0-9._-]{1,15}$/.test(login)) {
+					noteHook[1]("登录名只能用小写字母、数字和 . _ -，2 到 16 位（手机号可以）；中文请填在「显示名」里。");
 					return;
 				}
+				if (password.length < 8) {
+					noteHook[1]("初始密码至少 8 位，现在是 " + password.length + " 位。");
+					return;
+				}
+				toneHook[1]("");
 				runAction({
 					action: "add",
 					login: login,
@@ -6218,7 +6242,7 @@ window.__ModuleLoader__.load({
 						)
 					)
 				),
-				setNote(noteHook[0]),
+				setNote(noteHook[0], toneHook[0]),
 				setNote("种子管理员不能停用或降权，但可以吊销令牌。总监不能设管理员。登录名发放后不能改，显示名可以随时改。")
 			);
 		}

@@ -11,11 +11,17 @@ window.__ModuleLoader__.load({
 		// Additive CSS only. Do not register on settings.onboarding: that
 		// coordinator shows one step at a time, and a null render that never
 		// complete()s freezes welcome-notice / composer.
+		// company-no-add-key-v2: these rules said display: inline-block since 2026.10.11, so the
+		// official key box showed, and a DeepSeek key typed into it was kept on that desk
+		// (DEEPSEEK_OFFICIAL_KEY in .credentials.yaml) where nothing reads it: the company
+		// gateway never got it and no DeepSeek model appeared. Hide them; the company's own
+		// boxes (the server-side 加入模型 key, the people page's first password) stay.
+		const KEEP = ':not([data-company-key]):not(.cs-input)';
 		const CSS = [
-			'[data-slot="settings.section"] input[type="password"] { display: inline-block; }',
-			'[data-slot="settings.section"] input[autocomplete="new-password"],',
-			'[data-slot="settings.section"] input[autocomplete="current-password"] { display: inline-block; }',
-			'[data-slot="settings.onboarding"] input[type="password"] { display: inline-block; }'
+			'[data-slot="settings.section"] input[type="password"]' + KEEP + ',',
+			'[data-slot="settings.section"] input[autocomplete="new-password"]' + KEEP + ',',
+			'[data-slot="settings.section"] input[autocomplete="current-password"]' + KEEP + ',',
+			'[data-slot="settings.onboarding"] input[type="password"]' + KEEP + ' { display: none !important; }'
 		].join("\n");
 
 		function HideOfficialKeyFields() {
