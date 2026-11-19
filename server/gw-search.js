@@ -1,10 +1,12 @@
 'use strict';
 // Search/fetch door for the gateway. Desk clients only POST here.
-// One route for every installation: Exa first, the engines inside China
-// beside it for Chinese questions, and a channel of its own for GitHub,
-// Bilibili and YouTube questions. Grok's own web search is the slow, thorough
-// path: asked for with a query that starts with 深搜, and the last resort
-// when nothing else finds anything.
+// One route for every installation, the same split as agent-reach: Exa first, the engines
+// inside China beside it for Chinese questions, and a channel of its own for GitHub, Bilibili
+// and YouTube questions. Deep search (the ChatGPT subscription searches and reads the pages
+// itself) is the slow, thorough path. It runs
+// when the query starts with 深搜, when the question asks for an authority (a standard, a
+// regulation, a paper, an official source: lists of links are weakest there), and as the last
+// resort when nothing else finds anything.
 
 const { spawn } = require('child_process');
 const cn = require('./web-search.js');
@@ -17,7 +19,6 @@ const JINA = 'https://r.jina.ai/';
 const MAX_FETCH = 120000;
 const ENGINE_MS = 5000;
 const EXA_MS = 12000;
-const GROK_MS = 9000;
 const SEARCH_BUDGET_MS = 16000;
 const FETCH_MS = 15000;
 const YT_MS = 8000;
@@ -63,7 +64,7 @@ function hasChinese(query) {
   return /[\u4e00-\u9fff]/.test(String(query || ''));
 }
 
-function pickChannels(query, asked, hasGrok) {
+function pickChannels(query, asked) {
   const q = String(query || '');
   if (asked && asked.length) {
     return [...new Set(asked.map((c) => String(c).toLowerCase()))];
@@ -387,73 +388,6 @@ function ytSearch(query, n, signal) {
   });
 }
 
-function collectUrls(obj, out, seen) {
-  if (!obj || typeof obj !== 'object') return;
-  if (Array.isArray(obj)) {
-    for (const x of obj) collectUrls(x, out, seen);
-    return;
-  }
-  for (const v of Object.values(obj)) {
-    if (typeof v === 'string' && /^https?:\/\//i.test(v)) {
-      const u = v.split('#')[0];
-      if (!seen.has(u)) {
-        seen.add(u);
-        out.push(u);
-      }
-    } else if (v && typeof v === 'object') {
-      collectUrls(v, out, seen);
-    }
-  }
-}
-
-function skipGrokUrl(raw) {
-  try {
-    const u = new URL(raw);
-    const h = u.hostname.toLowerCase();
-    if (h === 't.co' || h === 'r.jina.ai' || h.endsWith('.jina.ai')) return true;
-    if (h.endsWith('.openwrld.tk')) return true;
-    return false;
-  } catch {
-    return true;
-  }
-}
-
-async function grokSearch(ctx, query, n, signal) {
-  if (!ctx || typeof ctx.grokBearer !== 'function') throw new Error('grok-ctx-missing');
-  const tok = await ctx.grokBearer();
-  const r = await doorFetch(ctx.upFetch, (ctx.grokUp() || 'https://api.x.ai') + '/v1/responses', {
-    method: 'POST',
-    headers: {
-      authorization: 'Bearer ' + tok,
-      'content-type': 'application/json',
-      accept: 'application/json'
-    },
-    signal,
-    body: JSON.stringify({
-      model: 'grok-4.6',
-      stream: false,
-      store: false,
-      tools: [{ type: 'web_search' }],
-      input: query
-    })
-  }, GROK_MS);
-  const text = await r.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch {}
-  if (!r.ok) throw new Error('grok-' + r.status);
-  const urls = [];
-  collectUrls(body, urls, new Set());
-  const sources = [];
-  const seen = new Set();
-  for (const url of urls) {
-    if (sources.length >= n) break;
-    if (skipGrokUrl(url)) continue;
-    pushSrc(sources, seen, { url, title: undefined, snippet: undefined });
-  }
-  if (!sources.length) throw new Error('grok-empty');
-  return sources;
-}
-
 const RUNNERS = {
   so360: (upFetch, q, n) => cn.engines.so360(q, n),
   bingcn: (upFetch, q, n) => cn.engines.bing(q, n),
@@ -469,7 +403,6 @@ const RUNNERS = {
 
 async function runOne(id, ctx, query, n, signal) {
   if (signal && signal.aborted) throw new Error('engine-timeout');
-  if (id === 'grok') return grokSearch(ctx, query, n, signal);
   const run = RUNNERS[id];
   if (!run) throw new Error('unknown');
   return run(ctx.upFetch, query, n, signal);
@@ -486,7 +419,7 @@ async function runChannels(ctx, channels, query, n) {
       continue;
     }
     const ac = new AbortController();
-    const ms = id === 'grok' ? GROK_MS : (id === 'exa' ? EXA_MS : ENGINE_MS);
+    const ms = id === 'exa' ? EXA_MS : ENGINE_MS;
     const t = setTimeout(() => ac.abort(), ms);
     try {
       const rows = await Promise.race([
@@ -536,15 +469,32 @@ async function runTogether(ctx, channels, query, n) {
 
 const deepJobs = new Map();  // deep searches under way or finished: query -> { at, out, failed, run }
 
+const DEEP_ASKED = /^(深搜|深度搜索|深度检索|deep)[\s:：]+/i;
+// Questions whose answer is one authoritative page, which a list of links rarely puts first.
+const DEEP_WORTH = /国家标准|行业标准|团体标准|标准号|标准编号|\bGB\s*\/?\s*T?\s*\d|\bISO\s*\d|\bASTM\b|\bDIN\s*\d|法规|条例|实施细则|管理办法|司法解释|官方出处|权威出处|原文出处|论文|文献|白皮书|指南原文|研究报告/i;
+
+// Deep search needs the ChatGPT subscription on this site.
+function deepOn(ctx) {
+  return !!(ctx && typeof ctx.hasGptSearch === 'function' && ctx.hasGptSearch());
+}
+
+function wantsDeep(query) {
+  const q = String(query || '');
+  if (DEEP_ASKED.test(q)) return 'asked';
+  if (DEEP_WORTH.test(q)) return 'auto';
+  return '';
+}
+
 async function runSearch(ctx, query, maxResults, asked) {
   const n = Math.max(1, Math.min(Number(maxResults) || 8, 12));
-  const hasGrok = !!(ctx && ctx.hasGrok && ctx.hasGrok());
-  const deep = /^(深搜|深度搜索|grok)[\s:：]+/i.test(String(query || ''));
-  query = String(query || '').replace(/^(深搜|深度搜索|grok)[\s:：]+/i, '').trim();
-  let deepMissed = '';
-  if (deep && hasGrok && ctx.port) {
-    // Grok reads the pages and answers with its sources, which takes about a
-    // minute, and the desk ends a tool call after one minute. So the work
+  const via = deepOn(ctx);
+  const deepTag = 'gpt-deep';
+  const deep = !(asked && asked.length) ? wantsDeep(query) : '';
+  query = String(query || '').replace(DEEP_ASKED, '').trim();
+  let deepMissed = deep === 'asked' && !via ? '这台服务器没有接 GPT 订阅，深搜做不了，下面是普通搜索的结果。' : '';
+  if (deep && via && ctx.port) {
+    // The model reads the pages and answers with its sources, which can take
+    // most of a minute, and the desk ends a tool call after one minute. So the work
     // goes on in the background: this call waits 40 seconds for it, and if it
     // is not done the everyday engines answer now and the same query asked
     // again picks the finished answer up.
@@ -552,35 +502,34 @@ async function runSearch(ctx, query, maxResults, asked) {
     let job = deepJobs.get(key);
     if (!job || (job.failed && Date.now() - job.at > 5000) || Date.now() - job.at > 20 * 60000) {
       job = { at: Date.now(), out: null, failed: false };
-      job.run = cn.engines.grok(query, n, ctx.port, 150000).then((out) => { job.out = out; }, () => { job.failed = true; });
+      job.run = cn.engines.deep(query, n, ctx.port, 150000).then((out) => { job.out = out; }, () => { job.failed = true; });
       deepJobs.set(key, job);
       if (deepJobs.size > 60) deepJobs.delete(deepJobs.keys().next().value);
     }
     if (!job.out && !job.failed) await Promise.race([job.run, new Promise((r) => setTimeout(r, 40000))]);
-    if (job.out) return { content: job.out.content, sources: job.out.sources, truncated: false, engines: [{ id: 'grok-deep', ok: 1, n: job.out.sources.length }] };
+    if (job.out) return { content: job.out.content, sources: job.out.sources, truncated: false, engines: [{ id: deepTag, ok: 1, n: job.out.sources.length }] };
     deepMissed = job.failed
       ? '深搜这次没有成功，下面是普通搜索的结果。'
       : '深搜还在查（通常再等二三十秒）。下面先给普通搜索的结果；要深搜的权威出处，用一模一样的查询再搜一次就能取到。';
   }
-  let channels = pickChannels(query, asked, hasGrok);
+  let channels = pickChannels(query, asked);
   const together = !(asked && asked.length) && hasChinese(query) && channels[0] === 'so360';
   let { engines, sources } = together ? await runTogether(ctx, channels, query, n) : await runChannels(ctx, channels, query, n);
   if (!sources.length && !(asked && asked.length)) {
     const need = [];
     if (channels.indexOf('exa') < 0) need.push('exa');
     if (channels.indexOf('bing') < 0) need.push('bing');
-    if (hasGrok && channels.indexOf('grok') < 0) need.push('grok');
     if (need.length) {
       const second = await runChannels(ctx, need, query, n);
       engines = engines.concat(second.engines);
       sources = second.sources;
     }
-    if (!sources.length && hasGrok && ctx.port && !deepMissed) {
+    if (!sources.length && via && ctx.port && !deepMissed) {
       try {
-        const out = await cn.engines.grok(query, n, ctx.port, 36000);
-        return { content: out.content, sources: out.sources, truncated: false, engines: engines.concat([{ id: 'grok-deep', ok: 1, n: out.sources.length }]) };
+        const out = await cn.engines.deep(query, n, ctx.port, 36000);
+        return { content: out.content, sources: out.sources, truncated: false, engines: engines.concat([{ id: deepTag, ok: 1, n: out.sources.length }]) };
       } catch (e) {
-        engines.push({ id: 'grok-deep', ok: 0, n: 0, err: String(e && e.message ? e.message : e).slice(0, 80) });
+        engines.push({ id: deepTag, ok: 0, n: 0, err: String(e && e.message ? e.message : e).slice(0, 80) });
       }
     }
   }
@@ -594,7 +543,7 @@ async function runSearch(ctx, query, maxResults, asked) {
   return {
     content: (deepMissed ? deepMissed + ' ' : '') + 'engines: ' + live.join(',')
       + '. snippets are page highlights. answer now. do not web_fetch unless one URL is still missing a number.'
-      + ' 要查权威出处、论文、指南，把查询改成以「深搜 」开头再搜一次（Grok 联网检索，约半分钟到四十秒）。',
+      + (via ? ' 要查权威出处、论文、指南、要多个来源互相核对的，把查询改成以「深搜 」开头再搜一次（模型联网检索，约 20–40 秒）。' : ''),
     sources,
     truncated: sources.length > n,
     engines

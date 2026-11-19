@@ -99,6 +99,8 @@ jobs:
         run: node scripts/prove-gw-sse-done.js
       - name: Prove the model list carries each model's window and learns a refused limit
         run: node scripts/prove-gw-context.js
+      - name: Prove deep search is the GPT subscription and asks for it only when it is worth it
+        run: node scripts/prove-search-route.js
       - name: Prove desk skills cache lays the site's _skills over the bundled skills
         run: node scripts/prove-sync-skills.js
       - name: Prove the Caddyfile imports extension routes inside the site
