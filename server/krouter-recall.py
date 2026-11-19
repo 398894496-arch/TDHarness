@@ -34,22 +34,25 @@ VERSION = (HERE / "vendor" / "krouter" / "VERSION").read_text(encoding="utf-8").
 
 from krouter_tdh import bank_state, ensure_map  # noqa: E402  one state folder and alias table per bank
 
-DIGEST = "90 系统文件/自动化/下意识.md"
-DIGEST_LINES = 60
+# Session start, all banks together: under the 10,000 characters a hook may add (KRouter's own START_MAX).
+START_ROOM = 9000
+DESK_USE = ("用法：员工的话提到上面任何一件事，哪怕换了说法、没说名字，回答前先用 company_knowledge（route=search，"
+            "问题写那件事的名字）打开那一页再用，回答里注明出处页。员工粘贴的代码、日志里碰巧出现的词不算提到。"
+            "和员工的话无关就什么都不做，也不要提这份索引。")
 
 
 def hook(req: dict) -> dict:
     """KRouter's own hooks for a TDH desk (session_hook.py does the same for Claude Code on one machine).
-    start: the standing index (下意识) of each bank this person opens. prompt: what this message names
+    start: the experience digest and the standing index (下意识) of each bank this person opens. prompt: what this message names
     (recollect: alias table, trigger words; cold phrases sort last), at most two pages, each once per session,
     logged as used (the hot cycle's record)."""
     import recollect
-    import zones
 
     which = str(req.get("hook") or "")
     session = str(req.get("session") or "")[:64]
     parts = []
     hits_all = []
+    room = START_ROOM
     for bank in req.get("banks") or []:
         folder = Path(str((bank or {}).get("dir") or ""))
         if not folder.is_dir():
@@ -57,11 +60,24 @@ def hook(req: dict) -> dict:
         os.environ["KROUTER_STATE_DIR"] = str(bank_state(folder))
         ensure_map(folder)
         if which == "start":
-            page = zones.path(folder, DIGEST)
-            if page.is_file():
-                lines = [l for l in page.read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("---")]
-                if lines:
-                    parts.append("\n".join(lines[:DIGEST_LINES]))
+            # KRouter's own session start (session_hook.py): the experience digest, then the standing index, each
+            # "" when the bank has none (an empty alias table used to bring the index page's bare template). Only
+            # the index's last line changes: it names KRouter's local tools and this server's path; a desk opens a
+            # page with company_knowledge.
+            import session_hook
+
+            # A person's own cards are copied into the company (or department) memory each night
+            # (krouter-nightly.js): their digest comes from there, once.
+            exp = "" if bank.get("name") == "personal" else session_hook.experience_text(folder)
+            room -= len(exp)
+            idx = session_hook.index_text(folder, room)
+            if idx:
+                lines = idx.split("\n")
+                if lines[-1].startswith(("用法：", "How to use")):
+                    lines[-1] = DESK_USE
+                idx = "\n".join(lines)
+                room -= len(idx)
+            parts.extend(t for t in (exp, idx) if t)
             continue
         text = str(req.get("text") or "").strip()
         if not text or len(text) > 1500:

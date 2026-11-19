@@ -87,7 +87,14 @@ async function run(root, krouter) {
   put(company, '_handbook/_company/rules.md', '# 规章\n\n上班九点打卡。\n');
   // The company memory as KRouter keeps it: its zones map, the standing index and the trigger words its nightly writes.
   put(company, '_shared/_memory/krouter-zones.psv', '01 项目|01-projects\n02 经验与方法|02-methods\n03 资料与证据|03-evidence\n04 已完成与复盘|04-reviews\n05 时间日志|05-logs\n90 系统文件|90-system\n');
-  put(company, '_shared/_memory/90-system/自动化/下意识.md', '---\ntitle: 下意识\n---\n\n- 寄样／样品：先填寄样单，主管批了再寄〔02 经验与方法/样品寄送.md〕\n');
+  // Session start is KRouter's own (session_hook.py): the experience digest of the company memory's cards and the
+  // standing index of what its alias table names (a live page, by its path in the bank). A person's own copy of a
+  // card is not listed again.
+  put(company, '_shared/_memory/02-methods/样品寄送.md', '---\ntitle: 样品寄送流程\nstatus: active\n---\n\n# 样品寄送流程\n\n样品寄送流程：先填寄样单，主管批了再寄，运费公司出。\n');
+  put(company, '_shared/_memory/90-system/canonical_sources.psv', '# id|aliases separated by ;|Vault-relative source|evidence anchor\nsample-ship|寄样;样品寄送|02-methods/样品寄送.md|样品寄送流程：先填寄样单，主管批了再寄\n');
+  const card = '---\ntitle: "经验｜报价前先逐项重算"\ntype: experience-card\nstatus: provisional\ndate: 2026-11-19\nsource: krouter-capture\n---\n\n# 经验｜报价前先逐项重算\n\n- 处境：手头有了图纸、要给客户报价。\n- 做法：按图把材料、加工、试模逐项估算后加总。\n- 结果：发现原报价太紧，改高了。\n- 通用说法：细节多了就逐项重算。\n';
+  put(company, '_shared/_memory/02-methods/经验卡/经验｜报价前先逐项重算.md', card);
+  put(company, 'content/emp-eve/_memory/02-methods/经验卡/经验｜报价前先逐项重算.md', card);
   put(company, '_shared/_memory/90-system/自动化/下意识触发词.psv', '# rel|words\n02-methods/样品寄送.md|样品寄送流程;样品审批\n');
 
   const on = await run(root, true);
@@ -102,8 +109,12 @@ async function run(root, krouter) {
   assert.ok(on.company.hits.some((h) => h.via === 'krouter' && /_shared\/_memory\/02-methods\/样品寄送\.md$/.test(h.path)), 'company memory reaches everyone: ' + JSON.stringify(on.company.hits));
   assert.ok(!on.off.hits.some((h) => h.via === 'krouter'), 'an off-topic question got KRouter hits: ' + JSON.stringify(on.off.hits));
 
-  // Session start: the company standing index.
-  assert.ok(/主管批了再寄/.test(on.start.text || ''), 'session start brings the standing index: ' + JSON.stringify(on.start));
+  // Session start: the company memory's experience digest and standing index, opened on a desk with company_knowledge.
+  const st = on.start.text || '';
+  assert.ok(/寄样／样品寄送：.*主管批了再寄〔02-methods\/样品寄送\.md〕/.test(st), 'session start brings the standing index: ' + JSON.stringify(on.start));
+  assert.ok(/KRouter 经验摘要/.test(st) && st.split('细节多了就逐项重算').length === 2, 'the experience digest, each card once: ' + st);
+  assert.ok(/company_knowledge/.test(st) && !/krouter_ask|route_knowledge\.sh/.test(st) && st.indexOf(root) < 0, 'a desk is told its own tool, not KRouter\'s local ones or this server\'s path: ' + st);
+  assert.ok(!/row_count|status: generated/.test(st), 'no bare page template');
   // A message with a trigger phrase brings that page, once per session; an unrelated one brings nothing.
   // (KRouter's own rule: a phrase under four characters inside a longer message does not count.)
   assert.ok(/样品寄送/.test(on.prompt1.text || ''), 'a trigger word brings its page: ' + JSON.stringify(on.prompt1));
