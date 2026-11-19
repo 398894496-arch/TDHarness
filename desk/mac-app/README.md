@@ -21,4 +21,9 @@ runs `site-cs.py mac-app-zip`, which writes `TDHarness-mac.zip`: a `TDHarness/` 
   `scripts/p-client-app/mac/`); `CompanyDesk.swift` and `build-mac.sh` are the older thin client,
   kept for reference.
 
+The download page offers `TDHarness.dmg` (company-mac-dmg-v1), made on a Mac with
+`scripts/build-mac-dmg.sh <CompanyDesk-mac.zip> <out.dmg>` (same app, plus an Applications link) and
+copied to `D:\dsh\client-dist\TDHarness.dmg`; the zip stays as the fallback. An installed desk
+updates itself, so the dmg is remade only when this folder changes.
+
 Proof: `python3 scripts/prove-mac-app-zip.py`.

@@ -76,6 +76,12 @@ if ($tn -match 'TAILNET_SITE_OK=1') {
   & $py $SitePy --site $SiteYml put-zip --src (Join-Path $Dist 'CompanyDesk-win.zip') --file 'D:\dsh\runtime\tailscale\vendor' --name 'CompanyDesk/vendor/'
   if ($LASTEXITCODE -ne 0) { throw 'tailnet-vendor-put-failed' }
   Copy-Item -Force 'D:\dsh\runtime\tailscale\vendor\tailscale-setup.msi' (Join-Path $Dist 'tailscale-setup.msi')
+  # company-mac-tailnet-join-v1: the Mac pack gets the same files and Tailscale's pkg (mac-join-off-lan.sh).
+  $macZip = Join-Path $Dist 'CompanyDesk-mac.zip'
+  if ((Test-Path -LiteralPath $macZip) -and (Test-Path -LiteralPath 'D:\dsh\runtime\tailscale\vendor-mac\Tailscale-macos.pkg')) {
+    & $py $SitePy --site $SiteYml put-zip --src $macZip --file 'D:\dsh\runtime\tailscale\vendor-mac' --name 'CompanyDesk/vendor/'
+    if ($LASTEXITCODE -ne 0) { throw 'tailnet-vendor-mac-put-failed' }
+  }
 }
 
 # 2c. Desktop control (company-desktop-cua-v1): Cua Driver from the release archives that

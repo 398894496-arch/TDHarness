@@ -21,8 +21,8 @@ done
 is_product() {
   case "$1" in
     prefix|prefix/*|node|node/*|plugins|plugins/*|home/profiles/web/node_modules|home/profiles/web/node_modules/*) return 0 ;;
-    skills|skills/*|opencli|opencli/*|peekaboo|peekaboo/*|cua-driver|cua-driver/*) return 0 ;;
-    TDHarness.exe|TDHarness|start.ps1|start.command|CompanyDesk.vbs|WebView2Loader.dll|tree-check.js|tree-restore.ps1|tree-restore.sh|pack-update-check.js|sync-skills.js|sync-desk-home.sh|sync-desk-home.ps1|prove-cosmokit.js|desk-lease.js|mac-mount-company.sh|mac-pin-settings.js|mac-company-login.js|mac-smb-mount.js|BUILD.json|home/profiles/web/package.json|home/profiles/web/overlay.yml|presets|presets/*) return 0 ;;
+    skills|skills/*|opencli|opencli/*|peekaboo|peekaboo/*|cua-driver|cua-driver/*|vendor|vendor/*) return 0 ;;
+    TDHarness.exe|TDHarness|start.ps1|start.command|CompanyDesk.vbs|WebView2Loader.dll|tree-check.js|tree-restore.ps1|tree-restore.sh|pack-update-check.js|sync-skills.js|sync-desk-home.sh|sync-desk-home.ps1|prove-cosmokit.js|desk-lease.js|mac-mount-company.sh|mac-join-off-lan.sh|mac-pin-settings.js|mac-company-login.js|mac-smb-mount.js|BUILD.json|home/profiles/web/package.json|home/profiles/web/overlay.yml|presets|presets/*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -134,6 +134,8 @@ copy_tree "$src/skills" "$ROOT/skills"
 copy_tree "$src/opencli" "$ROOT/opencli"
 copy_tree "$src/peekaboo" "$ROOT/peekaboo"
 copy_tree "$src/cua-driver" "$ROOT/cua-driver"
+# company-tailnet-vendor-v1: the site's tailnet files (join key, server address, Tailscale installer)
+copy_tree "$src/vendor" "$ROOT/vendor"
 if [[ -d "$src/home/profiles/web/node_modules" ]]; then
   mkdir -p "$ROOT/home/profiles/web"
   copy_tree "$src/home/profiles/web/node_modules" "$ROOT/home/profiles/web/node_modules"
@@ -142,7 +144,7 @@ fi
 wrote=0
 for f in TDHarness.exe TDHarness start.ps1 start.command CompanyDesk.vbs WebView2Loader.dll \
          tree-check.js tree-restore.ps1 tree-restore.sh pack-update-check.js \
-         sync-skills.js sync-desk-home.sh sync-desk-home.ps1 prove-cosmokit.js desk-lease.js mac-mount-company.sh \
+         sync-skills.js sync-desk-home.sh sync-desk-home.ps1 prove-cosmokit.js desk-lease.js mac-mount-company.sh mac-join-off-lan.sh \
          mac-pin-settings.js mac-company-login.js mac-smb-mount.js BUILD.json \
          home/profiles/web/package.json home/profiles/web/overlay.yml; do
   [[ -e "$src/$f" || -L "$src/$f" ]] || continue
@@ -152,7 +154,7 @@ for f in TDHarness.exe TDHarness start.ps1 start.command CompanyDesk.vbs WebView
   wrote=$((wrote + 1))
 done
 
-for d in prefix node plugins presets skills opencli peekaboo cua-driver home/profiles/web/node_modules; do
+for d in prefix node plugins presets skills opencli peekaboo cua-driver vendor home/profiles/web/node_modules; do
   if [[ -d "$ROOT/$d" ]]; then
     wrote=$((wrote + 1))
   fi

@@ -4,6 +4,21 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.13
+
+**Mac 版改成 DMG：双击打开，把 TDHarness 拖到旁边的 Applications**
+- Mac 用户习惯的是 DMG，不是 zip。下载页的 Mac 按钮现在给 `TDHarness.dmg`（`company-mac-dmg-v1`）：双击打开一个窗口，里面是 `TDHarness.app` 和「Applications」文件夹，把一个拖到另一个上就装好了。zip 版留作「打不开 dmg 时」的备用链接。
+- DMG 只能在 Mac 上做（`hdiutil`），发布是在 Windows 服务器上跑的，所以用 `scripts/build-mac-dmg.sh <CompanyDesk-mac.zip> <out.dmg>` 在任意一台 Mac 上做，再放进服务器的 `D:\dsh\client-dist\TDHarness.dmg`。
+- **不用每次发布都重做**：装好的客户端第一次打开会自己更新到最新的程序包。只有 `desk/mac-app` 里的外壳变了才要重做。
+- App 里面和 zip 版的一样：同一个外壳（编译时自带的签名），同一份程序包。第一次打开时同样要到「系统设置 → 隐私与安全性」点一次「仍要打开」。
+
+**装好就入公司加密网络（Tailscale），Mac 和 Windows 一样**
+- Mac（`company-mac-tailnet-join-v1`）：第一次打开时，`desk/pack/mac/mac-join-off-lan.sh`（`start.command` 在登录前调用）说一句为什么，请员工输一次这台 Mac 的开机密码，装好 Tailscale 官方安装包（装之前用 `pkgutil` 核对是 Tailscale Inc. 签名并经 Apple 公证），再用站点的员工入网密钥加入公司 tailnet。已经能看到服务器的 Mac 什么都不问；登录着别的 tailnet 的 Mac 用 `tailscale login` 把公司网络加成第二个账号，不会顶掉原来的。在公司里点「以后再说」7 天内不再问，不在公司每次都问。日志在 `~/.dsh-company-rc8/ts-join.log`。
+- 服务器（`server/tailnet-site.ps1`、发布 2b 步）：多准备一份 `vendor-mac\`（入网密钥、服务器 tailnet 地址、Tailscale 官方 Mac 安装包），放进 Mac 包的 `vendor/`。DMG 里的 app 带着这份包，在家第一次装也能入网。
+- Windows（`company-setup-tailnet-always-v1`）：下载页的 Windows 按钮改给带着入网文件的安装包（`TDHarness-Setup-remote.exe`，下载下来仍叫 `TDHarness-Setup.exe`）。以前它在公司里能连上服务器就跳过入网，现在在公司里也先入网（Windows 问「是否允许更改」时点「是」），入网没成也照样装完，`TDHarness.exe` 启动时会再问；已在公司 tailnet 里的电脑不弹任何东西。
+- **修了一个让已装电脑永远入不了网的问题**（`company-tailnet-vendor-v1`）：`vendor/`（入网文件所在目录）不在客户端更新的范围里，已经装好的电脑更新时从来拿不到它，所以启动时的入网检查一直跳过（服务器上的 tailnet 里一台员工电脑都没有）。现在 `vendor/` 在 Windows 和 Mac 的更新范围里，`pack-update-check.js` 发现本机缺 `vendor/` 时也会补一次完整更新（增量包不带没变过的文件）。
+- 证明：`scripts/prove-mac-tailnet-join.sh`（用假的 Tailscale 和 osascript 走一遍：没有站点文件、已在公司网络、点「以后再说」、全新 Mac、登录着别的 tailnet、Tailscale 起不来）。
+
 ## 2026.11.19.12
 
 **Mac 版做成拖拽安装：下载、解开，把 TDHarness 拖进「应用程序」**
