@@ -18,6 +18,10 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 **GitHub 搜索走对路**（`company-search-github-v2`）
 - 没有 GitHub 令牌时 GitHub 接口每小时 60 次、搜索每分钟 10 次，自检连搜几次 Agent Reach 的 GitHub 专线和网关的接口都被限流，最后落到 Bing。现在 GitHub 问题先走 Agent Reach 网页搜索限定 `site:github.com`（实测「cpython github」第一条就是 `python/cpython`，不占 GitHub 额度），再走 GitHub 专线和接口，最后才是 Bing；被限流的渠道歇 10 分钟。查询里「github / 仓库」这类词不再原样传给 GitHub（以前会搜出名字里带 github 的杂仓库）。
 
+**登录框记住这台电脑上次登录的账号**（`company-remember-login-v1`）
+- Mac 的账号对话框原来默认写死 `tdh`（初始管理员），Windows 的账号框是空的。现在两端都默认填这台电脑上次登录成功的账号（存在 `~/.dsh-company-rc8/last.login`，只有账号名，不存密码，退出登录也留着）。
+- 同一账号在另一台电脑登录，先登录的那台被挤下线（「这个账号已在其他设备登录，本机已退出」）：这是原有的设计，保持不变。
+
 **员工端说明写清楚系统工具，命令行里直接有 node 和 opencli**（`company-shell-path-v1`）
 - 工具总览（`company-tools`）原来没写桌面控制，员工让 Agent 检查「系统工具」，它理解成了 PowerShell。现在写明：系统工具 = Cua Driver（`mcp__cua__desktop`），怎么自检（`health_report`、`list_apps`、`get_window_state`，大窗口加 `query`）。
 - 客户端加 `bin/opencli`（Mac）和 `bin\opencli.cmd`（Windows），用自带的 Node 跑自带的 OpenCLI；启动 Agent 时把 `bin` 和自带 Node 放进 PATH。`bin/` 在两端的更新范围里。

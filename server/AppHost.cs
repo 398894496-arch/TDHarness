@@ -934,6 +934,11 @@ internal static class AppHost
             File.WriteAllText(Path.Combine(rc, "login.role"), hit.Role.Trim() + "\n");
         if (!string.IsNullOrEmpty(hit.Login))
             File.WriteAllText(Path.Combine(rc, "login.name"), hit.Login.Trim() + "\n");
+        // company-remember-login-v1：登录框下次默认填这台电脑上次登录成功的账号。只有账号名，不是密码；退出登录也留着。
+        if (!string.IsNullOrEmpty(hit.Login))
+        {
+            try { File.WriteAllText(Path.Combine(rc, "last.login"), hit.Login.Trim() + "\n"); } catch { }
+        }
         var site = LeaseSite();
         if (!string.IsNullOrEmpty(site))
             File.WriteAllText(Path.Combine(rc, "site.login"), site.Trim() + "\n");
@@ -1651,6 +1656,12 @@ internal sealed class ShellForm : Form
         uLab.Location = new Point(24, 58);
         _user.Width = 350;
         _user.Location = new Point(24, 82);
+        try
+        {
+            var last = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), "last.login")).Trim();
+            if (Regex.IsMatch(last, @"^[A-Za-z0-9._@-]{1,64}$")) _user.Text = last;
+        }
+        catch { }
         var pLab = new Label();
         pLab.Text = "密码";
         pLab.AutoSize = true;
