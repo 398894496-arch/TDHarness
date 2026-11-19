@@ -150,7 +150,7 @@ function main() {
       zones.get(zone.key).files.push(...files);
       if (!files.length) continue;
       const bank = path.join(home, '_memory');
-      if (!DRY) ensureBank(bank);
+      ensureBank(bank); // folders only: KRouter needs the bank to exist even to say what it would import
       // KRouter imports nothing before a yes. On a TDH server the yes is the company's (2026-11-19: every
       // conversation's experience is distilled into the company memory every day). It is recorded in that
       // person's own KRouter state the KRouter way (--consent, pointed at an empty folder: nothing imported).
