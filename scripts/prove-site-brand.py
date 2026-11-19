@@ -68,6 +68,13 @@ with tempfile.TemporaryDirectory() as d:
     t2, how2 = b.patch(t, bd)
     if t2 != t or how2 != "already":
         fail("not-idempotent " + how2)
+    if value(src, "SITE_BRAND_COLOR") != "0" or value(t, "SITE_BRAND_COLOR") != "0":
+        fail("colour-on-without-the-file")
+    (bd / "color").write_text("", encoding="utf-8")       # a coloured logo: drawn as it is, not as a mask
+    tc, _ = b.patch(src, bd)
+    if value(tc, "SITE_BRAND_COLOR") != "1":
+        fail("colour-file-ignored")
+    (bd / "color").unlink()
     # Only the mark: the wordmark stays empty, so the wide sidebar shows mark + name.
     (bd / "wordmark.png").unlink()
     t3, _ = b.patch(src, bd)

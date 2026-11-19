@@ -4,6 +4,8 @@
   wordmark.png  侧栏展开时的字标（横图，透明底；按遮罩画，颜色跟界面走）
   mark.png      侧栏收起和会话首屏的小标（方图，透明底）
   label.txt     品牌名（读屏用；没有字标时显示成文字）
+  color         有这个文件（内容随意）就按原色画图，不当遮罩：彩色 Logo 用（红底银字这类，
+                当遮罩会变成一块单色的形状）。原色图在深色界面上不变色，要自己选对比够的图
 有哪个就换哪个，一个都没有就什么都不改（保持仓库里的 TDH 图标和 TDHarness）。
 """
 import base64
@@ -52,6 +54,8 @@ def patch(t: str, d=None):
         raw = mk.read_bytes()
         png_size(raw)
         t = _set(t, "SITE_BRAND_MARK", '"data:image/png;base64,' + base64.b64encode(raw).decode() + '"')
+    if (d / "color").is_file():
+        t = _set(t, "SITE_BRAND_COLOR", "1")
     if lb.is_file():
         label = lb.read_text(encoding="utf-8").strip().splitlines()[0].strip() if lb.read_text(encoding="utf-8").strip() else ""
         if label:

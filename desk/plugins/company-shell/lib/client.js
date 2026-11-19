@@ -89,6 +89,8 @@ window.__ModuleLoader__.load({
 		const SITE_BRAND_MARK = "data:image/png;base64,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";
 		const SITE_BRAND_RATIO = 0;
 		const SITE_BRAND_LABEL = "TDHarness";
+		// 1: draw the site's images in their own colours (a coloured logo), not as a mask in the chrome's ink.
+		const SITE_BRAND_COLOR = 0;
 
 		// company-settings-look-v2. Every page this shell adds to settings, and
 		// the sidebar's new-session / panel rows, share this one look: a page
@@ -4535,6 +4537,24 @@ window.__ModuleLoader__.load({
 				}, compact ? "TDH" : SITE_BRAND_LABEL);
 			}
 			const w = compact ? h : Math.round(h * (SITE_BRAND_RATIO || 1));
+			if (SITE_BRAND_COLOR) {
+				// Not brand-mark / brand-wordmark: those get a background colour painted through the mask.
+				return React.createElement("span", {
+					className: props.className,
+					"data-company-shell": "brand-color",
+					role: "img",
+					"aria-label": SITE_BRAND_LABEL,
+					style: {
+						display: "inline-block",
+						width: w + "px",
+						height: h + "px",
+						backgroundImage: "url(" + src + ")",
+						backgroundRepeat: "no-repeat",
+						backgroundPosition: "center",
+						backgroundSize: "contain"
+					}
+				});
+			}
 			return React.createElement("span", {
 				className: props.className,
 				"data-company-shell": compact ? "brand-mark" : "brand-wordmark",
