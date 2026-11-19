@@ -1745,7 +1745,7 @@ internal sealed class ShellForm : Form
         var have = DeskPrereq.WebView2Version();
         if (have.Length > 0) { AppHost.Log("webview2 " + have); return; }
         ShowNote("正在安装微软 WebView2 组件（第一次需要，约一两分钟）…", false);
-        var ok = DeskPrereq.InstallWebView2(DeskPrereq.WebView2InstallerUrl(Site.ZipUrl), AppHost.Log, 600000);
+        var ok = DeskPrereq.InstallWebView2(DeskPrereq.WebView2InstallerUrl(global::Site.ZipUrl), AppHost.Log, 600000);
         AppHost.Log("webview2 " + (ok ? DeskPrereq.WebView2Version() : "missing"));
         ShowNote(ok ? "" : "这台电脑缺微软 WebView2 组件，自动安装没成功。请联系管理员，或从微软官网下载「WebView2 Runtime」装上后再打开。", !ok);
     }
