@@ -60,6 +60,8 @@ jobs:
         run: node scripts/prove-knowledge.js
       - name: Prove the memory layer through KRouter, one bank per person
         run: node scripts/prove-krouter-memory.js
+      - name: Prove memory is one company memory, finance kept apart
+        run: node scripts/prove-memory-shared.js
         env:
           PROVE_PY: python
       - name: Prove the model gateway answers only a live login token

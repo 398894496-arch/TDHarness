@@ -294,8 +294,59 @@ function krAsk(req) {
   krChain = p.then(() => null, () => null);
   return p;
 }
+// company-memory-shared-v1: memory is not split into personal and team any more. What anyone asks to
+// remember goes into the company memory (_shared/_memory) that everyone searches; a department kept
+// apart (行政财务, privateDepts()) keeps its own (_handbook/<dept>/_memory), which only it reads.
+// Pages written to a personal _memory before this stay findable by their owner.
+function memoryHome(person) {
+  const dept = safe(person.dept || '');
+  if (dept && privateDepts().has(dept)) return { zone: 'dept', dir: C('_handbook', dept, '_memory') };
+  return { zone: 'shared', dir: C('_shared', '_memory') };
+}
 function memoryBanks(person) {
-  return [{ name: 'personal', dir: personalMemory(person) }, { name: 'company', dir: C('_shared', '_memory') }];
+  const home = memoryHome(person);
+  const banks = [{ name: 'company', dir: C('_shared', '_memory') }];
+  if (home.zone === 'dept') banks.push({ name: 'dept', dir: home.dir });
+  banks.push({ name: 'personal', dir: personalMemory(person) });
+  return banks;
+}
+
+const MEM_LAYERS = new Set(['01-projects', '02-methods', '03-evidence', '04-reviews', '05-logs', '90-system']);
+const MEM_MAX = 256 * 1024;
+function memorySlug(name) {
+  return String(name || '').trim().toLowerCase().replace(/\.md$/, '').replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 80);
+}
+// The server writes (it reaches every bank; a desk's own share account may not, and smbfs refuses the
+// kernel's hard-link writes). Replace is atomic (temp + rename); append adds to the end.
+function memoryWrite(person, body) {
+  const layer = String(body.layer || '');
+  if (!MEM_LAYERS.has(layer)) return { ok: false, status: 'bad-layer' };
+  const slug = memorySlug(body.name);
+  if (!slug) return { ok: false, status: 'bad-name' };
+  let content = String(body.content || '').replace(/^\uFEFF/, '');
+  if (!content.trim()) return { ok: false, status: 'empty' };
+  if (Buffer.byteLength(content, 'utf8') > MEM_MAX) return { ok: false, status: 'too-large' };
+  const mode = body.mode === 'append' ? 'append' : 'replace';
+  const home = memoryHome(person);
+  const file = path.join(home.dir, layer, slug + '.md');
+  if (!under(home.dir, file)) return { ok: false, status: 'bad-name' };
+  const day = new Date().toISOString().slice(0, 10);
+  if (mode === 'replace' && !/^---\s*\n/.test(content)) {
+    const title = String(body.title || slug).replace(/[\r\n]+/g, ' ').slice(0, 120);
+    content = ['---', 'title: ' + title, 'status: active', 'confidence: confirmed', 'source_ref: desk:' + person.login,
+      'author: ' + person.login, 'verified_at: ' + day, '---', '', '# ' + title, '', content].join('\n');
+  }
+  if (mode === 'append') content = '\n<!-- ' + day + ' ' + person.login + ' -->\n' + content;
+  if (!content.endsWith('\n')) content += '\n';
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  if (mode === 'append') {
+    fs.appendFileSync(file, content, 'utf8');
+  } else {
+    const tmp = file + '.' + process.pid + '.' + Date.now() + '.tmp';
+    fs.writeFileSync(tmp, content, 'utf8');
+    fs.renameSync(tmp, file);
+  }
+  return { ok: true, status: 'written', zone: home.zone, path: relName(file), mode, bytes: Buffer.byteLength(content, 'utf8') };
 }
 // How many of a bank's hits to take, by how sure KRouter is. A small bank (a new person's memory)
 // often says "none" with the right page first; one strong match of the question's words lets that
@@ -373,6 +424,25 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, { 'content-type': 'text/plain' });
     res.end('ok\n');
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/v1/memory-write') {
+    const person = personOf(tokenOf(req));
+    if (!person) {
+      json(401, { ok: false, status: 'login-required' });
+      return;
+    }
+    let body = {};
+    try { body = JSON.parse((await readBody(req)) || '{}'); } catch (e) {
+      json(400, { ok: false, status: 'bad-request' });
+      return;
+    }
+    let out;
+    try { out = memoryWrite(person, body || {}); } catch (e) {
+      out = { ok: false, status: 'write-failed', error: String(e && e.code || e && e.message || e).slice(0, 80) };
+    }
+    audit(person.login, url.pathname, out.ok ? 1 : 0);
+    json(out.ok ? 200 : 400, { ...out, login: person.login });
     return;
   }
   if (req.method === 'POST' && (url.pathname === '/v1/search' || url.pathname === '/v1/prior-work')) {
