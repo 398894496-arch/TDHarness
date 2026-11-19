@@ -62,6 +62,9 @@ jobs:
         run: node scripts/prove-krouter-memory.js
       - name: Prove memory is one company memory, finance kept apart
         run: node scripts/prove-memory-shared.js
+      - name: Prove KRouter's nightly runs on the company memory, conversations stay private
+        if: runner.os == 'Linux'
+        run: node scripts/prove-krouter-nightly.js
         env:
           PROVE_PY: python
       - name: Prove the model gateway answers only a live login token
