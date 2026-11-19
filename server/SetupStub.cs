@@ -129,6 +129,8 @@ internal static class Setup
             Log(SetupMark.Substring(0, 24));
             Log("dest " + dest);
             // company-compat-v1：先说清楚装不上的原因，不在下载到一半时才失败。
+            if (!DeskPrereq.IsWindows10OrLater())
+                throw new Exception("TDH 需要 Windows 10 或 Windows 11，这台电脑的系统太旧了");
             if (!Environment.Is64BitOperatingSystem)
                 throw new Exception("TDH 只支持 64 位 Windows，这台电脑是 32 位的系统");
             // 重装时旧的那份会先清掉，空出 1 GB 多，所以只要 1.2 GB。
