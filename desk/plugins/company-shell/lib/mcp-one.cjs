@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 "use strict";
 // One tool in front of an MCP server (stdio, one JSON message per line):
-//   node mcp-one.cjs --name desktop --label "Mac 桌面" [--hide a,b] -- <server command> [args...]
+//   node mcp-one.cjs --name desktop --label "Mac 桌面" [--hide a,b] [--only a,b] -- <server command> [args...]
+// --only is an allowlist: a server that grows new tools (Cua Driver has some 60) shows none of
+// them until they are added here. --hide drops names from what is left.
 // The kernel sends every tool's full definition with every model request. Peekaboo alone lists
 // 24 desktop tools (about 55 KB, half of a desk's request), Windows-MCP 10. Through this
 // wrapper the model sees a single tool, `<name>`, with { action, args }: the description lists
@@ -13,17 +15,20 @@ const { spawn } = require("node:child_process");
 const argv = process.argv.slice(2);
 const cut = argv.indexOf("--");
 if (cut < 0 || cut === argv.length - 1) {
-	process.stderr.write("usage: mcp-one.cjs --name desktop [--label text] [--hide a,b] -- <command> [args...]\n");
+	process.stderr.write("usage: mcp-one.cjs --name desktop [--label text] [--hide a,b] [--only a,b] -- <command> [args...]\n");
 	process.exit(2);
 }
 let NAME = "desktop";
 let LABEL = "桌面";
 let hidden = new Set();
+let only = null;
 for (let i = 0; i < cut; i++) {
 	if (argv[i] === "--name" && argv[i + 1]) NAME = argv[++i];
 	else if (argv[i] === "--label" && argv[i + 1]) LABEL = argv[++i];
 	else if (argv[i] === "--hide" && argv[i + 1]) hidden = new Set(argv[++i].split(",").map((s) => s.trim()).filter(Boolean));
+	else if (argv[i] === "--only" && argv[i + 1]) only = new Set(argv[++i].split(",").map((s) => s.trim()).filter(Boolean));
 }
+const offered = (name) => !hidden.has(name) && (!only || only.has(name));
 const [cmd, ...cmdArgs] = argv.slice(cut + 1);
 
 function firstSentence(text) {
@@ -65,13 +70,13 @@ function oneTool(tools) {
 function unwrapCall(params, known) {
 	const a = (params && params.arguments) || {};
 	const action = typeof a.action === "string" ? a.action : "";
-	if (!action || hidden.has(action) || (known.size && !known.has(action))) return { error: "unknown action: " + (action || "(none)") };
+	if (!action || !offered(action) || (known.size && !known.has(action))) return { error: "unknown action: " + (action || "(none)") };
 	const args = a.args && typeof a.args === "object" && !Array.isArray(a.args) ? a.args : {};
 	return { params: Object.assign({}, params, { name: action, arguments: args }) };
 }
 
 if (require.main !== module) {
-	module.exports = { oneTool, unwrapCall, setOptions(o) { if (o.name) NAME = o.name; if (o.label) LABEL = o.label; if (o.hide) hidden = new Set(o.hide); } };
+	module.exports = { oneTool, unwrapCall, offered: (n) => offered(n), setOptions(o) { if (o.name) NAME = o.name; if (o.label) LABEL = o.label; if (o.hide) hidden = new Set(o.hide); if (o.only) only = new Set(o.only); } };
 } else {
 	const child = spawn(cmd, cmdArgs, { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
 	const listIds = new Set();
@@ -99,7 +104,7 @@ if (require.main !== module) {
 				const got = unwrapCall(msg.params, known);
 				if (got.error) { send(process.stdout, { jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: got.error } }); return; }
 				msg.params = got.params;
-			} else if (hidden.has(msg.params.name)) {
+			} else if (!offered(msg.params.name)) {
 				send(process.stdout, { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "tool not available on this desk: " + msg.params.name } });
 				return;
 			}
@@ -112,7 +117,7 @@ if (require.main !== module) {
 		if (msg && msg.id !== undefined && listIds.has(msg.id)) {
 			listIds.delete(msg.id);
 			if (msg.result && Array.isArray(msg.result.tools)) {
-				const tools = msg.result.tools.filter((t) => t && t.name && !hidden.has(t.name));
+				const tools = msg.result.tools.filter((t) => t && t.name && offered(t.name));
 				known.clear();
 				for (const t of tools) known.add(t.name);
 				msg.result.tools = tools.length ? [oneTool(tools)] : [];

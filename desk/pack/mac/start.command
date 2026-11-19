@@ -234,6 +234,39 @@ const i = t.indexOf("- id: ");
 if (i < 0) throw new Error("overlay-no-rows");
 fs.writeFileSync(p, t.slice(0, i) + block + t.slice(i));
 ' "$OV"
+# company-desktop-cua-v1: desktop control is Cua Driver, which runs only from
+# /Applications/CuaDriver.app (the driver fixes that path, and macOS ties Accessibility and Screen
+# Recording to that app). The pack ships the app in cua-driver/; put it there when it is missing
+# or older. A newer one the person installed is left alone. No write access to /Applications:
+# the desktop tool reports it and the company-desktop skill says what to do.
+CUA_SRC="$ROOT/cua-driver/CuaDriver.app"
+CUA_APP="/Applications/CuaDriver.app"
+if [ -d "$CUA_SRC" ]; then
+  CUA_WANT="$(/usr/bin/defaults read "$CUA_SRC/Contents/Info" CFBundleShortVersionString 2>/dev/null || true)"
+  CUA_HAVE="$(/usr/bin/defaults read "$CUA_APP/Contents/Info" CFBundleShortVersionString 2>/dev/null || true)"
+  CUA_OLDER="$("$NODEBIN" -e '
+const [w, h] = process.argv.slice(1).map((v) => String(v || "").split(".").map((n) => parseInt(n, 10) || 0));
+if (!w.some(Boolean)) { process.stdout.write("0"); process.exit(0); }
+for (let i = 0; i < 3; i++) { if ((h[i] || 0) !== (w[i] || 0)) { process.stdout.write((h[i] || 0) < (w[i] || 0) ? "1" : "0"); process.exit(0); } }
+process.stdout.write("0");
+' "$CUA_WANT" "$CUA_HAVE" 2>/dev/null || echo 0)"
+  if [ "$CUA_OLDER" = "1" ]; then
+    [ -x "$CUA_APP/Contents/MacOS/cua-driver" ] && "$CUA_APP/Contents/MacOS/cua-driver" stop >/dev/null 2>&1 || true
+    CUA_TMP="/Applications/.CuaDriver.app.tdh-$$"
+    rm -rf "$CUA_TMP" 2>/dev/null || true
+    if /usr/bin/ditto "$CUA_SRC" "$CUA_TMP" 2>/dev/null && rm -rf "$CUA_APP" 2>/dev/null && mv "$CUA_TMP" "$CUA_APP" 2>/dev/null; then
+      echo "CUA_DRIVER_INSTALLED=$CUA_WANT"
+    else
+      rm -rf "$CUA_TMP" 2>/dev/null || true
+      echo "CUA_DRIVER_INSTALL=failed"
+    fi
+  fi
+  if [ -x "$CUA_APP/Contents/MacOS/cua-driver" ] && [ ! -f "$HOME/.cua-driver/.tdh-telemetry-off" ]; then
+    if CUA_DRIVER_RS_TELEMETRY_ENABLED=0 "$CUA_APP/Contents/MacOS/cua-driver" telemetry disable >/dev/null 2>&1; then
+      mkdir -p "$HOME/.cua-driver" && touch "$HOME/.cua-driver/.tdh-telemetry-off"
+    fi
+  fi
+fi
 BIN="$ROOT/prefix/lib/node_modules/@deepseek-ai/dsh/lib/bin.js"
 [[ -f "$BIN" ]] || BIN="$ROOT/prefix/node_modules/@deepseek-ai/dsh/lib/bin.js"
 PORT=17803

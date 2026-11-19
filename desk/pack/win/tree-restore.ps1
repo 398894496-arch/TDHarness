@@ -21,6 +21,7 @@ $TreePrefixes = @(
   'skills/',
   'opencli/',
   'windows-mcp/',
+  'cua-driver/',
   'ffmpeg/'
 )
 $TreeFiles = @(

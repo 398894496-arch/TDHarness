@@ -1,14 +1,17 @@
 'use strict';
 // Search/fetch door for the gateway. Desk clients only POST here.
-// One route for every installation, the same split as agent-reach: Exa first, the engines
-// inside China beside it for Chinese questions, and a channel of its own for GitHub, Bilibili
-// and YouTube questions. Deep search (the ChatGPT subscription searches and reads the pages
+// The route is Agent Reach (company-search-reach-v1; server\install-agent-reach.ps1 puts it in
+// D:\dsh\tools): its web search (Exa) first, with 360 and Bing China beside it for Chinese
+// questions (Agent Reach has no engine inside China), and its own channel for GitHub, Bilibili
+// and YouTube questions; links on those sites are read through it too. Where it is not
+// installed, or a channel of it fails, the gateway's own calls to the same services stand in. Deep search (the ChatGPT subscription searches and reads the pages
 // itself) is the slow, thorough path. It runs
 // when the query starts with 深搜, when the question asks for an authority (a standard, a
 // regulation, a paper, an official source: lists of links are weakest there), and as the last
 // resort when nothing else finds anything.
 
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
+const fs = require('fs');
 const cn = require('./web-search.js');
 const dns = require('dns');
 const net = require('net');
@@ -22,6 +25,9 @@ const EXA_MS = 12000;
 const SEARCH_BUDGET_MS = 16000;
 const FETCH_MS = 15000;
 const YT_MS = 8000;
+const REACH_MS = 8000;
+const REACH = process.env.TDH_AGENT_REACH || 'D:\\dsh\\tools\\bin\\agent-reach.exe';
+const REACH_HOME = process.env.TDH_AGENT_REACH_HOME || 'D:\\dsh\\runtime\\agent-reach-home';
 
 function mergeSignal(parent, ms) {
   const t = AbortSignal.timeout(ms);
@@ -69,23 +75,20 @@ function pickChannels(query, asked) {
   if (asked && asked.length) {
     return [...new Set(asked.map((c) => String(c).toLowerCase()))];
   }
+  // Agent Reach first; the gateway's own call to the same service behind it.
   if (isGithubQuery(q)) {
-    return ['github', 'bing'];
+    return ['reach:github', 'github', 'bing'];
   }
   if (isBiliQuery(q)) {
-    return ['bilibili', 'exa'];
+    return ['reach:bilibili', 'bilibili', 'reach:web', 'exa'];
   }
   if (isYoutubeQuery(q)) {
-    return ['youtube', 'exa'];
+    return ['reach:youtube', 'youtube', 'reach:web', 'exa'];
   }
-  // A question in Chinese is mostly answered by pages inside China, which
-  // 360 and Bing (China) find best; Exa adds the pages they miss.
-  if (hasChinese(q)) return ['so360', 'bingcn', 'exa'];
-  // agent-reach web search is Exa only. Bing is a short fallback.
-  const set = new Set();
-  set.add('exa');
-  set.add('bing');
-  return [...set];
+  // A question in Chinese is mostly answered by pages inside China, which 360 and Bing (China)
+  // find best: asked together with Agent Reach's web search (Exa), results woven.
+  if (hasChinese(q)) return ['reach:web', 'so360', 'bingcn'];
+  return ['reach:web', 'exa', 'bing'];
 }
 
 function pushSrc(out, seen, item) {
@@ -388,7 +391,68 @@ function ytSearch(query, n, signal) {
   });
 }
 
+// One Agent Reach call: `agent-reach <channel> <action> ...`, JSON on stdout. HOME keeps its
+// config out of the service account's profile.
+function reachOn() {
+  try { return fs.statSync(REACH).isFile(); } catch { return false; }
+}
+
+function reachCall(args, ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (!reachOn()) return reject(new Error('reach-missing'));
+    const env = Object.assign({}, process.env, { HOME: REACH_HOME, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' });
+    const child = execFile(REACH, args, { env, timeout: ms, maxBuffer: 8 << 20, windowsHide: true, encoding: 'utf8' }, (e, out) => {
+      if (signal) signal.removeEventListener('abort', stop);
+      let j = null;
+      try { j = JSON.parse(String(out || '')); } catch {}
+      if (j && j.ok === true) return resolve(j);
+      const why = j && j.error ? (j.error.code || 'error') + ' ' + (j.error.message || '') : (e && e.killed ? 'reach-timeout' : String(e && e.message ? e.message : 'reach-bad-output'));
+      reject(new Error('reach ' + why.slice(0, 100)));
+    });
+    const stop = () => { try { child.kill(); } catch {} };
+    if (signal) signal.addEventListener('abort', stop, { once: true });
+  });
+}
+
+function reachSearch(channel) {
+  return async (upFetch, q, n, signal) => {
+    const j = await reachCall([channel, 'search', q, '--limit', String(n)], REACH_MS, signal);
+    const out = [];
+    for (const it of Array.isArray(j.items) ? j.items : []) {
+      if (!it || !it.url) continue;
+      out.push({ url: String(it.url), title: it.title ? String(it.title) : undefined,
+        snippet: it.text ? asText(String(it.text)).slice(0, 400) : (it.author ? String(it.author) : undefined),
+        publishedAt: it.published_at ? String(it.published_at) : undefined });
+    }
+    if (!out.length) throw new Error('reach-empty');
+    return out;
+  };
+}
+
+// Links Agent Reach reads by their site (it knows how to get the content out of these).
+const REACH_READ = /^(?:www\.)?(?:github\.com|bilibili\.com|b23\.tv|youtube\.com|youtu\.be|v2ex\.com|x\.com|twitter\.com|reddit\.com|xiaohongshu\.com|xueqiu\.com)$/i;
+
+async function reachRead(url) {
+  let host = '';
+  try { host = new URL(url).hostname; } catch { return null; }
+  if (!REACH_READ.test(host) || !reachOn()) return null;
+  try {
+    const j = await reachCall(['read', url], FETCH_MS, null);
+    const it = Array.isArray(j.items) && j.items[0];
+    const text = it && (it.text || it.title) ? [it.title, it.author, it.text].filter(Boolean).join('\n\n') : '';
+    if (!text) return null;
+    const content = text.slice(0, MAX_FETCH);
+    return { url: (it && it.url) || url, statusCode: 200, body: { kind: 'text', content }, truncated: text.length > MAX_FETCH };
+  } catch {
+    return null;
+  }
+}
+
 const RUNNERS = {
+  'reach:web': reachSearch('web'),
+  'reach:github': reachSearch('github'),
+  'reach:bilibili': reachSearch('bilibili'),
+  'reach:youtube': reachSearch('youtube'),
   so360: (upFetch, q, n) => cn.engines.so360(q, n),
   bingcn: (upFetch, q, n) => cn.engines.bing(q, n),
   baidu: (upFetch, q, n) => cn.engines.baidu(q, n),
@@ -400,6 +464,11 @@ const RUNNERS = {
   wikipedia: wikiSearch,
   youtube: (upFetch, q, n, signal) => ytSearch(q, n, signal)
 };
+
+function msOf(id) {
+  if (id.indexOf('reach:') === 0) return REACH_MS;
+  return id === 'exa' ? EXA_MS : ENGINE_MS;
+}
 
 async function runOne(id, ctx, query, n, signal) {
   if (signal && signal.aborted) throw new Error('engine-timeout');
@@ -419,7 +488,7 @@ async function runChannels(ctx, channels, query, n) {
       continue;
     }
     const ac = new AbortController();
-    const ms = id === 'exa' ? EXA_MS : ENGINE_MS;
+    const ms = msOf(id);
     const t = setTimeout(() => ac.abort(), ms);
     try {
       const rows = await Promise.race([
@@ -447,7 +516,7 @@ async function runChannels(ctx, channels, query, n) {
 async function runTogether(ctx, channels, query, n) {
   const got = await Promise.all(channels.map(async (id) => {
     const ac = new AbortController();
-    const ms = id === 'exa' ? EXA_MS : ENGINE_MS;
+    const ms = msOf(id);
     const t = setTimeout(() => ac.abort(), ms);
     try {
       const rows = await Promise.race([
@@ -513,7 +582,9 @@ async function runSearch(ctx, query, maxResults, asked) {
       : '深搜还在查（通常再等二三十秒）。下面先给普通搜索的结果；要深搜的权威出处，用一模一样的查询再搜一次就能取到。';
   }
   let channels = pickChannels(query, asked);
-  const together = !(asked && asked.length) && hasChinese(query) && channels[0] === 'so360';
+  if (!(asked && asked.length) && !reachOn()) channels = channels.map((c) => (c === 'reach:web' ? 'exa' : c)).filter((c) => c.indexOf('reach:') !== 0);
+  channels = [...new Set(channels)];
+  const together = !(asked && asked.length) && hasChinese(query) && channels.indexOf('so360') >= 0 && !isGithubQuery(query) && !isBiliQuery(query) && !isYoutubeQuery(query);
   let { engines, sources } = together ? await runTogether(ctx, channels, query, n) : await runChannels(ctx, channels, query, n);
   if (!sources.length && !(asked && asked.length)) {
     const need = [];
@@ -786,7 +857,9 @@ async function handleFetch(res, body, ctx) {
   }
   ctx.note('GW_FETCH pid=' + ctx.caller);
   try {
-    const out = await runFetch(ctx.upFetch, url);
+    // A link on GitHub, Bilibili, YouTube and the like: Agent Reach reads it by its site. Those
+    // hosts are public by name, so the private-address guard below has nothing to add for them.
+    const out = (await reachRead(url)) || await runFetch(ctx.upFetch, url);
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify(out));
   } catch (e) {
@@ -807,6 +880,7 @@ module.exports = {
   pickChannels,
   runSearch,
   runFetch,
+  reachRead,
   parseExaSources,
   ENGINE_MS,
   EXA_MS,

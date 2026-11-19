@@ -71,6 +71,30 @@ async function main() {
   } finally {
     p.kill();
   }
+  // --only: an allowlist. A tool the server adds later stays off until it is named.
+  const q = spawn(process.execPath, [ONE, '--name', 'desktop', '--only', 'see,agent', '--hide', 'agent', '--', process.execPath, server], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const waiting2 = new Map();
+  let buf2 = '';
+  q.stdout.on('data', (c) => {
+    buf2 += c; let i;
+    while ((i = buf2.indexOf('\n')) >= 0) {
+      const m = JSON.parse(buf2.slice(0, i)); buf2 = buf2.slice(i + 1);
+      const w = waiting2.get(m.id); if (w) { waiting2.delete(m.id); w(m); }
+    }
+  });
+  const ask2 = (method, params) => new Promise((resolve) => { const n = ++id; waiting2.set(n, resolve); q.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: n, method, params }) + '\n'); });
+  try {
+    let r = await ask2('tools/list', {});
+    assert.deepEqual(r.result.tools[0].inputSchema.properties.action.enum, ['see'], 'only the allowlisted, minus hidden');
+    r = await ask2('tools/call', { name: 'desktop', arguments: { action: 'click', args: { on: 'B3' } } });
+    assert.match(r.error.message, /unknown action: click/, 'a tool outside the allowlist is refused');
+    r = await ask2('tools/call', { name: 'click', arguments: { on: 'B3' } });
+    assert.match(r.error.message, /not available/, 'and by its own name too');
+    r = await ask2('tools/call', { name: 'desktop', arguments: { action: 'see' } });
+    assert.equal(r.result.content[0].text, 'got see {}');
+  } finally {
+    q.kill();
+  }
   console.log('MCP_ONE_PROVE_OK=1');
 }
 

@@ -78,6 +78,32 @@ if ($tn -match 'TAILNET_SITE_OK=1') {
   Copy-Item -Force 'D:\dsh\runtime\tailscale\vendor\tailscale-setup.msi' (Join-Path $Dist 'tailscale-setup.msi')
 }
 
+# 2c. Desktop control (company-desktop-cua-v1): Cua Driver from the release archives that
+#     fetch-cua-driver.ps1 checked (vendor\cua-driver\current.txt names the version). The Windows
+#     pack gets the driver and its UI Automation helper; the Mac pack gets CuaDriver.app, which
+#     start.command copies to /Applications. Modes and the app's signature come through as shipped.
+$CuaRoot = 'D:\dsh\runtime\vendor\cua-driver'
+$CuaCur = Join-Path $CuaRoot 'current.txt'
+if (Test-Path -LiteralPath $CuaCur) {
+  $cv = (Get-Content -LiteralPath $CuaCur -Raw).Trim()
+  $cd = Join-Path $CuaRoot $cv
+  $cuaPacks = @(
+    @{ zip = 'CompanyDesk-win.zip'; archive = ('cua-driver-rs-' + $cv + '-windows-x86_64.zip'); keep = 'cua-driver.exe,cua-driver-uia.exe,LICENSE,THIRD_PARTY_NOTICES.md' },
+    @{ zip = 'CompanyDesk-mac.zip'; archive = ('cua-driver-rs-' + $cv + '-darwin-universal.tar.gz'); keep = 'CuaDriver.app/,LICENSE,THIRD_PARTY_NOTICES.md' }
+  )
+  foreach ($c in $cuaPacks) {
+    $zip = Join-Path $Dist $c.zip
+    if (-not (Test-Path -LiteralPath $zip)) { continue }
+    $arc = Join-Path $cd $c.archive
+    if (-not (Test-Path -LiteralPath $arc)) { throw ('cua-driver-archive-missing ' + $arc) }
+    $o = & $py $SitePy --site $SiteYml put-zip-archive --src $zip --archive $arc --name 'CompanyDesk/cua-driver/' --keep $c.keep
+    if ($LASTEXITCODE -ne 0) { throw ('cua-driver-put-failed-' + $c.zip) }
+    Write-Output ('CUA_DRIVER ' + $cv + ' ' + $c.zip + ' ' + $o)
+  }
+} else {
+  Write-Output 'CUA_DRIVER_SKIP=not-fetched (run server\fetch-cua-driver.ps1)'
+}
+
 # 3. TDHarness.exe carries the build mark and the site address; Setup.exe carries the site address
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Server 'compile-apphost.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'compile-apphost-failed' }

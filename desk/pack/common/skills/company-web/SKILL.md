@@ -17,11 +17,12 @@ disable-model-invocation: true
 
 模型工具名只有 `web_search` / `web_fetch`。不要另发明工具名，不要在员工机跑 agent-reach / Exa / mcporter。
 
-- 查公开事实、文档、当前版本：`web_search` 一次，`queries` 只放一条。默认 Exa（和 agent-reach 同一扇）。摘要够用就回答，不要再搜、不要开浏览器。
-- 只要缺一个数字才 `web_fetch` 那一条 URL。不要 `web_fetch` 搜页。不要开 `ego_*`。仓库详情 `web_fetch https://api.github.com/repos/<owner>/<name>`。
-- 出网只打公司 `8450/search` 和 `8450/fetch`。Cookie 不上 8450。引擎在办公 Win 上跑。
+- 查公开事实、文档、当前版本：`web_search` 一次，`queries` 只放一条。服务器上由 Agent Reach 分路（网页走 Exa，中文问题同时查 360、必应中国）。摘要够用就回答，不要再搜、不要开浏览器。
+- 要权威出处（标准号、法规、论文、官方指南）、要多个来源核对的：查询词以「深搜 」开头，由 GPT 联网检索，约 20–40 秒，给结论和来源。问标准号、法规、论文时服务器会自动走深搜。
+- 只要缺一个数字才 `web_fetch` 那一条 URL。不要 `web_fetch` 搜页。不要开 `ego_*`。GitHub、B 站、YouTube、V2EX 的链接，服务器用 Agent Reach 按站点读出正文。
+- 出网只打公司 `8450/search` 和 `8450/fetch`。Cookie 不上 8450。Agent Reach 和引擎都在服务器上跑。
 
-默认楼梯 **Exa → 空就 Bing**。问 GitHub 时 **GitHub API → Bing**。B站 / YouTube 问到再走专用 API。官方 DeepSeek 搜默认关。
+分路：英文、技术问题 **Agent Reach 网页（Exa）→ Exa → Bing**；中文问题 **Agent Reach 网页 + 360 + 必应中国** 一起查；GitHub **Agent Reach GitHub → GitHub API → Bing**；B 站、YouTube 先走 Agent Reach 的对应通道。官方 DeepSeek 搜默认关。
 
 ## 3. 站点用规（哪只手）
 
@@ -46,7 +47,7 @@ disable-model-invocation: true
 ## 公司边界
 
 - 员工桌装 `*codex-oauth*` / ChatGPT 搜、Playwright MCP 全家桶、`dsh-web-ui-all`
-- 用 bash 调 `mcporter` / `agent-reach` 当公司搜索
+- 在员工机上用 bash 调 `mcporter` / `agent-reach` 当公司搜索（它装在服务器上，`web_search` 已经走它）
 - 把官方 `web-search-deepseek` 重新打开，或让客户端直打上游搜索域名
 - 把员工 Cookie 送到办公 Win 或 8450
 - 再调 `ego_*` / `browser_*`（已换掉）
