@@ -4,6 +4,22 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.10
+
+**DeepSeek 模型进模型菜单、可以选开放哪些；内核自带的模型列表藏起来；GPT 额度加刷新**
+- **DeepSeek 不在模型菜单里**：服务器上存好 key、网关也列出了 `deepseek-flash` 和 `deepseek-v4-pro`，但员工端只在**登录时**取一次模型列表，存完 key 不会刷新；原来只有 GPT 的「选择模型」保存后会立刻刷新。现在存 key、删 key、给任何一家选模型以后，当前这台电脑的模型菜单马上更新，其他人下次登录时更新。
+- **每家都能选模型**（`company-key-models-v1`）：「服务器模型密钥」下面多了「开放给大家的模型」，对所有存了 key 的厂商都有效（DeepSeek、Kimi、智谱、Anthropic）。
+  - 默认「全部开放（跟着厂商更新）」：模型列表每次从厂商实时取，厂商出了新模型会自己出现，这里不用改（网关缓存 10 分钟）；
+  - 「只开放勾选的」：只有勾选的那几个出现在大家的模型菜单里，按勾选的顺序排；以后厂商出的新模型要回来勾上。
+  - 网关的「列出模型 / 已选模型 / 应用选择」原来只认 GPT，现在也认这几家；只有管理员能改。新增 `scripts/prove-gw-key-models.js`，改动前的网关跑这个测试会失败。
+- **内核自带的模型列表藏起来**（`company-no-add-key-v3`）：设置 → 模型下面那张「DeepSeek deepseek-official」卡片（key 框之前已经藏了，剩个空卡片，看着像没地方填 key），连同「公司模型」卡片（点了「删除」会把这台电脑和网关的连接删掉）一起不再显示。key 和模型都在上面公司自己的面板里管。
+- **GPT 订阅额度**（`company-quota-refresh-v1`）：
+  - 额度卡上加了「刷新」按钮，点了向 OpenAI 要一次最新的数（5 秒内重复点不会重复要）；
+  - 卡上写明这个数是几点读的、几号重置。
+  - 原来员工端只在打开页面时取一次，网关再缓存 1 分钟，用着用着数就不动了。
+  - 服务器实测：OpenAI 报的是整个 ChatGPT 账号这周已用 1%（只给整数），这个账号在别处登录用掉的也算在里面。
+- 员工端转发给网关的请求，原来会丢掉查询参数，现在保留。
+
 ## 2026.11.19.9
 
 **YouTube 搜索修好；OpenCLI 升到 2.0.3；内核：工具参数被截断时不再执行**

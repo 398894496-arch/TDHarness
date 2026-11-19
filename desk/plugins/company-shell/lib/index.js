@@ -400,7 +400,7 @@ function proxyGw(pathName, method, body) {
 				method,
 				hostname: u.hostname,
 				port: u.port || (u.protocol === "http:" ? 80 : 443),
-				path: u.pathname,
+				path: u.pathname + (u.search || ""),
 				rejectUnauthorized: false,
 				headers,
 			},
@@ -2384,7 +2384,9 @@ export function apply(ctx) {
 					res.end(JSON.stringify({ ok: false, error: "method" }));
 					return;
 				}
-				const out = await proxyGw("/grok-quota", "GET", Buffer.alloc(0));
+				// The 刷新 button asks for a reading taken now (company-quota-refresh-v1).
+				const fresh = String((req.headers && req.headers["x-company-fresh"]) || "") === "1";
+				const out = await proxyGw(fresh ? "/grok-quota?fresh=1" : "/grok-quota", "GET", Buffer.alloc(0));
 				res.writeHead(out.status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
 				res.end(out.body);
 			},
@@ -2447,12 +2449,13 @@ export function apply(ctx) {
 					}
 				}
 				const out = await proxyGw("/channels", method, body);
-				// GPT's list is the company's, kept by the gateway. Saved: this desk takes it now
-				// instead of at its next sign-in.
+				// The company's model list is kept by the gateway. When the admin picks models (any
+				// vendor) or stores a key, this desk takes the new list now instead of at its next
+				// sign-in (company-key-models-v1); other desks take it at theirs.
 				if (method === "POST" && out.status === 200) {
 					let ask = null;
 					try { ask = JSON.parse(body.toString("utf8") || "{}"); } catch { ask = null; }
-					if (ask && ask.action === "apply-models" && String(ask.vendor || "").toLowerCase() === "gpt") {
+					if (ask && (ask.action === "apply-models" || ask.action === "add-key" || ask.action === "drop-key")) {
 						try {
 							const cm = await proxyGw("/v1/company-models", "GET", Buffer.alloc(0));
 							const j = cm.status === 200 ? JSON.parse(cm.body.toString("utf8")) : null;

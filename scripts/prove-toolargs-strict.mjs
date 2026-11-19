@@ -34,7 +34,9 @@ const target = path.join(out, "@earendil-works", "pi-ai", "dist", "api", "openai
 const py = process.platform === "win32" ? "python" : "python3";
 const patchDir = path.join(here, "..", "server", "site-patches");
 const how = execFileSync(py, ["-c", "import sys; sys.path.insert(0, sys.argv[1]); import patch_toolargs_strict as m; p = sys.argv[2]; t = open(p, encoding='utf-8').read(); t2, h = m.patch(t); open(p, 'w', encoding='utf-8').write(t2); t3, h2 = m.patch(t2); print(h, h2)", patchDir, target], { encoding: "utf8" }).trim();
-if (how !== "patched already") fail("patch did not apply once and only once: " + how);
+// "already already": the kernel came patched (an installed desk carries the site patch); the
+// behaviour below is what is being proven either way.
+if (how !== "patched already" && how !== "already already") fail("patch did not apply once and only once: " + how);
 const { stream } = await import(pathToFileURL(target).href);
 
 function serve(pieces, finish) {

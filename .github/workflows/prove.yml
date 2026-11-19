@@ -99,6 +99,8 @@ jobs:
         run: node scripts/prove-gw-sse-done.js
       - name: Prove the model list carries each model's window and learns a refused limit
         run: node scripts/prove-gw-context.js
+      - name: Prove the admin picks which of a key vendor's models desks see
+        run: node scripts/prove-gw-key-models.js
       - name: Prove deep search is the GPT subscription and asks for it only when it is worth it
         run: node scripts/prove-search-route.js
       - name: Prove a vendor archive goes into a pack as shipped (Cua Driver)
