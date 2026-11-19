@@ -61,6 +61,7 @@ class Patcher:
         self.kwatch = load(pdir / "patch_kernel_watch.py")
         self.brand = load(pdir / "patch_site_brand.py")
         self.targs = load(pdir / "patch_toolargs_strict.py")
+        self.fslink = load(pdir / "patch_fs_link_fallback.py")
         # This server's Caddy root (export-ca.ps1). Given: desks reach the gateway over
         # TLS on the login port and trust this root. Not given: plain 8450 as before.
         self.ca = Path(ca_path).read_bytes() if ca_path else None
@@ -141,6 +142,8 @@ class Patcher:
             return text_patch(self.kwatch.patch, data)
         if rel.endswith(self.targs.TARGET):
             return text_patch(self.targs.patch, data)
+        if rel.endswith(self.fslink.TARGET):
+            return text_patch(self.fslink.patch, data)
         mdl_fn = self.mdl.for_member(rel)
         if mdl_fn is not None:
             return text_patch(mdl_fn, data)

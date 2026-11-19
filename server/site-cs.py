@@ -674,7 +674,7 @@ def overlay_zip(src: Path, plugins: Path, host: str) -> int:
             # publish wrote that way is repaired here too, keeping its permission bits.
             mode = ((old.external_attr >> 16) & 0o777) if old is not None else 0
             if not mode:
-                mode = 0o755 if name.endswith((".sh", ".command")) else 0o644
+                mode = 0o755 if name.endswith((".sh", ".command")) or name.startswith("CompanyDesk/bin/") else 0o644
             zi.create_system = 3
             zi.external_attr = (0o100000 | mode) << 16
         zout.writestr(zi, data)

@@ -1,0 +1,5 @@
+#!/bin/bash
+# company-shell-path-v1: `opencli` in the agent's shell runs the OpenCLI this desk ships with, on its own Node
+# (start.command puts this folder and node/bin on the kernel's PATH).
+R="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$R/node/bin/node" "$R/opencli/node_modules/@jackwener/opencli/dist/src/main.js" "$@"

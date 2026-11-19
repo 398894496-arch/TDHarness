@@ -2,6 +2,8 @@
 set -euo pipefail
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$PATH"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+# company-shell-path-v1: the agent's shell finds this desk's own node and opencli by name.
+export PATH="$ROOT/bin:$ROOT/node/bin:$PATH"
 NODEBIN="$ROOT/node/bin/node"
 [[ -x "$NODEBIN" ]] || { echo "bundled-node-missing" >&2; exit 2; }
 BOOT_STATUS="$HOME/.dsh-company-rc8/desk-boot.status"

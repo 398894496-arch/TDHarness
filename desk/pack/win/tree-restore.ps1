@@ -23,6 +23,7 @@ $TreePrefixes = @(
   'windows-mcp/',
   'cua-driver/',
   'vendor/',
+  'bin/',
   'ffmpeg/'
 )
 $TreeFiles = @(

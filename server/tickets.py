@@ -9,6 +9,7 @@ task_card tool.
 Life of a card:  待提交 --submit--> 待审批 --verdict--> 已通过 (archived)
                     ^                    |         \\--> 未通过 --submit--> 待审批
                     \\---- withdraw -----/
+Only the issuer and the assignee see a card (company-ticket-p2p-v1); the issuer approves it.
 The issuer (or an admin) can also set a due time, hand the card to someone else,
 or cancel it (已作废, archived, with a reason); anyone who sees a card can comment.
 collect_notices() says who should be told what (due soon, overdue), once each per day.
@@ -125,29 +126,19 @@ class Board:
         os.replace(tmp, self.path)
 
     # -- who may see / do what ---------------------------------------------
+    # company-ticket-p2p-v1: a card is between the one who issued it and the one who does it, and
+    # nobody else, whatever their role (2026-11-19: an admin saw a card sent to someone else; the rule
+    # was "admins see every card, a director sees the dept's"). Roles still decide who may issue to whom.
     @staticmethod
     def can_see(who: dict, card: dict) -> bool:
-        role = who.get("role")
         login = who.get("login")
-        if role == "admin":
-            return True
-        if card.get("to") == login or card.get("from") == login:
-            return True
-        return role == "director" and card.get("dept") == who.get("dept")
+        return bool(login) and (card.get("to") == login or card.get("from") == login)
 
     @staticmethod
     def can_review(who: dict, card: dict) -> bool:
-        """Nobody approves their own work. The one exception is an admin's card to
-        themselves: there is nobody above to ask."""
-        role = who.get("role")
-        login = who.get("login")
-        if card.get("to") == login:
-            return role == "admin" and card.get("from") == login
-        if role == "admin":
-            return True
-        if role == "director" and card.get("dept") == who.get("dept"):
-            return True
-        return card.get("from") == login
+        """The issuer approves. A card someone gave themselves is their own to-do: nobody else
+        sees it, so they close it themselves."""
+        return bool(who.get("login")) and card.get("from") == who.get("login")
 
     @staticmethod
     def may_issue(who: dict, target: dict) -> bool:
@@ -641,10 +632,12 @@ def collect_notices(board: "Board", people: dict, now: int | None = None) -> lis
     return out
 
 
-def digest(board: "Board", people: dict, now: int | None = None) -> str:
-    """One morning page for an admin: open cards per person, overdue first, and what waits for review."""
+def digest(board: "Board", people: dict, now: int | None = None, viewer: str | None = None) -> str:
+    """One morning page: open cards per person, overdue first, and what waits for review. With a
+    viewer, only the cards that person issued or does (company-ticket-p2p-v1)."""
     now = now or now_ms()
-    rows = [c for c in board.load()["tickets"] if c.get("state") not in CLOSED_STATES]
+    rows = [c for c in board.load()["tickets"] if c.get("state") not in CLOSED_STATES
+            and (viewer is None or viewer in (c.get("from"), c.get("to")))]
     if not rows:
         return ""
     lines = ["任务卡日报 %s：进行中 %d 张" % (datetime.fromtimestamp(now / 1000).strftime("%m-%d"), len(rows))]

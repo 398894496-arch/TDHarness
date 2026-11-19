@@ -13,9 +13,10 @@ disable-model-invocation: true
 ## 模型工具面（会话里能调的，有就用）
 
 - 读改文件：`read` / `write` / `edit` / `glob` / `grep`。沙箱是当前工作区。已有文件改不动时不要教「先删再写」；那是产品要修的 UNC 覆盖，不是用法。
-- 命令：有 `pwsh` 用 `pwsh`，有 `bash` 用 `bash`。能力全开：格子或本机可 `npm install`、代装 OpenCLI。不要改 overlay / 沙盒 / `dsh plugin` / `.dsh` 规则 / `cordis_*`。共享区只读。
+- 命令：有 `pwsh` 用 `pwsh`，有 `bash` 用 `bash`。客户端自带的 `node` 和 `opencli` 已经在命令行的 PATH 里，直接用名字调用。能力全开：格子或本机可 `npm install`、代装 OpenCLI。不要改 overlay / 沙盒 / `dsh plugin` / `.dsh` 规则 / `cordis_*`。共享区只读。
 - 查网：`web_search` / `web_fetch`，走公司 8450。`web_fetch` 已开。`company-docs` 拿整页走它。站点分路见 `company-web`。不要 Playwright。
 - 开网页 / 点选：OpenCLI。`ego_*` / `browser_*` 已换掉。没有 `opencli` 就代装（见 `company-web`），不要找旧点选手。
+- **系统工具 = 桌面控制 Cua Driver**：工具 `mcp__cua__desktop`（用法见 `company-desktop`）。操作桌面软件、列窗口、读界面、截图、点按钮都用它，后台进行，不抢员工的鼠标。员工说「系统工具」「桌面工具」「操作电脑上的软件」指的都是它，不是 PowerShell / bash（那是上面的「命令」）。检查系统工具 = 调 `health_report`，再 `list_apps` 和对一个窗口 `get_window_state`；界面大的窗口（如 Windows「设置」）加 `query` 只看相关的行，不要整棵树一次读完。
 - 公司知识：`company_knowledge`。`route=status` 看 `account` / `role` / `dept`。不要 curl 8443，不要自己报账号。
 - 看图：`read_image`。生图：`generate_image`，走公司网关。文件写到 `artifacts/`。盘快满时会先失败，先腾本地盘。
 - 产物页：`artifact`。说明见 `writing-artifacts`。

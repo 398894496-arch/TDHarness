@@ -4,6 +4,25 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.14
+
+**任务卡点对点**（`company-ticket-p2p-v1`）
+- 任务卡只有发卡人和接卡人能看到，管理员和部门主管也看不到别人之间的卡（以前管理员看得到全公司的卡、主管看得到本部门的卡）。验收由发卡人做；自己发给自己的卡是个人待办，自己就能结掉。管理员每天早上的任务卡日报只列他自己发出或接到的卡。谁能给谁发卡的规则不变。
+
+**新员工第一次登录不再报 `company-workspace-missing`**（`company-first-login-grant-v1`、`company-first-login-wait-v1`）
+- 原因：新员工第一次登录时服务器才建他的共享盘账号，给个人目录授权的脚本在后台跑，登录接口不等它就回话；客户端马上去开个人目录，授权还没到。现在服务器先等授权跑完（实测一遍约 2 秒，最多等 60 秒）再回话；Windows 客户端挂好盘后个人目录还打不开，再等最多 30 秒（显示「正在准备你的个人目录…」），不直接报错。
+
+**`write` 在公司盘上能新建文件了**（`company-fs-link-fallback-v1`）
+- 内核新建文件时用硬链接「不覆盖地发布」，Mac 挂公司盘的 smbfs 不支持硬链接（`ENOTSUP`），于是在公司盘上新建文件一律失败（改已有文件、用 shell 新建都正常）。现在硬链接不支持时改用独占复制（`COPYFILE_EXCL`）：同样不覆盖已有文件。在 Mac 挂的公司盘上用打过补丁的内核代码实测：能新建，第二次建同名文件被拒（`FS_NOT_OBSERVED`），临时文件清干净。
+
+**GitHub 搜索走对路**（`company-search-github-v2`）
+- 没有 GitHub 令牌时 GitHub 接口每小时 60 次、搜索每分钟 10 次，自检连搜几次 Agent Reach 的 GitHub 专线和网关的接口都被限流，最后落到 Bing。现在 GitHub 问题先走 Agent Reach 网页搜索限定 `site:github.com`（实测「cpython github」第一条就是 `python/cpython`，不占 GitHub 额度），再走 GitHub 专线和接口，最后才是 Bing；被限流的渠道歇 10 分钟。查询里「github / 仓库」这类词不再原样传给 GitHub（以前会搜出名字里带 github 的杂仓库）。
+
+**员工端说明写清楚系统工具，命令行里直接有 node 和 opencli**（`company-shell-path-v1`）
+- 工具总览（`company-tools`）原来没写桌面控制，员工让 Agent 检查「系统工具」，它理解成了 PowerShell。现在写明：系统工具 = Cua Driver（`mcp__cua__desktop`），怎么自检（`health_report`、`list_apps`、`get_window_state`，大窗口加 `query`）。
+- 客户端加 `bin/opencli`（Mac）和 `bin\opencli.cmd`（Windows），用自带的 Node 跑自带的 OpenCLI；启动 Agent 时把 `bin` 和自带 Node 放进 PATH。`bin/` 在两端的更新范围里。
+- OpenCLI 浏览器扩展：国内多数电脑打不开 Chrome 应用商店，说明改为先用客户端自带的扩展（`doctor` 给出的 `extensionDir`，在 `chrome://extensions` 打开开发者模式后「加载已解压的扩展程序」），能上 Google 的再用商店版。
+
 ## 2026.11.19.13
 
 **Mac 版改成 DMG：双击打开，把 TDHarness 拖到旁边的 Applications**
