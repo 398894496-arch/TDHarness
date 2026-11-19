@@ -6,7 +6,9 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Cache;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -132,7 +134,7 @@ internal static class Setup
             EnsureRemoteNet();
             var tmpZip = Path.Combine(Path.GetTempPath(), "dsh-p.zip");
             try { if (File.Exists(tmpZip)) File.Delete(tmpZip); } catch { }
-            DownloadZip(tmpZip);
+            DownloadVerified(tmpZip);
             Log("zip " + new FileInfo(tmpZip).Length);
             Phase = "unpack";
             SetStatus("正在展开文件…");
@@ -326,6 +328,97 @@ internal static class Setup
         {
             try { Directory.Delete(dir, true); } catch { }
         }
+    }
+
+    // company-setup-verify-v1：下载完先和服务器的 version.json 对 sha256，对上了才展开。服务器正在发版时，
+    // 包和 version.json 会短暂对不上（断点续传还可能把新旧两个包拼成一个）；对不上就等一分钟、从头重下，
+    // 最多 4 轮，绝不装半成品。2026-11-19：一次发版中途失败，下载页上的包和 version.json 对不上了。
+    private static void DownloadVerified(string zipPath)
+    {
+        for (var round = 1; round <= 4; round++)
+        {
+            var want = ServedWinSha(FetchText(VersionUrl()));
+            DownloadZip(zipPath);
+            if (want.Length == 0)
+            {
+                Log("verify-skip no-version-json");
+                return;
+            }
+            SetStatus("正在核对程序包…");
+            var got = FileSha(zipPath);
+            if (got == want)
+            {
+                Log("verify-ok " + got.Substring(0, 12));
+                return;
+            }
+            var now = ServedWinSha(FetchText(VersionUrl()));
+            if (now.Length > 0 && got == now)
+            {
+                Log("verify-ok-after-publish " + got.Substring(0, 12));
+                return;
+            }
+            Log("verify-mismatch round " + round + " got " + got.Substring(0, 12) + " want " + want.Substring(0, 12) + " now " + (now.Length > 0 ? now.Substring(0, 12) : "-"));
+            try { File.Delete(zipPath); } catch { }
+            if (round == 4) break;
+            SetStatus("服务器正在更新程序包，一分钟后重新下载…（第 " + round + " 次）");
+            Thread.Sleep(60000);
+        }
+        throw new Exception("下载的程序包和服务器上的对不上（服务器可能正在更新）。请过几分钟重新运行安装包");
+    }
+
+    private static string VersionUrl()
+    {
+        var u = Site.ZipUrl;
+        var q = u.IndexOf('?');
+        if (q >= 0) u = u.Substring(0, q);
+        return u.Substring(0, u.LastIndexOf('/') + 1) + "version.json";
+    }
+
+    private static string FetchText(string url)
+    {
+        try
+        {
+            var req = (HttpWebRequest)WebRequest.Create(url + "?t=" + DateTime.UtcNow.Ticks);
+            req.Timeout = 30000;
+            req.CachePolicy = new RequestCachePolicy(RequestCacheLevel.BypassCache);
+            using (var resp = (HttpWebResponse)req.GetResponse())
+            using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                return rd.ReadToEnd();
+        }
+        catch (Exception ex)
+        {
+            Log("version-json " + ex.Message);
+            return null;
+        }
+    }
+
+    // version.json 里 "win" 那一层的 sha256（它里面还可能套着 deltas 之类的对象，先把内层对象抹掉）。
+    internal static string ServedWinSha(string json)
+    {
+        json = json ?? "";
+        var k = json.IndexOf("\"win\"", StringComparison.Ordinal);
+        if (k < 0) return "";
+        var open = json.IndexOf('{', k);
+        if (open < 0) return "";
+        int depth = 0, end = -1;
+        for (var i = open; i < json.Length; i++)
+        {
+            if (json[i] == '{') depth++;
+            else if (json[i] == '}' && --depth == 0) { end = i; break; }
+        }
+        if (end < 0) return "";
+        var body = json.Substring(open + 1, end - open - 1);
+        string prev;
+        do { prev = body; body = Regex.Replace(body, "\\{[^{}]*\\}", "{}"); } while (body != prev);
+        var m = Regex.Match(body, "\"sha256\"\\s*:\\s*\"([0-9a-fA-F]{64})\"");
+        return m.Success ? m.Groups[1].Value.ToLowerInvariant() : "";
+    }
+
+    private static string FileSha(string path)
+    {
+        using (var s = File.OpenRead(path))
+        using (var h = SHA256.Create())
+            return BitConverter.ToString(h.ComputeHash(s)).Replace("-", "").ToLowerInvariant();
     }
 
     // 断点续传：远程经中转时 400MB 常常中途断，断了从断点接着下，最多 30 次。
