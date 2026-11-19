@@ -1266,9 +1266,8 @@ internal static class AppHost
         // show in the picker but selecting them never sticks.
         try
         {
-            NameWorkspace(Rpc("workspace.create", "{\"path\":\"" + JsonEscape(personal) + "\"}"), "个人");
-            if (!string.IsNullOrEmpty(org) && !string.Equals(org, personal, StringComparison.OrdinalIgnoreCase))
-                NameWorkspace(Rpc("workspace.create", "{\"path\":\"" + JsonEscape(org) + "\"}"), "团队");
+            // company-single-workspace-v1：只有一个工作区（本人目录），不再有「团队」。
+            NameWorkspace(Rpc("workspace.create", "{\"path\":\"" + JsonEscape(personal) + "\"}"), "工作区");
         }
         catch (Exception ex) { Log("pin-create " + ex.Message); }
         try { RunLease("collapse-seats", personal, org); }
