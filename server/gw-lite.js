@@ -1404,16 +1404,15 @@ const server = http.createServer(async (req, res) => {
   }
   const body = (req.method === 'POST' || req.method === 'PUT') ? await readBody(req) : Buffer.alloc(0);
   // The desk's web_search and web_fetch tools come here (company-web-search),
-  // and are answered by the search route (gw-search.js). It needs no model key.
+  // and are answered by the search route (gw-search.js). Only deep search uses a model.
   if (req.method === 'POST' && (url === '/search' || url === '/fetch')) {
     const ctx = {
       upFetch: (u, init) => fetch(u, init),
       port: PORT,
       caller: callerOf(req) || 'desk',
       note: (line) => { try { console.log(line); } catch (e) { /* log only */ } },
-      hasGrok: () => xaiBound(),
-      grokUp: () => XAI_BASE,
-      grokBearer: async () => { const x = await loadXai(); if (!x) throw new Error(xaiDownMessage() || 'grok-not-bound'); return x.access_token; }
+      // Deep search through the ChatGPT subscription's own web_search (company-search-route-v2).
+      hasGptSearch: () => gptSubOn(env) && keyOk(env.OPENAI_API_KEY)
     };
     if (url === '/search') await gwSearch.handleSearch(res, body, ctx);
     else await gwSearch.handleFetch(res, body, ctx);

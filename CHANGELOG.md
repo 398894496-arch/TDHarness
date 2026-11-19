@@ -4,6 +4,16 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.6
+
+**深搜改用 GPT 订阅，Grok 搜索删掉；该深搜的问题自动走深搜**
+- **原来**：深搜（查询以「深搜 」开头）只能用 Grok。这个站点撤掉 Grok 以后，深搜悄悄退回普通搜索，员工看到的还是一串网页列表，也不说深搜没成功。
+- **现在**：深搜由 GPT 订阅自带的联网搜索来做（`gpt-6.2-sol`，低推理），经网关自己的模型通道走。服务器实测：问「聚氨酯筛板国家标准编号」，17 秒答出 GB/T 33091—2016，来源是国家标准全文公开系统的原页。Grok 搜索的代码（Grok 通道、Grok 兜底）全部删掉。
+- **什么时候深搜**（`company-search-route-v2`）：查询以「深搜 / 深度搜索」开头；或者问的是标准号、国家/行业标准、法规条例、论文文献、官方出处这类要权威原文的问题（服务器自动判断，不用加前缀）；或者普通搜索什么都没找到。其余（常识、新闻、价格、找厂家、找某个网页）走普通搜索，几秒出结果。
+- **普通搜索**和本机的 Agent Reach 是同一种分法：中文问题 360 + 必应中国 + Exa 一起查；英文和技术问题走 Exa，必应兜底；GitHub、B 站、YouTube 走各自的通道。员工端提示里原来写的「必应中国、360、百度」和实际不符，已经改对。
+- 没有 GPT 订阅的站点，深搜会直说「这台服务器没有接 GPT 订阅，深搜做不了」，不再提示员工加「深搜」前缀。
+- 新增 `scripts/prove-search-route.js`。
+
 ## 2026.11.19.5
 
 **上下文预算按模型的真实窗口算；超长时记住厂商说的上限**
