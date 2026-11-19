@@ -51,7 +51,7 @@ $driverCs = Join-Path $Work 'Prove.cs'
 [IO.File]::WriteAllText($siteCs, $site)
 [IO.File]::WriteAllText($driverCs, $driver)
 $exe = Join-Path $Work 'prove.exe'
-$o = & $Csc /nologo /target:exe /main:Prove /out:$exe (('/r:' + (Join-Path $fw 'System.Windows.Forms.dll'))) (('/r:' + (Join-Path $fw 'System.Drawing.dll'))) (('/r:' + (Join-Path $fw 'System.IO.Compression.dll'))) (Join-Path $server 'SetupStub.cs') (Join-Path $server 'TailnetJoin.cs') $siteCs $driverCs 2>&1
+$o = & $Csc /nologo /target:exe /main:Prove /out:$exe (('/r:' + (Join-Path $fw 'System.Windows.Forms.dll'))) (('/r:' + (Join-Path $fw 'System.Drawing.dll'))) (('/r:' + (Join-Path $fw 'System.IO.Compression.dll'))) (Join-Path $server 'SetupStub.cs') (Join-Path $server 'TailnetJoin.cs') (Join-Path $server 'DeskPrereq.cs') $siteCs $driverCs 2>&1
 if ($LASTEXITCODE -ne 0) { $o | ForEach-Object { Write-Output "$_" }; throw 'SETUP_VERIFY_PROVE_FAIL compile' }
 $r = & $exe 2>&1 | ForEach-Object { "$_" }
 $r | ForEach-Object { Write-Output $_ }

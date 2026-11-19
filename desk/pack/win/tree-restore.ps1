@@ -92,6 +92,9 @@ if (-not $Zip) {
   $Zip = Join-Path $env:TEMP ('dsh-tree-' + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.zip')
   $script:ZipOwned = $true
   [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+  # company-compat-v1: straight to the company server, never through a proxy tool's system proxy
+  # (it cannot resolve the site name, and the update failed).
+  [Net.WebRequest]::DefaultWebProxy = $null
   try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch {}
   Write-Output ('TREE_DOWNLOAD=' + $ZipUrl)
   $req = [Net.HttpWebRequest]::Create($ZipUrl)

@@ -6,6 +6,14 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 
 ## 2026.11.19.15
 
+**兼容性：装得上、能更新**（`company-compat-v1`）
+- **代理软件**：员工电脑开着 Clash 一类代理的「系统代理」时，安装包、TDH 主程序、更新脚本连 `tdharness.local` 都会被送进代理，代理解析不了这个局域网名字，安装、登录、更新全失败。现在这三个程序一启动就把默认代理设为直连（公司服务器只在局域网或加密网络里，用不到代理）。Mac 端的更新下载本来就是 `--noproxy`。
+- **WebView2**：TDH 的 Windows 窗口靠微软 WebView2。Win11 自带；Win10 靠系统更新装上，关了更新的电脑没有，以前要到登录成功后才报 `webview2-missing`。现在安装包装完、主程序每次启动前都检查，没有就从公司服务器取微软的安装器（发版时下载并核对是微软签名，`server/fetch-webview2.ps1`）给当前用户静默装上，不要管理员；装不上就在登录页说清楚。
+- **32 位 Windows**：安装包一开始就说「只支持 64 位」，不装到一半才失败。
+- **磁盘空间**：安装前检查（新装 2.5 GB，重装 1.2 GB），Win 和 Mac 更新前检查（1.5 GB），不够就先说哪个盘还剩多少，不在下载到一半时失败。
+- 核对过、没问题的：Windows 包最长路径 211 字符，加上 `C:\Users\<20 字的用户名>\TDH\` 也不到 260；Mac 内核的原生模块都带 Intel 和 Apple 芯片两份，最低 macOS 12；Mac 更新下载不走代理。
+- 主程序和安装包共用的检查在 `server/DeskPrereq.cs`（编译清单已加）。
+
 **记忆不分个人和团队，全进共享知识库**（`company-memory-shared-v1`）
 - 谁让 Agent「记住」，都写进公司共享记忆（`_shared/_memory`），全员的搜索都找得到；行政财务这类单独分区的部门写进它自己的 `_handbook/<部门>/_memory`，只有本部门找得到。以前写在个人 `_memory` 里的，本人还搜得到，不再往里写。
 - 改由服务器写入：知识服务新增 `/v1/memory-write`（按登录令牌认人、按部门分区；整页替换是原子写，追加会标上日期和是谁）。员工端的 `company_memory_write` 改为调用它，`zone` 参数不再起作用（旧调用照样能用）。这样不用放开共享盘的写权限，Mac 的 smbfs 也不会再拦记忆写入。

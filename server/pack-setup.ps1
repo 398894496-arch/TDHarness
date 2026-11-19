@@ -10,6 +10,7 @@ $Dist = if ($env:TDH_DIST) { $env:TDH_DIST } else { 'D:\dsh\client-dist' }
 $SiteYml = if ($env:TDH_SITE) { $env:TDH_SITE } else { 'D:\dsh\site.yml' }
 $StubCs = Join-Path $Server 'SetupStub.cs'
 $TailnetCs = Join-Path $Server 'TailnetJoin.cs'
+$PrereqCs = Join-Path $Server 'DeskPrereq.cs'
 $Ico = Join-Path $Server 'tdharness.ico'
 $SitePy = Join-Path $Server 'site-cs.py'
 $Out = Join-Path $Dist 'TDHarness-Setup.exe'
@@ -42,7 +43,7 @@ $drawing = Join-Path $fw 'System.Drawing.dll'
 $zipDll = Join-Path $fw 'System.IO.Compression.dll'
 $stubExe = Join-Path $env:TEMP 'tdh-setup-stub.exe'
 $ErrorActionPreference = 'Continue'
-& $Csc /nologo /target:winexe /out:$stubExe /win32icon:$Ico /r:$winforms /r:$drawing /r:$zipDll $StubCs $TailnetCs $SiteCs
+& $Csc /nologo /target:winexe /out:$stubExe /win32icon:$Ico /r:$winforms /r:$drawing /r:$zipDll $StubCs $TailnetCs $PrereqCs $SiteCs
 $rc = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 if ($rc -ne 0 -or -not (Test-Path -LiteralPath $stubExe)) { throw 'csc-failed' }
@@ -58,7 +59,7 @@ if (@($parts | Where-Object { -not (Test-Path -LiteralPath $_) }).Count -eq 0) {
   $res = $parts | ForEach-Object { '/resource:' + $_ + ',tdh-ts/' + (Split-Path -Leaf $_) }
   $remoteExe = Join-Path $env:TEMP 'tdh-setup-remote.exe'
   $ErrorActionPreference = 'Continue'
-  & $Csc /nologo /target:winexe /out:$remoteExe /win32icon:$Ico /r:$winforms /r:$drawing /r:$zipDll @res $StubCs $TailnetCs $SiteCs
+  & $Csc /nologo /target:winexe /out:$remoteExe /win32icon:$Ico /r:$winforms /r:$drawing /r:$zipDll @res $StubCs $TailnetCs $PrereqCs $SiteCs
   $rc = $LASTEXITCODE
   $ErrorActionPreference = 'Stop'
   if ($rc -ne 0 -or -not (Test-Path -LiteralPath $remoteExe)) { throw 'csc-remote-failed' }
