@@ -580,7 +580,7 @@ window.__ModuleLoader__.load({
 			"  display: none !important;",
 			"}",
 			// A coloured wordmark in the sidebar head: centred over the sidebar (the toggle keeps its corner).
-			".cs-side-head:has([data-company-shell=\"brand-wordmark-color\"]) { position: relative; height: 44px; }",
+			".cs-side-head:has([data-company-shell=\"brand-wordmark-color\"]) { position: relative; height: 56px; margin-bottom: 4px; }",
 			".cs-side-head:has([data-company-shell=\"brand-wordmark-color\"]) .cs-side-brand {",
 			"  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);",
 			"}",
@@ -4552,7 +4552,7 @@ window.__ModuleLoader__.load({
 				// Not brand-mark / brand-wordmark: those get a background colour painted through the mask.
 				// A coloured logo is the whole headline on the hero (no tagline beside it), so it is
 				// drawn larger there, and a little larger (centred) in the sidebar.
-				const ch = compact ? h : (props.size >= 30 ? 64 : 26);
+				const ch = compact ? h : (props.size >= 30 ? 64 : 34);
 				const cw = compact ? h : Math.round(ch * (SITE_BRAND_RATIO || 1));
 				return React.createElement("span", {
 					className: props.className,
