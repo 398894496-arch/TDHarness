@@ -401,7 +401,9 @@ function reachCall(args, ms, signal) {
   return new Promise((resolve, reject) => {
     if (!reachOn()) return reject(new Error('reach-missing'));
     const env = Object.assign({}, process.env, { HOME: REACH_HOME, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' });
-    const child = execFile(REACH, args, { env, timeout: ms, maxBuffer: 8 << 20, windowsHide: true, encoding: 'utf8' }, (e, out) => {
+    // A .js stand-in (the proof) runs under this Node: Windows will not exec a .cmd without a shell.
+    const js = /\.js$/i.test(REACH);
+    const child = execFile(js ? process.execPath : REACH, js ? [REACH].concat(args) : args, { env, timeout: ms, maxBuffer: 8 << 20, windowsHide: true, encoding: 'utf8' }, (e, out) => {
       if (signal) signal.removeEventListener('abort', stop);
       let j = null;
       try { j = JSON.parse(String(out || '')); } catch {}
