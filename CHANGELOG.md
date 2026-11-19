@@ -4,6 +4,11 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.2
+
+**GPT 订阅额度在客户服务器上能查到了**
+- 2026.11.19 的额度查询用 `https.request` 套在已经打通的代理隧道上，在服务器的 Node 上一直等到超时。现在改成在 TLS 隧道上直接收发 HTTP/1.1（支持分块传输）。在客户服务器上用真实订阅实测：ChatGPT Pro，本周已用 0%，11-25 刷新。
+
 ## 2026.11.19
 
 **客户现场报的三个设置页问题：DeepSeek 填了 key 却不出模型、发放账号发不出去、订阅额度只认 Grok**
