@@ -89,6 +89,8 @@ dns.lookup(u.hostname, { family: 4 }, (err, addr) => {
         if (org) write(path.join(rc8, "work.org"), org + "\n");
         if (hit.role) write(path.join(rc8, "login.role"), String(hit.role).trim() + "\n");
         if (hit.login) write(path.join(rc8, "login.name"), String(hit.login).trim() + "\n");
+        // company-remember-login-v1: the account dialog offers the last account that signed in here (a name, not a password; kept on logout).
+        if (hit.login) write(path.join(rc8, "last.login"), String(hit.login).trim() + "\n");
         process.stdout.write("LOGIN_OK=" + String(hit.login || "") + "\n");
       });
     }

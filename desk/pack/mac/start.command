@@ -141,7 +141,9 @@ if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ "$DEEPSEEK_API_KEY" = "company-gateway" ]
   mkdir -p "$(dirname "$TOKFILE")"
   LOGIN_OK=0
   for _try in 1 2 3; do
-  USER="$(osascript -e 'text returned of (display dialog "账号（公司花名册里的账号，不是邮箱）" default answer "tdh" with title "TDHarness")' || true)"
+  # company-remember-login-v1: offer the last account that signed in on this Mac, not the seed admin.
+  LAST_USER="$(head -1 "$HOME/.dsh-company-rc8/last.login" 2>/dev/null | tr -cd 'A-Za-z0-9._@-')"
+  USER="$(osascript -e "text returned of (display dialog \"账号（公司花名册里的账号，不是邮箱）\" default answer \"$LAST_USER\" with title \"TDHarness\")" || true)"
   PASS="$(osascript -e 'text returned of (display dialog "密码" default answer "" with hidden answer with title "TDHarness")' || true)"
   if [ -z "$USER" ] || [ -z "$PASS" ]; then
     printf '%s\n' "Error: 没输入账号或密码，已取消。" > "$DSH_HOME/web-runtime.err"
