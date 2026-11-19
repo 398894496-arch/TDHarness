@@ -22,7 +22,7 @@ is_product() {
   case "$1" in
     prefix|prefix/*|node|node/*|plugins|plugins/*|home/profiles/web/node_modules|home/profiles/web/node_modules/*) return 0 ;;
     skills|skills/*|opencli|opencli/*|peekaboo|peekaboo/*|cua-driver|cua-driver/*|vendor|vendor/*|bin|bin/*) return 0 ;;
-    TDHarness.exe|TDHarness|start.ps1|start.command|CompanyDesk.vbs|WebView2Loader.dll|tree-check.js|tree-restore.ps1|tree-restore.sh|pack-update-check.js|sync-skills.js|sync-desk-home.sh|sync-desk-home.ps1|prove-cosmokit.js|desk-lease.js|mac-mount-company.sh|mac-join-off-lan.sh|mac-pin-settings.js|mac-company-login.js|mac-smb-mount.js|BUILD.json|home/profiles/web/package.json|home/profiles/web/overlay.yml|presets|presets/*) return 0 ;;
+    TDHarness.exe|TDHarness|start.ps1|start.command|CompanyDesk.vbs|WebView2Loader.dll|tree-check.js|tree-restore.ps1|tree-restore.sh|pack-update-check.js|sync-skills.js|sync-desk-home.sh|sync-desk-home.ps1|prove-cosmokit.js|desk-lease.js|krouter-hook.js|krouter-hooks.json|mac-mount-company.sh|mac-join-off-lan.sh|mac-pin-settings.js|mac-company-login.js|mac-smb-mount.js|BUILD.json|home/profiles/web/package.json|home/profiles/web/overlay.yml|presets|presets/*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -154,7 +154,7 @@ fi
 wrote=0
 for f in TDHarness.exe TDHarness start.ps1 start.command CompanyDesk.vbs WebView2Loader.dll \
          tree-check.js tree-restore.ps1 tree-restore.sh pack-update-check.js \
-         sync-skills.js sync-desk-home.sh sync-desk-home.ps1 prove-cosmokit.js desk-lease.js mac-mount-company.sh mac-join-off-lan.sh \
+         sync-skills.js sync-desk-home.sh sync-desk-home.ps1 prove-cosmokit.js desk-lease.js krouter-hook.js krouter-hooks.json mac-mount-company.sh mac-join-off-lan.sh \
          mac-pin-settings.js mac-company-login.js mac-smb-mount.js BUILD.json \
          home/profiles/web/package.json home/profiles/web/overlay.yml; do
   [[ -e "$src/$f" || -L "$src/$f" ]] || continue

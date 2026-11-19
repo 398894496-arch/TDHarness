@@ -42,6 +42,8 @@ $TreeFiles = @(
   'sync-desk-home.ps1',
   'prove-cosmokit.js',
   'desk-lease.js',
+  'krouter-hook.js',
+  'krouter-hooks.json',
   'mac-mount-company.sh',
   'BUILD.json',
   'home/profiles/web/package.json',

@@ -143,4 +143,14 @@
           CUA_TELEMETRY_ENABLED: "0"
           CUA_DRIVER_RS_UPDATE_CHECK: "0"
         failOnStartupError: false
+# company-krouter-hooks-v1: KRouter's own hooks (the session-start standing index, the per-message trigger words
+# and the hot cycle's use record) through the kernel's Claude-Code hook bridge. krouter-hook.js asks the company
+# server, where KRouter runs (route=hook); it prints nothing when there is nothing to add or anything fails.
+- insert:
+    - id: hooks-krouter
+      name: '@deepseek-ai/dsh-hooks-claude-code'
+      config:
+        configPath: !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/krouter-hooks.json')
+        pluginRoot: !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '')
+        defaultTimeoutMs: 15000
 # DSHWM1:139482f17cc9c0c4c1479ea01fc037d1

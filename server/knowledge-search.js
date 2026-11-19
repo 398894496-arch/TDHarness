@@ -393,6 +393,17 @@ async function search(person, body) {
     if (!krVersion && KR_ON) { const p = await krAsk({ ping: true }); krVersion = (p && p.version) || ''; }
     return { ok: true, status: 'ok', ...who, layer: 'lookup', hits: [], index: index.stats(), krouter: krVersion ? { version: krVersion, banks: memoryBanks(person).map((b) => b.name) } : null };
   }
+  // company-krouter-hooks-v1: KRouter's own session-start and per-message hooks, run here for a desk
+  // (the desk has no Python). The banks are the ones this person opens: the company memory, their kept-apart
+  // department's, and their own.
+  if (route === 'hook') {
+    if (!KR_ON) return { ok: true, status: 'off', ...who, layer: 'hook', hits: [], text: '' };
+    const which = body.hook === 'start' ? 'start' : 'prompt';
+    const banks = memoryBanks(person).filter((b) => fs.existsSync(b.dir));
+    const got = await krAsk({ hook: which, text: String(body.text || body.query || ''), session: String(body.session || ''), banks });
+    const text = got && got.ok ? String(got.text || '') : '';
+    return { ok: true, status: text ? 'ok' : 'none', ...who, layer: 'hook', hits: [], text };
+  }
   const named = String(body.path || body.evidence_path || '').trim();
   if (body.evidence && !named) return { ok: false, status: 'evidence-need-path', ...who, hits: [] };
   if (named) {
