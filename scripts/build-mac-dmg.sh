@@ -23,6 +23,9 @@ ditto -x -k "$WORK/app.zip" "$WORK/stage"
 SRC="$WORK/stage/TDHarness"
 [ -x "$SRC/TDHarness.app/Contents/MacOS/TDHarness" ] || { echo "MAC_DMG_FAIL app missing" >&2; exit 1; }
 [ -f "$SRC/TDHarness.app/Contents/Resources/start.command" ] || { echo "MAC_DMG_FAIL pack missing" >&2; exit 1; }
+# Packs published before site-cs.py marked new entries as Unix files carry scripts without their execute
+# bit (a zip written on Windows says "MS-DOS"). The scripts at the top of the pack must run.
+find "$SRC/TDHarness.app/Contents/Resources" -maxdepth 1 -type f \( -name '*.sh' -o -name '*.command' \) -exec chmod 755 {} +
 # In a disk image the Finder shows the link by its own name; "Applications" is what Mac users expect.
 rm -f "$SRC/应用程序"
 ln -s /Applications "$SRC/Applications"

@@ -69,7 +69,8 @@ TOKFILE="${HOME}/.dsh-company-rc8/gw.token"
 LOGIN_URL="https://{{TDH_HOST}}:8443/company/login"
 # JOIN_BEFORE_LOGIN=1
 # Off-LAN must be on 100.x before this POST hits the office login URL.
-if [ -x "$ROOT/mac-join-off-lan.sh" ]; then
+# Run with bash, so the file need not carry an execute bit (company-mac-tailnet-join-v1).
+if [ -f "$ROOT/mac-join-off-lan.sh" ]; then
   bash "$ROOT/mac-join-off-lan.sh" "$ROOT" || true
 fi
 # company-login-screen-update-v1
