@@ -110,16 +110,21 @@
 # offers "open outside", which goes to the system browser.
 - id: ui-sidebar-browser
   disabled: false
-# company-desktop-mcp-v1
-# Windows desktop control (Windows-MCP) shipped in <install>/windows-mcp.
-# Registry and PowerShell tools stay off: the desk has its own shell. Behind mcp-one.cjs the
-# model sees one tool (desktop: action + args) instead of ten.
+# company-desktop-cua-v1
+# Windows desktop control: Cua Driver (trycua/cua, MIT) in <install>/cua-driver, behind mcp-one.cjs:
+# the model sees one tool (desktop: action + args). It works in the background (no stolen cursor
+# or focus) and reads windows through UI Automation. --only is an allowlist of desktop actions:
+# web pages stay with OpenCLI (no browser_*), and recording, cursor themes, extensions, self-update
+# and config are not offered. Telemetry and update checks are off. Windows-MCP stays in the pack,
+# unused, until this has run on the desks for a while.
+- id: mcp-windows
+  disabled: true
 - insert:
-    - id: mcp-windows
+    - id: mcp-cua
       name: '@deepseek-ai/dsh-mcp-client'
       disabled: !!js process.platform !== 'win32'
       config:
-        serverName: windows
+        serverName: cua
         transport: stdio
         command: !!js process.execPath
         args:
@@ -128,16 +133,14 @@
           - desktop
           - --label
           - Windows 桌面控制
+          - --only
+          - check_permissions,health_report,get_guide,list_apps,list_windows,launch_app,bring_to_front,get_window_state,get_desktop_state,get_screen_size,get_cursor_position,zoom,click,double_click,right_click,type_text,set_value,press_key,hotkey,scroll,drag,move_cursor,invoke_menu,run_steps,set_window_frame,verify_state
           - --
-          - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/windows-mcp/python.exe')
-          - -m
-          - windows_mcp
-          - serve
-          - --tools
-          - App,Snapshot,Screenshot,Click,Type,Scroll,Move,Shortcut,Wait,WaitFor
+          - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/cua-driver/cua-driver.exe')
+          - mcp
         env:
-          ANONYMIZED_TELEMETRY: "false"
-          WINDOWS_MCP_DISABLE_FLASH: "1"
-          PYTHONUTF8: "1"
+          CUA_DRIVER_RS_TELEMETRY_ENABLED: "0"
+          CUA_TELEMETRY_ENABLED: "0"
+          CUA_DRIVER_RS_UPDATE_CHECK: "0"
         failOnStartupError: false
 # DSHWM1:139482f17cc9c0c4c1479ea01fc037d1

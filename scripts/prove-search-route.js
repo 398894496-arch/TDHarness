@@ -3,13 +3,35 @@
 // web search (no Grok anywhere), it runs when the query starts with 深搜 and when the question
 // asks for an authority (a standard number, a regulation, a paper), an everyday question stays on
 // the engines, and a site without the subscription says deep search is not available instead of
-// pretending. Engines and the model door are stand-ins on loopback. Ends with SEARCH_ROUTE_PROVE_OK=1.
+// pretending. Standard search goes through Agent Reach (company-search-reach-v1) with the
+// gateway's own calls behind it, and a link on GitHub and the like is read through it.
+// Engines, Agent Reach and the model door are stand-ins. Ends with SEARCH_ROUTE_PROVE_OK=1.
 'use strict';
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
+const os = require('node:os');
 const SERVER = path.join(__dirname, '..', 'server');
+// A stand-in agent-reach: logs each call, answers like the real one (JSON, ok/items).
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tdh-reach-'));
+const REACH = path.join(tmp, process.platform === 'win32' ? 'agent-reach.cmd' : 'agent-reach');
+const LOG = path.join(tmp, 'calls.jsonl');
+const FAKE = path.join(tmp, 'fake.js');
+fs.writeFileSync(FAKE, `
+const fs = require('fs');
+const a = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ a, home: process.env.HOME }) + '\\n');
+const say = (o) => process.stdout.write(JSON.stringify(Object.assign({ schema_version: 1 }, o)));
+if (a[0] === 'bilibili') say({ ok: false, items: [], error: { code: 'NEED_SETUP', message: 'bili is not installed' } });
+else if (a[0] === 'read') say({ ok: true, items: [{ title: 'gumyr/build123d', url: a[1], text: 'A python CAD library.' }] });
+else say({ ok: true, channel: a[0], items: [{ title: a[0] + ' hit', url: 'https://reach.example/' + a[0], text: 'from ' + a[0] + ': ' + a[2] }] });
+`);
+if (process.platform === 'win32') fs.writeFileSync(REACH, '@"' + process.execPath + '" "' + FAKE + '" %*\r\n');
+else { fs.writeFileSync(REACH, '#!/bin/sh\nexec "' + process.execPath + '" "' + FAKE + '" "$@"\n'); fs.chmodSync(REACH, 0o755); }
+process.env.TDH_AGENT_REACH = REACH;
+process.env.TDH_AGENT_REACH_HOME = path.join(tmp, 'home');
+const calls = () => (fs.existsSync(LOG) ? fs.readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 const cn = require(path.join(SERVER, 'web-search.js'));
 const gw = require(path.join(SERVER, 'gw-search.js'));
 const fail = (w) => { console.error('SEARCH_ROUTE_PROVE_FAIL ' + w); process.exit(1); };
@@ -57,6 +79,35 @@ const fail = (w) => { console.error('SEARCH_ROUTE_PROVE_FAIL ' + w); process.exi
   if (asked.length !== before) fail('deep search ran without the subscription');
   if (!/没有接 GPT 订阅/.test(out.content)) fail('missing subscription not said: ' + out.content.slice(0, 80));
   if (/深搜」开头/.test(out.content)) fail('offers deep search on a site that has none');
+
+  // Agent Reach is the route for standard search.
+  out = await gw.runSearch(ctx(true), 'polyurethane screen panel supplier', 5);
+  if (out.engines[0].id !== 'reach:web' || !out.engines[0].ok) fail('English question did not go to Agent Reach web: ' + JSON.stringify(out.engines));
+  if (out.sources[0].url !== 'https://reach.example/web') fail('Agent Reach results lost');
+  let c = calls().pop();
+  if (c.a.join(' ') !== 'web search polyurethane screen panel supplier --limit 5') fail('Agent Reach called as ' + c.a.join(' '));
+  if (c.home !== process.env.TDH_AGENT_REACH_HOME) fail('HOME not pointed at the Agent Reach home');
+  out = await gw.runSearch(ctx(true), '烟台 聚氨酯 筛板 厂家', 5);
+  const ids = out.engines.map((e) => e.id).join(',');
+  if (ids !== 'reach:web,so360,bingcn') fail('Chinese question not asked of Agent Reach and the engines in China together: ' + ids);
+  if (!out.sources.some((x) => x.url === 'https://reach.example/web') || !out.sources.some((x) => /so360/.test(x.url))) fail('Chinese results not woven');
+  out = await gw.runSearch(ctx(true), 'github build123d', 5);
+  if (out.engines[0].id !== 'reach:github') fail('GitHub question not on Agent Reach github: ' + JSON.stringify(out.engines));
+  out = await gw.runSearch(ctx(true), 'bilibili 聚氨酯筛板', 5);
+  const bili = out.engines.map((e) => e.id + ':' + e.ok).join(',');
+  if (!/^reach:bilibili:0,bilibili:0,reach:web:1/.test(bili)) fail('a failing Agent Reach channel does not fall back in order: ' + bili);
+  // Reading a link on a site Agent Reach knows; other links are not its business.
+  const page = await gw.reachRead('https://github.com/gumyr/build123d');
+  if (!page || page.statusCode !== 200 || !/python CAD library/.test(page.body.content)) fail('GitHub link not read through Agent Reach');
+  if (calls().pop().a[0] !== 'read') fail('read not asked of Agent Reach');
+  if (await gw.reachRead('https://www.example.com/x') !== null) fail('a plain page went to Agent Reach');
+  // Not installed: the gateway's own calls answer, nothing breaks.
+  fs.unlinkSync(REACH);
+  const n0 = calls().length;
+  out = await gw.runSearch(ctx(true), '烟台 聚氨酯 筛板 厂家', 5);
+  if (calls().length !== n0) fail('called a missing Agent Reach');
+  if (out.engines.map((e) => e.id).join(',') !== 'exa,so360,bingcn') fail('without Agent Reach the Chinese route is not Exa + engines: ' + out.engines.map((e) => e.id).join(','));
+  if (await gw.reachRead('https://github.com/gumyr/build123d') !== null) fail('reading through a missing Agent Reach');
 
   door.close();
   console.log('SEARCH_ROUTE_PROVE_OK=1');

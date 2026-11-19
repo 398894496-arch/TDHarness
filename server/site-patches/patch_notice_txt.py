@@ -3,7 +3,7 @@
 The packs carried a 2026-09 text (kernel 0.1.1-rc.2, "8450 only", CompanyDesk.exe) that no
 longer matched what ships; anyone opening a pack to check it read the wrong thing.
 """
-MARK = "@@notice-v2"
+MARK = "@@notice-v3"
 
 TEXT = """TDHarness desk (TDH)  """ + MARK + """
 Self-hosted AI workbench for a company LAN. Source: https://github.com/398894496-arch/TDHarness-coding (MIT)
@@ -18,10 +18,12 @@ Third-party software in this package:
 - DeepSeek Harness kernel @deepseek-ai/dsh: MIT (version in prefix/.../@deepseek-ai/dsh/package.json)
 - OpenCLI @jackwener/opencli and its Chrome extension: Apache-2.0 (opencli/node_modules/@jackwener/opencli/LICENSE)
 - Noto Sans CJK SC: SIL Open Font License 1.1 (fonts/)
-- Windows: Windows-MCP 0.8.7, MIT (windows-mcp/Lib/site-packages/windows_mcp-0.8.7.dist-info/licenses/LICENSE.md),
+- Cua Driver 0.54.0 (desktop apps, both systems): MIT (cua-driver/LICENSE, cua-driver/THIRD_PARTY_NOTICES.md);
+  on macOS it runs as /Applications/CuaDriver.app, copied there from cua-driver/ on first launch
+- Windows: Windows-MCP 0.8.7 (kept, no longer used), MIT (windows-mcp/Lib/site-packages/windows_mcp-0.8.7.dist-info/licenses/LICENSE.md),
   with Python under the PSF License (windows-mcp/LICENSE.txt); FFmpeg, LGPL-3.0 (ffmpeg/LICENSE.txt);
   Microsoft Edge WebView2 SDK DLLs, redistributed by Microsoft's terms for WebView2 apps
-- macOS: Peekaboo 4.9.0, MIT (peekaboo/LICENSE)
+- macOS: Peekaboo 4.9.0 (kept, no longer used), MIT (peekaboo/LICENSE)
 
 BUILD.json holds a build identifier and the SHA-256 of every file in this package. The desk compares
 the identifier with the server's signed version.json to offer updates, and checks its own files

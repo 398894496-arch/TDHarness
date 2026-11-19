@@ -111,6 +111,9 @@ class Patcher:
             data, how3 = text_patch(self.kbf.patch, data)
             if str(how3).startswith("patched"):
                 how = ("patched+" if str(how).startswith("patched") else "") + "kb-frame"
+            data, how4 = text_patch(self.mdl.patch_inline_image_default, data)
+            if how4 == "patched":
+                how = "patched+inline-image-default" if str(how).startswith("patched") else "patched:inline-image-default"
             return data, how
         if rel.endswith("company-shell/lib/client.js"):
             data, how = text_patch(self.prm.patch, data)

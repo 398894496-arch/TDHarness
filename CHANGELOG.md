@@ -4,6 +4,29 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.7
+
+**三个核心工具换掉：搜索路由用 Agent Reach，桌面软件用 Cua Driver（Windows / Mac 各用各的版本），浏览器仍是 OpenCLI**
+- **搜索路由：Agent Reach**（`company-search-reach-v1`）。服务器装上 Agent Reach 1.6.1（`server/install-agent-reach.ps1`：uv 0.13.9 和 Agent Reach 的官方 release 包，版本和 SHA-256 写死；装在 `D:\dsh\tools`，配置在 `D:\dsh\runtime\agent-reach-home`，不落到服务账户的用户目录）。普通搜索的分路：
+  - 英文、技术问题：Agent Reach 网页搜索（Exa）→ 直连 Exa → 必应；
+  - 中文问题：Agent Reach 网页搜索和 360、必应中国一起查，结果交错合并（Agent Reach 没有国内的搜索引擎，国内网页靠后两个）；
+  - GitHub、B 站、YouTube：先走 Agent Reach 各自的通道，再退回网关原来的接口；
+  - GitHub、B 站、YouTube、V2EX 等站点的链接，`web_fetch` 用 Agent Reach 按站点读正文。
+  - 服务器上没装、或者某个通道出错，自动退回原来的做法，搜索不会断。
+  - 服务器实测：网页、GitHub、读链接都在 1.3–1.7 秒；中文问「聚氨酯筛板 烟台 厂家」第一条就是客户官网。B 站要先 `agent-reach add bilibili`（已在这台服务器上装好）。YouTube（yt-dlp）从这台服务器 60 秒都没出结果，超时后退回网页搜索。
+- **深搜仍是 GPT 订阅的联网搜索**（2026.11.19.6），和 Agent Reach 并存：一个管日常的快搜，一个管要权威出处的深搜。
+- **桌面软件：Cua Driver 0.54.0**（`company-desktop-cua-v1`，trycua/cua，MIT）。在后台操作桌面软件，不抢员工的鼠标和前台窗口。
+  - Windows：包里的 `cua-driver\`（`cua-driver.exe` 和 UI Automation 辅助程序），`cua-driver.exe mcp` 直接当 MCP 服务。
+  - Mac：包里带 `cua-driver/CuaDriver.app`（Developer ID 签名并已公证）。驱动只认 `/Applications/CuaDriver.app`（路径写死在驱动里，系统的「辅助功能」「屏幕录制」权限也挂在这个 App 上），所以 `start.command` 在没装或者版本更旧时把它拷过去，比它新的不动；拷不进去时，技能会告诉员工怎么办。
+  - 模型只看到一个 `desktop` 工具（`mcp-one.cjs`）。新加了 `--only` 白名单：只放桌面操作要用的 26 个动作；网页类 `browser_*` 交给 OpenCLI；录屏、光标主题、扩展、自更新、改配置都不放。驱动以后新加的工具，不加进白名单就不会露出来。
+  - 匿名统计和自动检查更新都关掉（环境变量；Mac 的后台进程另外执行一次 `telemetry disable`）。
+  - 服务器发布时把官方包直接塞进客户端包（`server/fetch-cua-driver.ps1` 下载并核对 SHA-256，`site-cs.py put-zip-archive` 照原样放进去，Mac 程序的可执行权限和 App 签名都保留）。本机实测：塞进包再解出来，`codesign --verify --deep --strict` 通过，`spctl` 显示 Notarized Developer ID。
+  - 客户端更新范围加了 `cua-driver/`。原来的 Windows-MCP 和 Peekaboo 还留在包里，只是不再启用，等 Cua Driver 在员工电脑上跑稳了再删。
+  - 两份 `company-desktop` 技能按 Cua Driver 重写：先看窗口拿到元素编号再点，连续几步用 `run_steps` 一次做完，Mac 第一次带员工给 CuaDriver 开权限。
+- **浏览器：OpenCLI**，没有变化。旧的点选工具都关着。包里是 1.8.8；npm 上已有 2.0.3，是大版本升级，要和员工浏览器里的扩展一起实测后再升。
+- 新增测试：`scripts/prove-search-route.js` 加了 Agent Reach 的分路、中文合并、出错退回、读链接、没装时退回；`scripts/prove-mcp-one.js` 加了白名单；新增 `scripts/prove-put-zip-archive.py`。
+- **还没实测**：Cua Driver 在真员工电脑上点剪映（Windows 和 Mac 都要）；Mac 往「应用程序」里拷 App 的那一步（要等这台 Mac 收到更新）。
+
 ## 2026.11.19.6
 
 **深搜改用 GPT 订阅，Grok 搜索删掉；该深搜的问题自动走深搜**

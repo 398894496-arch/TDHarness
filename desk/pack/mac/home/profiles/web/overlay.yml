@@ -110,15 +110,23 @@
 # offers "open outside", which goes to the system browser.
 - id: ui-sidebar-browser
   disabled: false
-# company-desktop-mac-v1
-# Mac desktop control: Peekaboo in <install>/peekaboo behind mcp-one.cjs, which shows the model
-# one tool (desktop: action + args) instead of Peekaboo's 24 (about 55 KB on every request).
+# company-desktop-cua-v1
+# Mac desktop control: Cua Driver (trycua/cua, MIT) behind mcp-one.cjs: the model sees one tool
+# (desktop: action + args). Cua Driver only runs from /Applications/CuaDriver.app (the path is
+# fixed in the driver, and macOS ties Accessibility and Screen Recording to that app), so
+# start.command copies the app shipped in <install>/cua-driver there when it is missing or older.
+# It works in the background (no stolen cursor or focus). --only is an allowlist of desktop
+# actions: web pages stay with OpenCLI (no browser_*); recording, cursor themes, extensions,
+# self-update and config are not offered. Telemetry and update checks are off. Peekaboo stays in
+# the pack, unused, until this has run on the desks for a while.
+- id: mcp-mac
+  disabled: true
 - insert:
-    - id: mcp-mac
+    - id: mcp-cua
       name: '@deepseek-ai/dsh-mcp-client'
       disabled: !!js process.platform !== 'darwin'
       config:
-        serverName: mac
+        serverName: cua
         transport: stdio
         command: !!js process.execPath
         args:
@@ -127,12 +135,14 @@
           - desktop
           - --label
           - Mac 桌面控制
-          - --hide
-          - agent,analyze,browser,capture
+          - --only
+          - check_permissions,health_report,get_guide,list_apps,list_windows,launch_app,bring_to_front,get_window_state,get_desktop_state,get_screen_size,get_cursor_position,zoom,click,double_click,right_click,type_text,set_value,press_key,hotkey,scroll,drag,move_cursor,invoke_menu,run_steps,set_window_frame,verify_state
           - --
-          - !!js process.execPath.replace(/[\\/]node[\\/](?:bin[\\/])?[^\\/]+$/, '/peekaboo/peekaboo')
+          - /Applications/CuaDriver.app/Contents/MacOS/cua-driver
           - mcp
-          - serve
-          - --allow-foreground
+        env:
+          CUA_DRIVER_RS_TELEMETRY_ENABLED: "0"
+          CUA_TELEMETRY_ENABLED: "0"
+          CUA_DRIVER_RS_UPDATE_CHECK: "0"
         failOnStartupError: false
 # DSHWM1:a2ace91e2760ff6dc5a941e0dde9531c

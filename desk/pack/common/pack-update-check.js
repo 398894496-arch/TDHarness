@@ -87,7 +87,7 @@ function writeSkip(mark) {
 }
 
 
-const PARTS = ["windows-mcp/", "peekaboo/", "opencli/", "skills/"];
+const PARTS = ["windows-mcp/", "peekaboo/", "cua-driver/", "opencli/", "skills/"];
 
 function incompleteParts(root, build) {
   const files = build && build.files && typeof build.files === "object" ? Object.keys(build.files) : [];
