@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.5
+
+**上下文预算按模型的真实窗口算；超长时记住厂商说的上限**
+- **原来**：员工端给每个模型都按 256k 写窗口（网关只给 Grok 报过窗口），压缩点 = 256k 的 80%。GPT-6.2 Sol 实际有 500k，白白提前压缩；Astra 是 272k，差不多；换成窗口更小的模型时，会在厂商拒绝之前都不压缩。
+- **网关**（`company-context-v1`）：模型列表给每个模型带上 `context`。来源按优先级：厂商因为太长拒绝时报文里写的上限（记在 `runtime\context-learned.json`，下次列表就带上）> 厂商目录自带的数 > GPT 订阅用 Codex 官方模型目录里的 `context_window`（Sol 500000、Astra 272000，6 小时刷新一次，存 `runtime\gpt-context.json`）> DeepSeek 官方文档写的 1M。
+- **员工端**：窗口按网关报的数打 95 折（内核的 token 数是估算，Codex 自己也按 95% 算）；网关不知道的模型按 128k 算，宁可早压缩，不让一轮对话因为超长失败。没有给模型写 `maxTokens`：实测内核会把它当成回答长度上限发给厂商，长回答会被截断；GPT 目录里的窗口本来就已经扣掉了回答的空间。
+- 现在的压缩点：Sol 约 38 万 token，Astra 约 17.4 万，DeepSeek（1M）约 76 万，不认识的模型约 6.2 万。
+- 新增 `scripts/prove-gw-context.js`：DeepSeek 带 1M；厂商回「maximum context length is 131,072 tokens」后，列表里这个模型变成 131072，别的模型不受影响；改动前的网关跑这个测试会失败。
+
 ## 2026.11.19.4
 
 **现场第二轮反馈：首屏标语、API key 输入框、6 位密码、额度显示；流式回复按时结束**

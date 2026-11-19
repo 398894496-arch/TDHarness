@@ -105,6 +105,16 @@ export function cleanModelPicks(models) {
 	return out;
 }
 
+// company-context-v1: the window the kernel budgets by. 5% under what the gateway reports, since
+// the kernel's token counts are estimates (Codex budgets the same 95% of a model's window). No
+// `maxTokens` here on purpose: the kernel would send it as the answer's cap and a long answer
+// would be cut off; the GPT windows already leave room for the answer. A model the gateway knows
+// nothing about gets 128000: compacting early only costs a summary, overflowing costs the turn.
+const CONTEXT_FALLBACK = 128000;
+function windowOf(m) {
+	return m.context ? Math.floor(m.context * 0.95) : CONTEXT_FALLBACK;
+}
+
 function grokProviderLines(models, baseURL) {
 	const lines = [
 		"      office:",
@@ -128,7 +138,7 @@ function grokProviderLines(models, baseURL) {
 		lines.push(
 			"          - id: " + m.id,
 			"            name: " + m.id,
-			"            contextWindow: " + (m.context || 256000),
+			"            contextWindow: " + windowOf(m),
 			// Without `image` here the kernel refuses a message that carries a
 			// picture, and the composer just hands the draft back with no reason.
 			"            input: " + (m.image ? "[text, image]" : "[text]"),
@@ -207,7 +217,7 @@ function grokProviderObject(models, baseURL) {
 		supportsUsageInStreaming: true,
 	};
 	office.models = models.map((m) => {
-		const row = { id: m.id, name: m.id, contextWindow: m.context || 256000, input: m.image ? ["text", "image"] : ["text"] };
+		const row = { id: m.id, name: m.id, contextWindow: windowOf(m), input: m.image ? ["text", "image"] : ["text"] };
 		if (m.efforts.length) {
 			row.reasoningEfforts = {};
 			for (const e of m.efforts) row.reasoningEfforts[levelOf(e)] = e;

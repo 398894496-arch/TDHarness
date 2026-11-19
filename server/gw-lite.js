@@ -664,6 +664,89 @@ const CONTEXT_MEASURED = {
   'grok-4.3': 850000
 };
 
+// company-context-v1: the window each model really has, so the desk compacts before the vendor
+// refuses. Order: what a vendor said when it refused an oversized prompt (learned here, below) >
+// the number the catalogue carries (Grok rows above) > the Codex model catalogue for the GPT
+// subscription (the same list Codex itself budgets by; its context_window already leaves room
+// for the answer) > the vendor's documented window. A model with none of these gets no `context`
+// and the desk uses its own conservative default.
+const CONTEXT_LEARNED_PATH = process.env.TDH_CONTEXT_LEARNED || path.join(ROOT, 'runtime', 'context-learned.json');
+const GPT_CONTEXT_PATH = process.env.TDH_GPT_CONTEXT || path.join(ROOT, 'runtime', 'gpt-context.json');
+// api-docs.deepseek.com/quick_start/pricing, read 2026-11-19: V4 Flash / Pro take 1M tokens.
+const CONTEXT_BY_VENDOR = { deepseek: 1000000 };
+const CONTEXT_MIN = 8000;
+const CONTEXT_MAX = 4000000;
+let gptContextAt = 0;
+let gptContextRun = null;
+
+function contextOk(n) { return Number.isInteger(n) && n >= CONTEXT_MIN && n <= CONTEXT_MAX; }
+
+function refreshGptContext(env) {
+  if (gptContextRun) return gptContextRun;
+  if (Date.now() - gptContextAt < 6 * 3600 * 1000) return Promise.resolve();
+  const auth = readCodexAuth();
+  if (!auth) return Promise.resolve();
+  gptContextRun = httpsGetJson('https://chatgpt.com/backend-api/codex/models?client_version=9.9.9', {
+    Authorization: 'Bearer ' + auth.access_token,
+    'chatgpt-account-id': String(auth.account_id),
+    'User-Agent': 'codex_cli_rs/9.9.9',
+    originator: 'codex_cli_rs',
+    Accept: 'application/json'
+  }, quotaProxy(auth, env), 10000).then((o) => {
+    const map = {};
+    for (const m of (o && Array.isArray(o.models) ? o.models : [])) {
+      if (m && typeof m.slug === 'string' && MODEL_ID.test(m.slug) && contextOk(m.context_window)) map[m.slug] = m.context_window;
+    }
+    if (Object.keys(map).length) {
+      const old = readStateFile(GPT_CONTEXT_PATH, {});
+      if (JSON.stringify(old) !== JSON.stringify(map)) { writeStateFile(GPT_CONTEXT_PATH, map); companyModelsCache = { at: 0, val: null }; }
+    }
+    gptContextAt = Date.now();
+  }, () => { gptContextAt = Date.now() - 5 * 3600 * 1000; }).then(() => { gptContextRun = null; });
+  return gptContextRun;
+}
+
+function contextOf(id, vendor, listed) {
+  const learned = readStateFile(CONTEXT_LEARNED_PATH, {});
+  if (contextOk(learned[id])) return learned[id];
+  if (contextOk(listed)) return listed;
+  if (vendor === 'gpt') {
+    const g = readStateFile(GPT_CONTEXT_PATH, {});
+    if (contextOk(g[id])) return g[id];
+  }
+  if (contextOk(CONTEXT_MEASURED[id])) return CONTEXT_MEASURED[id];
+  return CONTEXT_BY_VENDOR[vendor] || 0;
+}
+
+// A refusal for length names the limit; keep it so the next model list carries it. Only texts
+// that are about the prompt being too long count, and only numbers a window could be.
+const OVERFLOW_TEXT = /context length|context window|prompt length|prompt is too long|too many tokens|maximum context|context_length_exceeded/i;
+const LIMIT_RES = [
+  /maximum context length is ([\d,]+) tokens/i,
+  /maximum context length of ([\d,]+)/i,
+  /maximum prompt length is ([\d,]+)/i,
+  /context window of ([\d,]+) tokens/i,
+  /context length is only ([\d,]+)/i,
+  />\s*([\d,]+)\s*tokens/i
+];
+function learnContext(model, text) {
+  if (!model || !MODEL_ID.test(model) || !OVERFLOW_TEXT.test(text)) return 0;
+  for (const re of LIMIT_RES) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const n = parseInt(m[1].replace(/,/g, ''), 10);
+    if (!contextOk(n)) return 0;
+    const all = readStateFile(CONTEXT_LEARNED_PATH, {});
+    if (all[model] !== n) {
+      all[model] = n;
+      try { writeStateFile(CONTEXT_LEARNED_PATH, all); } catch (e) { return 0; }
+      companyModelsCache = { at: 0, val: null };
+    }
+    return n;
+  }
+  return 0;
+}
+
 function catalogFromUpstream(rows, probed) {
   const fast = loadFast();
   const out = [];
@@ -917,7 +1000,10 @@ async function companyModels(env) {
     for (const r of rows) {
       if (!r || !r.id || seen.has(r.id) || !MODEL_ID.test(r.id) || NOT_CHAT.test(r.id)) continue;
       seen.add(r.id);
-      out.push(Object.assign({ vendor: vendor, efforts: [], image: seesImages(r.id, env) }, r));
+      const row = Object.assign({ vendor: vendor, efforts: [], image: seesImages(r.id, env) }, r);
+      const ctx = contextOf(r.id, vendor, r.context);
+      if (ctx) row.context = ctx; else delete row.context;
+      out.push(row);
     }
   };
   const xai = await loadXai();
@@ -933,6 +1019,10 @@ async function companyModels(env) {
     if (v.id === 'gpt') {
       // What the admin picked in Settings > 模型 (in that order), else every chat model; levels
       // and pictures as probed. Probing happens when the admin lists models, not at sign-in.
+      // The first list after a start waits for the Codex catalogue (10 s at most); later ones
+      // use the saved copy and refresh it in the background.
+      const ctxRun = refreshGptContext(env);
+      if (!fs.existsSync(GPT_CONTEXT_PATH)) await ctxRun;
       const cat = await gptCatalog(env, false);
       if (!cat || cat.status !== 200) continue;
       const offer = offerOf('gpt');
@@ -1007,6 +1097,9 @@ function relay(route, req, body, res) {
       res.writeHead(r.statusCode || 502, out);
       if (typeof res.flushHeaders === 'function') res.flushHeaders();
       const tap = (r.statusCode || 0) < 300 && /\/(chat\/completions|responses|messages)$/.test(u.pathname) ? usageTap() : null;
+      // company-context-v1: a refusal for length says how long this model's window is.
+      const errs = (r.statusCode || 0) >= 400 && /\/(chat\/completions|responses|messages)$/.test(u.pathname) ? [] : null;
+      let errLen = 0;
       const settle = () => {
         if (!tap) return;
         const used = tap.end();
@@ -1018,10 +1111,18 @@ function relay(route, req, body, res) {
       const sse = /text\/event-stream/i.test(String(r.headers['content-type'] || ''));
       let tail = '';
       let over = false;
-      const finish = () => { if (over) return; over = true; res.end(); settle(); resolve(); };
+      const finish = () => {
+        if (over) return;
+        over = true;
+        res.end();
+        settle();
+        if (errs) learnContext(modelName(body), Buffer.concat(errs).toString('utf8'));
+        resolve();
+      };
       r.on('data', (c) => {
         if (over) return;
         res.write(c);
+        if (errs && errLen < 8192) { errs.push(c); errLen += c.length; }
         if (tap) tap.feed(c);
         if (sse) {
           tail = (tail + c.toString('latin1')).slice(-96);
