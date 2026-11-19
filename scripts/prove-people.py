@@ -130,6 +130,8 @@ def main() -> None:
         check(got.get("error") == "login-taken", "seed login cannot be added again")
         code, got = call(port, "POST", {"action": "add", "login": "zhangsan", "password": "short", "dept": ops}, admin)
         check(got.get("error") == "password-too-short", "short password")
+        code, got = call(port, "POST", {"action": "add", "login": "liu6", "password": "123456", "dept": "company"}, admin)
+        check(got.get("ok") is True, "a six-digit password is enough %r" % got)
         code, got = call(port, "POST", {"action": "add", "login": "zhangsan", "password": "longenough1", "dept": "nope"}, admin)
         check(got.get("error") == "dept-unknown", "unknown department")
         code, got = call(port, "POST", {"action": "add", "login": "zhangsan", "name": "张三", "password": "longenough1", "dept": ops}, admin)
