@@ -173,7 +173,8 @@ def main():
                 if (zz.getinfo("CompanyDesk/" + starter).external_attr >> 16) != 0o100755:
                     fail("overlay lost the mode bits of " + starter)
                 for i in zz.infolist():
-                    if i.filename.endswith((".sh", ".command")) and i.filename.count("/") == 1:
+                    if (i.filename.endswith((".sh", ".command")) and i.filename.count("/") == 1) or (
+                            i.filename.startswith("CompanyDesk/bin/") and not i.filename.endswith("/")):
                         if i.create_system != 3 or (i.external_attr >> 16) != 0o100755:
                             fail("%s is not a Unix 755 file in the %s pack (system %d, mode %o): a Mac drops the execute bit"
                                  % (i.filename, plat, i.create_system, i.external_attr >> 16))

@@ -89,7 +89,10 @@ function pickChannels(query, asked) {
   }
   // Agent Reach first; the gateway's own call to the same service behind it.
   if (isGithubQuery(q)) {
-    return ['reach:github', 'github', 'bing'];
+    // company-search-github-v2: Agent Reach's web search kept to github.com first (it ranks the repository
+    // people mean, e.g. python/cpython for "cpython github", and has no GitHub API quota), then the GitHub
+    // channels, then Bing.
+    return ['reach:web-github', 'reach:github', 'github', 'bing'];
   }
   if (isBiliQuery(q)) {
     return ['reach:bilibili', 'bilibili', 'reach:web', 'exa'];
@@ -466,9 +469,32 @@ async function reachRead(url, ctx) {
   }
 }
 
+// A channel the platform rate-limits (GitHub: 60 calls an hour, 10 searches a minute without a token)
+// rests for 10 minutes instead of being asked again on every search meanwhile.
+const RESTING = new Map();
+const REST_MS = 10 * 60 * 1000;
+function resting(id, run) {
+  return async (...a) => {
+    if (Date.now() < (RESTING.get(id) || 0)) throw new Error('rate-limited, resting');
+    try {
+      return await run(...a);
+    } catch (e) {
+      if (/RATE_LIMIT|rate limit|github-40[3]|github-429/i.test(String(e && e.message))) RESTING.set(id, Date.now() + REST_MS);
+      throw e;
+    }
+  };
+}
+
+// GitHub questions: without the words that only say "on GitHub", which otherwise match repositories
+// named after them (cpython666.github.io for "cpython github").
+function onGithub(run, site) {
+  return (upFetch, q, n, signal, ctx) => run(upFetch, githubQueryText(q) + (site ? ' site:github.com' : ''), n, signal, ctx);
+}
+
 const RUNNERS = {
   'reach:web': reachSearch('web'),
-  'reach:github': reachSearch('github'),
+  'reach:web-github': onGithub(reachSearch('web'), true),
+  'reach:github': resting('reach:github', onGithub(reachSearch('github'), false)),
   'reach:bilibili': reachSearch('bilibili'),
   'reach:youtube': reachSearch('youtube'),
   so360: (upFetch, q, n) => cn.engines.so360(q, n),
@@ -477,7 +503,7 @@ const RUNNERS = {
   bing: bingSearch,
   searxng: searxSearch,
   exa: exaSearch,
-  github: githubSearch,
+  github: resting('github', githubSearch),
   bilibili: biliSearch,
   wikipedia: wikiSearch,
   youtube: (upFetch, q, n, signal, ctx) => ytSearch(q, n, signal, outProxy(ctx))

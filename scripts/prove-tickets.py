@@ -130,9 +130,10 @@ def main() -> None:
         check(t["folder"].endswith("emp-amy/tasks/" + tid), "task folder %r" % t["folder"])
         check(Path(t["folder"]).is_dir(), "task folder is created")
 
-        # Visibility: the assignee, the issuer, the dept director, admin; not another employee.
-        check(card(c.box(bob)[1] if False else c.post("/company/mailbox", {}, bob)[1], tid) == {}, "bob does not see amy's card")
-        check(card(c.post("/company/mailbox", {}, lead)[1], tid) != {}, "director sees cards of the dept")
+        # Visibility is point to point (company-ticket-p2p-v1): the issuer and the assignee, nobody else.
+        check(card(c.post("/company/mailbox", {}, amy)[1], tid) != {} and card(c.post("/company/mailbox", {}, boss)[1], tid) != {}, "issuer and assignee see it")
+        check(card(c.post("/company/mailbox", {}, bob)[1], tid) == {}, "bob does not see amy's card")
+        check(card(c.post("/company/mailbox", {}, lead)[1], tid) == {}, "her director does not see a card he is not on")
         check(card(c.post("/company/mailbox", {}, vic)[1], tid) == {}, "another dept does not see it")
 
         # What each person may do, as the card reports it.
@@ -187,8 +188,10 @@ def main() -> None:
         check(j.get("error") == "file-path", "no hanging another dept's handbook")
         code, j = c.box(amy, action="attach-file", ticket=tid, path="emp-amy/草稿.txt")
         check(code == 200, "her own file hangs")
+        code, j = c.box(boss, action="file", ticket=tid, path="emp-amy/草稿.txt")
+        check(base64.b64decode(j.get("content") or "").decode("utf-8") == "amy draft", "the issuer reads it")
         code, j = c.box(lead, action="file", ticket=tid, path="emp-amy/草稿.txt")
-        check(base64.b64decode(j.get("content") or "").decode("utf-8") == "amy draft", "her director reads it")
+        check(j.get("error") == "ticket-missing", "her director does not read it through a card he is not on")
         code, j = c.box(boss, action="attach-file", ticket=tid, path="emp-vic/私密.txt")
         check(code == 200, "an admin may hang any file")
         code, j = c.box(amy, action="file", ticket=tid, path="emp-vic/私密.txt")
@@ -203,10 +206,10 @@ def main() -> None:
         code, j = c.box(lead, action="issue", to="lead", title="总监自己的")
         mine = j["ticket"]
         code, j = c.box(lead, action="submit", ticket=mine, summary="做完了")
-        code, j = c.box(lead, action="verdict", ticket=mine, passed=True)
-        check(j.get("error") == "verdict-role", "a director cannot approve his own card")
         code, j = c.box(boss, action="verdict", ticket=mine, passed=True)
-        check(card(j, mine)["state"] == "已通过", "an admin approves it")
+        check(j.get("error") == "ticket-missing", "an admin does not see another person's own card")
+        code, j = c.box(lead, action="verdict", ticket=mine, passed=True)
+        check(card(j, mine)["state"] == "已通过", "a card someone gave themselves: they close it")
         code, j = c.box(boss, action="issue", to="boss", title="老板自己的")
         own = j["ticket"]
         c.box(boss, action="submit", ticket=own, summary="记一笔")
@@ -222,9 +225,11 @@ def main() -> None:
         check(j.get("error") == "summary-locked", "the report is locked while under review")
         code, j = c.box(amy, action="verdict", ticket=tid, passed=True)
         check(j.get("error") == "verdict-role", "the assignee cannot approve")
-        code, j = c.box(lead, action="verdict", ticket=tid, passed=False)
+        code, j = c.box(lead, action="verdict", ticket=tid, passed=False, reason="x")
+        check(j.get("error") == "ticket-missing", "only the issuer reviews")
+        code, j = c.box(boss, action="verdict", ticket=tid, passed=False)
         check(j.get("error") == "verdict-reason", "rejecting needs a reason")
-        code, j = c.box(lead, action="verdict", ticket=tid, passed=False, reason="字幕错别字")
+        code, j = c.box(boss, action="verdict", ticket=tid, passed=False, reason="字幕错别字")
         check(card(j, tid)["state"] == "未通过", "rejected")
         code, j = c.box(amy, action="submit", ticket=tid, summary="已改字幕")
         code, j = c.box(boss, action="verdict", ticket=tid, passed=True, reason="")
@@ -237,15 +242,17 @@ def main() -> None:
         code, j = c.box(amy, action="submit", ticket=other, summary="完成")
         code, j = c.box(amy, action="withdraw", ticket=other)
         check(card(j, other)["state"] == "待提交", "withdrawn")
-        code, j = c.box(lead, action="archive", ticket=other, archived=True)
-        check(card(j, other)["archived"] is True, "director hides it for himself")
-        check(card(c.post("/company/mailbox", {}, amy)[1], other)["archived"] is False, "amy still sees it open")
+        check(card(c.post("/company/mailbox", {}, boss)[1], other) == {}, "an admin does not see someone's own card")
 
         # Due time, reassigning, cancelling, comments.
         code, j = c.box(boss, action="issue", to="amy", title="限时任务", due="2026-12-01")
         dl = j["ticket"]
         t = card(j, dl)
         check(t["due"] > 0 and t["overdue"] is False and t["comments"] == [], "issued with a due day %r" % t.get("due"))
+        code, j = c.box(amy, action="archive", ticket=dl, archived=True)
+        check(card(j, dl)["archived"] is True, "the assignee hides it for herself")
+        check(card(c.post("/company/mailbox", {}, boss)[1], dl)["archived"] is False, "the issuer still sees it open")
+        c.box(amy, action="archive", ticket=dl, archived=False)
         code, j = c.box(boss, action="issue", to="amy", title="x", due="明天")
         check(j.get("error") == "due", "a due that is not a date is refused")
         code, j = c.box(amy, action="set-due", ticket=dl, due="2020-01-01")
@@ -261,6 +268,7 @@ def main() -> None:
         code, j = c.box(lead, action="reassign", ticket=ld, to="bob")
         check(card(j, ld)["to"] == "bob", "a director hands it to someone in the dept")
         check(card(c.post("/company/mailbox", {}, amy)[1], ld) == {}, "amy no longer sees it")
+        check(card(c.post("/company/mailbox", {}, boss)[1], ld) == {}, "an admin does not see a card between two others")
         code, j = c.box(bob, action="comment", ticket=ld, text="收到，周五前给")
         check([x["text"] for x in card(j, ld)["comments"]] == ["收到，周五前给"], "comment kept")
         code, j = c.box(bob, action="comment", ticket=ld, text="  ")

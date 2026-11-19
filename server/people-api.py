@@ -74,7 +74,8 @@ def save_roster(data: dict) -> None:
 # (server/secure-folders.ps1). Run in the background after every roster change and every
 # sign-in that may have made an account; runs that come in while one is going become one.
 _SECURE_MU = threading.Lock()
-_SECURE_STATE = {"running": False, "again": False}
+_SECURE_DONE = threading.Condition(_SECURE_MU)
+_SECURE_STATE = {"running": False, "again": False, "gen": 0}  # gen: runs finished so far
 
 
 def secure_folders_soon() -> None:
@@ -109,10 +110,42 @@ def _secure_folders_loop() -> None:
             sys.stdout.write("SECURE_FOLDERS error %s\n" % str(e)[:200])
         sys.stdout.flush()
         with _SECURE_MU:
+            _SECURE_STATE["gen"] += 1
+            _SECURE_DONE.notify_all()
             if not _SECURE_STATE["again"]:
                 _SECURE_STATE["running"] = False
                 return
             _SECURE_STATE["again"] = False
+
+
+# company-first-login-grant-v1: a sign-in that just made (or switched back on) the person's share account
+# waits for the folder grants before it answers. 2026-11-19: a new employee's first sign-in answered at
+# once, the desk opened its own folder before secure-folders.ps1 had granted smb-<login> on it, and the
+# desk said company-workspace-missing; a second try worked. A run takes about 2 s on the TDH server.
+def secure_folders_wait(timeout: float = 60.0) -> bool:
+    """Ask for a run and wait until one that started after this call has finished (False on timeout)."""
+    if SMB_LEDGER or os.name != "nt":
+        secure_folders_soon()
+        return True
+    with _SECURE_MU:
+        if _SECURE_STATE["running"]:
+            # The run going now may have read the accounts before this one existed: wait for the next.
+            _SECURE_STATE["again"] = True
+            target, start = _SECURE_STATE["gen"] + 2, False
+        else:
+            _SECURE_STATE["running"] = True
+            target, start = _SECURE_STATE["gen"] + 1, True
+    if start:
+        threading.Thread(target=_secure_folders_loop, daemon=True).start()
+    deadline = time.time() + timeout
+    with _SECURE_DONE:
+        while _SECURE_STATE["gen"] < target:
+            left = deadline - time.time()
+            if left <= 0:
+                sys.stdout.write("SECURE_FOLDERS wait timed out after %ds\n" % int(timeout))
+                return False
+            _SECURE_DONE.wait(left)
+    return True
 
 
 # A login is used as a file name (emp-<login>), as the user half of a
@@ -635,8 +668,9 @@ def person_smb(login: str) -> tuple[str, str]:
         if not smb_account("ensure", login, pf):
             return "", ""
         _SMB_OK[login] = time.time()
-        # A new account (or one switched back on) changes who stands in for whom on the share.
-        secure_folders_soon()
+        # A new account (or one switched back on) changes who stands in for whom on the share, and
+        # this sign-in is about to open the person's folders: grant first, then answer.
+        secure_folders_wait(60.0)
     return SMB_PREFIX + login, pw
 
 
@@ -1199,14 +1233,16 @@ def notify_once(now_ms: int | None = None) -> list:
     except (OSError, ValueError):
         state = {}
     if hour >= DIGEST_HOUR and state.get("digest_day") != day:
-        with BOARD_MU:
-            page = ticket_board.digest(BOARD, people, now_ms)
-        if page:
-            for login, row in people.items():
-                if row.get("role") == "admin" and row.get("status") != "disabled":
-                    r = wc.send(login, page)
-                    notify.log(runtime, login, "digest", "-", r)
-                    done.append((login, "digest", "-", r))
+        # Each admin's page has only the cards they issued or do (company-ticket-p2p-v1).
+        for login, row in people.items():
+            if row.get("role") != "admin" or row.get("status") == "disabled":
+                continue
+            with BOARD_MU:
+                page = ticket_board.digest(BOARD, people, now_ms, login)
+            if page:
+                r = wc.send(login, page)
+                notify.log(runtime, login, "digest", "-", r)
+                done.append((login, "digest", "-", r))
         state["digest_day"] = day
         try:
             state_file.write_text(json.dumps(state), encoding="utf-8")

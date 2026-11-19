@@ -69,8 +69,10 @@ check(tickets.collect_notices(b, people, now) == [], "nothing twice on the same 
 nxt = sorted((x["to"], x["kind"], x["ticket"]) for x in tickets.collect_notices(b, people, now + 24 * H))
 check(nxt == sorted([("amy", "overdue", soon), ("boss", "overdue", soon), ("amy", "overdue", late), ("boss", "overdue", late)]),
       "next day: both now overdue, each to assignee and issuer %r" % nxt)
-page = tickets.digest(b, people, now)
+page = tickets.digest(b, people, now, "boss")
 check("超期 1 张" in page and "超期了" in page and "作废的" not in page and "amy 4" in page, "digest %r" % page)
+people["eve"] = {"login": "eve", "role": "admin", "dept": "ops", "personal": str(company / "emp-eve")}
+check(tickets.digest(b, people, now, "eve") == "", "another admin's page lists cards that are not theirs (point to point)")
 
 rt = root / "runtime"
 rt.mkdir()

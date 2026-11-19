@@ -1121,6 +1121,15 @@ internal static class AppHost
             Log("ffmpeg-on-path");
         }
         else Log("ffmpeg-missing " + ffBin);
+        // company-shell-path-v1：Agent 的 shell 里直接有 node 和 opencli（bin\opencli.cmd 用自带的 Node 跑自带的 OpenCLI）。
+        {
+            var curPath = psi.EnvironmentVariables["PATH"];
+            if (string.IsNullOrEmpty(curPath)) curPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+            var front = "";
+            foreach (var d in new[] { Path.Combine(root, "bin"), Path.Combine(root, "node") })
+                if (Directory.Exists(d)) front += d + ";";
+            psi.EnvironmentVariables["PATH"] = front + curPath;
+        }
         try { psi.EnvironmentVariables.Remove("DEEPSEEK_API_KEY"); } catch { }
         psi.EnvironmentVariables["NO_PROXY"] = Site.NoProxy;
         psi.EnvironmentVariables["NODE_USE_ENV_PROXY"] = "0";
@@ -1863,6 +1872,21 @@ internal sealed class ShellForm : Form
             _err.Text = "正在挂入公司盘…";
             Application.DoEvents();
             AppHost.EnsureShare(hit.SmbUser, hit.SmbPass);
+            // company-first-login-wait-v1：新员工第一次登录时，服务器刚建好他的共享盘账号，个人目录的授权
+            // 可能还差几秒（服务器也会先等授权再回话，这里再兜一层）。先等，不直接报 workspace-missing。
+            if (!string.IsNullOrEmpty(hit.Personal) && !Directory.Exists(hit.Personal))
+            {
+                _err.ForeColor = Color.FromArgb(90, 90, 90);
+                _err.Text = "正在准备你的个人目录…";
+                AppHost.Log("personal-wait " + hit.Personal);
+                for (var i = 0; i < 30 && !Directory.Exists(hit.Personal); i++)
+                {
+                    Application.DoEvents();
+                    Thread.Sleep(1000);
+                }
+                _err.ForeColor = Color.FromArgb(217, 45, 32);
+                _err.Text = "";
+            }
             if (string.IsNullOrEmpty(hit.Personal) || !Directory.Exists(hit.Personal))
                 throw new Exception("company-workspace-missing");
             _authUser = hit.Login;
