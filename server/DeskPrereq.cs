@@ -108,6 +108,21 @@ internal static class DeskPrereq
         catch { return -1; }
     }
 
+    // Windows 10 和 11 才有的注册表值（Win7 / 8.1 没有）。内核的 Node 22 和 WebView2 都只支持 10 和 11。
+    internal static bool IsWindows10OrLater()
+    {
+        try
+        {
+            using (var k = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+            {
+                if (k == null) return true;
+                var major = k.GetValue("CurrentMajorVersionNumber");
+                return major != null && Convert.ToInt32(major) >= 10;
+            }
+        }
+        catch { return true; }
+    }
+
     internal static string GbText(long bytes)
     {
         return (bytes / (1024.0 * 1024 * 1024)).ToString("0.0") + " GB";
