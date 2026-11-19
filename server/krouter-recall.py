@@ -27,37 +27,12 @@ sys.path.insert(0, str(HERE / "vendor" / "krouter" / "scripts"))
 for k, v in (("KROUTER_HOST_CLI", "0"), ("KROUTER_NIGHTLY", "0"), ("KROUTER_RECALL_JUDGE", "0"), ("KROUTER_ANSWER_CARDS", "0")):
     os.environ.setdefault(k, v)
 
-import hashlib  # noqa: E402
-
 import recall_index  # noqa: E402
 
 VERSION = (HERE / "vendor" / "krouter" / "VERSION").read_text(encoding="utf-8").strip() if (HERE / "vendor" / "krouter" / "VERSION").exists() else ""
 
 
-# Each bank keeps its own KRouter state (what the prompt hook brought: recalled.jsonl, the hot-cycle ledger),
-# so the nightly hot cycle of one bank reads only that bank's uses. company-krouter-hooks-v1.
-STATE_ROOT = Path(os.environ.get("KROUTER_STATE_ROOT") or (Path(os.environ.get("TDH_ROOT") or "D:/dsh") / "runtime" / "krouter-state"))
-
-
-def bank_state(folder: Path) -> Path:
-    return STATE_ROOT / hashlib.sha1(str(folder.resolve()).encode("utf-8")).hexdigest()[:12]
-
-
-# A bank without its own alias table would fall back to the sample KRouter ships; give it an empty one.
-MAP_HEAD = "# id|aliases separated by ;|Vault-relative source|evidence anchor\n"
-
-
-def ensure_map(folder: Path) -> None:
-    try:
-        import zones
-
-        table = zones.path(folder, "90 系统文件/canonical_sources.psv")
-        if not table.exists():
-            table.parent.mkdir(parents=True, exist_ok=True)
-            table.write_text(MAP_HEAD, encoding="utf-8")
-    except Exception:  # noqa: BLE001  never in the way of an answer
-        pass
-
+from krouter_tdh import bank_state, ensure_map  # noqa: E402  one state folder and alias table per bank
 
 DIGEST = "90 系统文件/自动化/下意识.md"
 DIGEST_LINES = 60

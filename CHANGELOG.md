@@ -6,6 +6,18 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 
 ## 2026.11.19.15
 
+**KRouter 自己的夜间作业接进 TDH：每天把经验蒸馏进共享知识库，热周期按 60 天算**（`company-krouter-nightly-v1`）
+- 服务器每天 00:15 的作业（`TDH-Brain-Daily` → `server/brain/run-daily.ps1`）接上 `server/krouter-nightly.js`，用的是 KRouter 原样的代码（`server/vendor/krouter`），TDH 只补它缺的：
+  1. 读昨天每个人在公司盘上的对话（DSH 的 `.dsh-desk/sessions`），转成 KRouter 认的 Claude Code 格式；
+  2. KRouter 导入进**这个人自己的**记忆（会话摘录只有本人看得到，和对话本身一样），经服务器网关的 GPT 订阅蒸馏，写经验卡（`KROUTER_EXPERIENCE=1`）；
+  3. 新的经验卡（KRouter 自己的规则：去掉具体人和事，只留通用的做法）进**共享知识库**，行政财务的进本部门的；已经有的不覆盖；
+  4. 当天的对话怎么用了共享库里的经验卡（采纳、又遇到同样处境），记到共享库上（`experience.record_uses`），和钩子的「递出过」记录一起，就是热周期的依据；
+  5. 对共享库（和财务库）跑 KRouter 的夜间维护：下意识和触发词、学到的提法、重新整理、体检；报告里顺带跑热周期（60 天没被用到的经验卡和触发词排到后面，不删）。
+- KRouter 导入前要一次「同意」：在 TDH 上这是公司的决定（每天把所有对话的经验蒸馏进共享库），按 KRouter 的方式记在每个人自己的 KRouter 状态里。
+- 原来那套作业照常写证据层和事实，不再调已经没有的 Grok（它的每人每天一页一直在失败）。
+- `server/krouter-run.py`：在一个库上跑一个 KRouter 步骤，带这个库自己的状态目录；`server/krouter_tdh.py`：常驻检索和夜间作业共用的状态目录和空别名表规则。
+- 证明：`scripts/prove-krouter-nightly.js`（不调模型：对话只进本人的库、共享库里没有对话原文、财务库单独维护、同名同天的两段对话不挤成一页）。
+
 **KRouter 的钩子接进员工端：开场下意识、每句话触发词、热周期的「用过」**（`company-krouter-hooks-v1`）
 - 和你本机的 KRouter 一样：每个新对话开场带上共享知识库的下意识索引（行政财务的人再加本部门的）；员工每句话按 KRouter 的触发词和别名匹配，碰到就把那一页的结论递给 Agent（每句最多两页，同一段对话每页只递一次），并记一次「用过」，热周期（60 天没用到就降权）看的就是这份记录。
 - 员工电脑没有 Python，KRouter 在服务器上跑：内核自带的 Claude Code 钩子插件（`@deepseek-ai/dsh-hooks-claude-code`）调客户端里的 `krouter-hook.js`，它问知识服务 `route=hook`，知识服务交给常驻的 KRouter（`krouter-recall.py`）用它自己的 `recollect` 匹配、记录。每个库有自己的状态目录（`runtime/krouter-state/<库>`），哪个库的用过记录只进哪个库。出任何问题钩子都不输出、不挡住这句话。
