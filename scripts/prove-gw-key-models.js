@@ -45,6 +45,7 @@ const fail = (w) => { console.error('GW_KEY_MODELS_PROVE_FAIL ' + w); process.ex
     }),
     stdio: ['ignore', 'pipe', 'inherit']
   });
+  process.on('exit', () => { try { gw.kill(); } catch {} }); // a failed check (process.exit) still stops the gateway
   await new Promise((resolve, reject) => {
     gw.stdout.on('data', (c) => { if (String(c).indexOf('LISTEN=') >= 0) resolve(); });
     gw.on('exit', (code) => reject(new Error('gateway-exited-' + code)));
