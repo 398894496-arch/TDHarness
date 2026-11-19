@@ -2384,8 +2384,9 @@ window.__ModuleLoader__.load({
 				}
 				return;
 			}
-			if (isTerminalTask(task)) return;
-			startCardSession(task);
+			// company-task-open-card-v1: a card with no session yet just opens as a card (what to do, files,
+			// report, hand-in). Starting a session closed the card and dropped the assignee into an empty
+			// chat (2026-11-19, TDH); that is the card's own 「新建会话处理」 button now.
 		}
 
 		function deskLogin() {
