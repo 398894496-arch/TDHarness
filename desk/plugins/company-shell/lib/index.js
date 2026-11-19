@@ -5,7 +5,6 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { URL } from "node:url";
-import { writeMemory } from "./memory-write.js";
 import { watchVideo } from "./video-watch.js";
 import { kernelWatchCutover, kernelWatchPlug, kernelWatchPublish, kernelWatchSnapshot, kernelWatchUpgrade } from "./kernel-watch.js";
 
@@ -1252,7 +1251,7 @@ function registerMemoryWriteTool(ctx) {
 	if (tools == null || typeof tools.register !== "function") return;
 	tools.register({
 		name: "company_memory_write",
-		description: "Write this seat's personal _memory or, for admin/director, company _shared/_memory. Host write, not official write: sandbox root is the personal workspace so official write cannot reach _shared, and SMB link/rename ENOTSUP. Employees calling zone=shared are denied. ASCII slug only.",
+		description: "Remember something for the whole company: the server writes it into the shared company memory (_shared/_memory) that everyone's search reads; for someone in a department kept apart (行政财务) it goes into that department's own memory instead. There is no personal memory any more (company-memory-shared-v1). ASCII slug only. Do not use the official write tool for memory.",
 		parameters: {
 			type: "object",
 			additionalProperties: false,
@@ -1260,7 +1259,7 @@ function registerMemoryWriteTool(ctx) {
 				zone: {
 					type: "string",
 					enum: ["personal", "shared"],
-					description: "personal = this seat. shared = _shared/_memory, admin/director only.",
+					description: "Ignored: every write goes to the shared company memory (or the department's own, for 行政财务). Kept so older calls still work.",
 				},
 				layer: {
 					type: "string",
@@ -1276,7 +1275,7 @@ function registerMemoryWriteTool(ctx) {
 					description: "append for 05-logs and 90-system/corrections. Default replace.",
 				},
 			},
-			required: ["zone", "layer", "name", "content"],
+			required: ["layer", "name", "content"],
 		},
 		timeoutMs: 15000,
 		output: {
@@ -1299,17 +1298,15 @@ function registerMemoryWriteTool(ctx) {
 			},
 		},
 		async execute(args) {
-			return writeMemory({
-				zone: args.zone,
+			// company-memory-shared-v1: the knowledge service writes it, with the server's rights.
+			const out = await proxyKnowledge({
 				layer: args.layer,
 				name: args.name,
 				content: args.content,
 				title: args.title,
 				mode: args.mode || "replace",
-				role: loginRoleFile(),
-				loginName: loginNameFile(),
-				cwd: process.cwd(),
-			});
+			}, "/company/knowledge/v1/memory-write");
+			return out && out.json && typeof out.json === "object" ? out.json : { ok: false, status: "no-answer" };
 		},
 	});
 }
