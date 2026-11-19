@@ -4,7 +4,7 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
-## 2026.11.19.14.1
+## 2026.11.19.16
 
 **修 Mac 打开后一直停在「正在打开本机 Agent」**（`company-mac-login-fix-v1`）
 - .14 的「记住上次登录的账号」在 Mac 的 `start.command` 里读 `last.login`；脚本开着 `set -euo pipefail`，第一次用新版时还没有这个文件，读它失败，整个启动脚本在弹账号框之前就退出了。现在文件不存在时当作空。只修这一处。
