@@ -26,6 +26,7 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
   - `runtime/kb-zones.json` 里列为不共享的部门（这台服务器上是「行政财务」），只有本部门的人和管理员能看；
   - 没有这个文件时，部门名里带「财务」的默认不共享；
   - 知识库检索和共享盘文件夹权限（`secure-folders.ps1`）读同一份表，员工绕不过去。
+- **发布不再被下载卡住**：发布最后一步要用新包替换旧包。正好有员工在下载更新时，Windows 不让替换（`PermissionError`），这一版第一次发布就是这样失败的。现在 `site-cs.py` 替换包时，被拒就每 2 秒重试一次，最多等 80 秒。
 - 新增测试：`scripts/prove-krouter-memory.js`；`prove-people.py` 加了「新账号有记忆库」；`prove-knowledge.js` 和共享盘权限测试改成「共享 + 不共享」两种部门各测一个。
 
 ## 2026.11.19.10
