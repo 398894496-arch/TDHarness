@@ -1128,8 +1128,10 @@ def notify_once(now_ms: int | None = None) -> list:
     Returns [(login, kind, ticket, result)] for the proof."""
     runtime = TOKEN_STORE.parent
     wc = notify.WeCom(runtime)
-    people = people_by_login()
     done = []
+    if not wc.on:
+        return done                      # not set up: do not mark anything as told, nothing went out
+    people = people_by_login()
     try:
         with BOARD_MU:
             notices = ticket_board.collect_notices(BOARD, people, now_ms)

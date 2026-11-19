@@ -76,6 +76,11 @@ rt = root / "runtime"
 rt.mkdir()
 wc = notify.WeCom(rt)
 check(wc.send("amy", "x") == "off" and not sent, "off until configured")
+try:
+    tickets.parse_due(1764000000)
+    check(False, "a due in seconds is refused")
+except tickets.Refused:
+    pass
 (rt / "wecom.env").write_text("WECOM_CORP_ID=c\nWECOM_AGENT_ID=100\nWECOM_SECRET=s\n", encoding="utf-8")
 (rt / "wecom-users.json").write_text(json.dumps({"amy": "ZhangAmy"}), encoding="utf-8")
 wc = notify.WeCom(rt)

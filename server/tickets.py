@@ -47,7 +47,9 @@ def parse_due(value) -> int:
     'YYYY-MM-DD HH:MM'; empty clears it. Anything else is refused."""
     if value in (None, "", 0):
         return 0
-    if isinstance(value, (int, float)) and value > 0:
+    if isinstance(value, (int, float)):
+        if value < 1e12:                 # seconds, or nonsense: would read as 1970 and be overdue at once
+            raise Refused("due")
         return int(value)
     text = str(value).strip().replace("T", " ")
     for fmt, end in (("%Y-%m-%d %H:%M", False), ("%Y-%m-%d", True)):
