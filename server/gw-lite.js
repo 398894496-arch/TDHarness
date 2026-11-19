@@ -281,31 +281,58 @@ function quotaProxy(auth, env) {
   } catch (e) { return ''; }
 }
 
-// GET JSON over HTTPS, through an HTTP proxy (CONNECT) when one is given.
+// GET JSON over HTTPS, through an HTTP proxy (CONNECT) when one is given. Plain HTTP/1.1 on
+// a TLS socket: https.request with a ready tunnel socket hung on the server's Node.
 function httpsGetJson(url, headers, proxy, ms) {
   const tls = require('tls');
   const u = new URL(url);
   return new Promise((resolve, reject) => {
-    const done = (fn, v) => { clearTimeout(timer); fn(v); };
-    const timer = setTimeout(() => reject(new Error('timeout')), ms || 10000);
-    const request = (socket) => {
-      const req = https.request({ host: u.hostname, path: u.pathname + u.search, method: 'GET', headers, servername: u.hostname, agent: false,
-        createConnection: socket ? () => tls.connect({ socket, servername: u.hostname }) : undefined }, (res) => {
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => {
-          if ((res.statusCode || 0) >= 400) return done(reject, new Error('http-' + res.statusCode));
-          try { done(resolve, JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch (e) { done(reject, new Error('bad-json')); }
-        });
-      });
-      req.on('error', (e) => done(reject, e));
-      req.end();
+    let settled = false;
+    const finish = (e, v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (e) reject(e); else resolve(v);
     };
-    if (!proxy) return request(null);
+    const timer = setTimeout(() => finish(new Error('timeout')), ms || 10000);
+    const go = (socket) => {
+      const t = tls.connect(socket ? { socket, servername: u.hostname } : { host: u.hostname, port: 443, servername: u.hostname }, () => {
+        const lines = ['GET ' + u.pathname + u.search + ' HTTP/1.1', 'Host: ' + u.hostname, 'Connection: close', 'Accept-Encoding: identity'];
+        for (const k of Object.keys(headers || {})) lines.push(k + ': ' + headers[k]);
+        t.write(lines.join('\r\n') + '\r\n\r\n');
+      });
+      const chunks = [];
+      t.on('data', (c) => chunks.push(c));
+      t.on('error', (e) => finish(e));
+      t.on('end', () => {
+        const raw = Buffer.concat(chunks);
+        const i = raw.indexOf('\r\n\r\n');
+        if (i < 0) return finish(new Error('bad-response'));
+        const head = raw.slice(0, i).toString('latin1');
+        const status = Number((head.match(/^HTTP\/\d(?:\.\d)? (\d+)/) || [])[1] || 0);
+        let body = raw.slice(i + 4);
+        if (/\r\ntransfer-encoding:\s*chunked/i.test(head)) {
+          const out = [];
+          let pos = 0;
+          while (pos < body.length) {
+            const eol = body.indexOf('\r\n', pos);
+            if (eol < 0) break;
+            const n = parseInt(body.slice(pos, eol).toString('latin1'), 16);
+            if (!n) break;
+            out.push(body.slice(eol + 2, eol + 2 + n));
+            pos = eol + 2 + n + 2;
+          }
+          body = Buffer.concat(out);
+        }
+        if (status >= 400 || !status) return finish(new Error('http-' + status));
+        try { finish(null, JSON.parse(body.toString('utf8'))); } catch (e) { finish(new Error('bad-json')); }
+      });
+    };
+    if (!proxy) return go(null);
     const p = new URL(proxy);
     const c = http.request({ host: p.hostname, port: p.port || 80, method: 'CONNECT', path: u.hostname + ':443' });
-    c.on('connect', (res, socket) => (res.statusCode === 200 ? request(socket) : done(reject, new Error('proxy-' + res.statusCode))));
-    c.on('error', (e) => done(reject, e));
+    c.on('connect', (res, socket) => (res.statusCode === 200 ? go(socket) : finish(new Error('proxy-' + res.statusCode))));
+    c.on('error', (e) => finish(e));
     c.end();
   });
 }
