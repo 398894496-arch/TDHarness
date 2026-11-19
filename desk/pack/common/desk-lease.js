@@ -12,7 +12,7 @@ const https = require('https');
 const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const DESK_PORT = 17803;
 const KICK_WAIT_MS = 50000;
@@ -1637,6 +1637,54 @@ async function cmdFlushed() {
   process.stdout.write('LEASE_STATUS=' + ((data && data.status) || '') + '\n');
 }
 
+// company-mac-share-watch-v1: on a Mac the company share is mounted once, at launch. When it
+// drops mid-run (sleep and wake before the tailnet is back, a network change), the desk kept
+// working in the empty folder under the mount point: chats on the share vanished (ENOENT) and
+// new ones were written to this Mac only. The lease watch now checks the mount every heartbeat
+// and remounts in the background (mac-mount-company.sh), telling the person while it is down.
+function smbMountedAt(mountText, mnt) {
+  const want = ' on ' + norm(mnt).replace(/\/+$/, '') + ' (';
+  return String(mountText || '').split('\n').some((l) => l.indexOf(want) >= 0 && /\(smbfs[,)]/.test(l.slice(l.indexOf(want))));
+}
+
+function toast(msg) {
+  if (process.platform !== 'darwin') return;
+  try {
+    const c = spawn('osascript', ['-e', 'display notification ' + JSON.stringify(msg) + ' with title "TDHarness"'], { stdio: 'ignore', detached: true });
+    c.unref();
+  } catch { /* a notice must never stop the watch */ }
+}
+
+const macShare = { child: null, down: false };
+function macShareTick() {
+  if (process.platform !== 'darwin' || macShare.child) return;
+  const personal = personalPath();
+  const mnt = personal ? shareRoot(personal) : '';
+  if (!mnt || companyRel(mnt + '/x') !== 'x') return;
+  const m = spawnSync('/sbin/mount', [], { encoding: 'utf8', timeout: 5000 });
+  if (m.status !== 0) return;
+  if (smbMountedAt(m.stdout, mnt)) {
+    if (macShare.down) {
+      macShare.down = false;
+      process.stdout.write('SHARE_BACK=' + mnt + '\n');
+      toast('公司盘已经重新连上了。');
+    }
+    return;
+  }
+  if (!macShare.down) {
+    macShare.down = true;
+    process.stdout.write('SHARE_DOWN=' + mnt + '\n');
+    toast('公司盘断开了，正在重连。连上之前先别发消息，免得对话存不到公司盘。');
+  }
+  const sh = path.join(__dirname, 'mac-mount-company.sh');
+  if (!fs.existsSync(sh)) return;
+  const c = spawn('/bin/bash', [sh], { stdio: 'ignore' });
+  macShare.child = c;
+  const kill = setTimeout(() => { try { c.kill('SIGKILL'); } catch { /* */ } }, 60000);
+  c.on('exit', () => { clearTimeout(kill); macShare.child = null; });
+  c.on('error', () => { clearTimeout(kill); macShare.child = null; });
+}
+
 async function cmdWatch() {
   const pidFile = path.join(rcDir(), 'lease-watch.pid');
   writeAscii(pidFile, String(process.pid));
@@ -1695,6 +1743,7 @@ async function cmdWatch() {
       if (gone) { await stop('desk-down'); return; }
       process.stdout.write('DESK_PROBE_RECOVERED=1\n');
     }
+    macShareTick();
     await new Promise((r) => setTimeout(r, HEARTBEAT_MS));
   }
 }
@@ -1714,6 +1763,12 @@ function cmdSelftest() {
     localCompanyRoot = path.join(os.tmpdir(), 'dsh-selftest-no-local-company-' + process.pid);
   }
   if (realRoot !== 'D:/dsh/company') throw new Error('selftest-real-root');
+  const mt = '//smb-a@tdh.local/dsh-company on /Users/x/company (smbfs, nodev, nosuid, mounted by x)\n/dev/disk3s1 on /Users/x/companyX (apfs, local)\n';
+  if (!smbMountedAt(mt, '/Users/x/company')) throw new Error('selftest-smb-mounted');
+  if (!smbMountedAt(mt, '/Users/x/company/')) throw new Error('selftest-smb-mounted-slash');
+  if (smbMountedAt(mt, '/Users/x/companyX')) throw new Error('selftest-smb-not-apfs');
+  if (smbMountedAt('/dev/disk3s1 on /Users/x/company (apfs, local)\n', '/Users/x/company')) throw new Error('selftest-smb-local-folder');
+  if (smbMountedAt('', '/Users/x/company')) throw new Error('selftest-smb-empty');
   const a = '/Users/x/company/content/emp-alice';
   const b = '\\\\10.9.8.7\\dsh-company\\content\\emp-alice';
   if (companyRel(a) !== 'content/emp-alice') throw new Error('rel-mac');

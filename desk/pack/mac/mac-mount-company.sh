@@ -80,6 +80,15 @@ if mount | grep -F " on $MNT " >/dev/null; then
   exit 2
 fi
 
+# company-mac-share-aside-v1: an unmounted $MNT that has files in it is an old local copy or
+# what the desk wrote while the share was down. Mounting over it would hide it, so move it
+# aside (nothing is deleted) where it can be checked and merged.
+if [ -d "$MNT" ] && [ -n "$(ls -A "$MNT" 2>/dev/null)" ]; then
+  ASIDE="$MNT.local-$(date +%Y%m%d-%H%M%S)"
+  if mv "$MNT" "$ASIDE" 2>/dev/null; then echo "MNT_ASIDE=$ASIDE"; else echo "MNT_ASIDE_FAILED=$MNT"; fi
+  mkdir -p "$MNT"
+fi
+
 HOST="$(pick_host)" || {
   echo "BLOCKED=server-unreachable" >&2
   exit 2

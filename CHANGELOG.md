@@ -4,6 +4,17 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.18.5
+
+**Mac：公司盘中途掉线会自动重连；掉线期间写下的东西不再被藏起来**
+- **现象（11-18，客户现场的 Mac）**：一个会话一直报 `ENOTCONN`，接着报 `ENOENT ... session.v4.jsonl.zstd`。原因是 `~/company` 上的公司盘在运行中掉了：Mac 睡眠后唤醒，Tailscale 还没连上。客户端只在启动时挂一次盘，掉线后它在挂载点下面的本地空目录里继续干活：公司盘上的对话找不到了，新对话只存到了这台 Mac。
+- **自动重连**：座位心跳（`desk-lease.js watch`，每 12 秒一次）顺便检查 `~/company` 是不是公司盘。不是的话，在后台跑 `mac-mount-company.sh` 重挂，最多等 60 秒，不耽误心跳。断开和重新连上时，各弹一条系统通知（不是要点按钮的对话框）。
+- **不再藏数据**：挂盘前如果 `~/company` 没挂着、里面却有文件（旧的本地副本，或者掉线期间写下的东西），先把整个目录改名成 `~/company.local-<时间>` 再挂。什么都不删，事后可以核对、合并。原来是直接挂在上面，把这些文件盖住。
+- 证明：
+  - `desk-lease.js selftest` 新增挂载判断的用例：smbfs 才算；`companyX` 不算；本地 apfs 目录不算。
+  - 新增 `scripts/prove-mac-mount-aside.sh`：有文件的挂载点会被移走、内容原样保留，空的不动。这个测试在旧脚本上会失败；已加进 CI（Linux）。
+  - 没在真的 Mac 上让公司盘掉一次线来实测。
+
 ## 2026.11.18.4
 
 **任务卡能跟进了：截止日期、到点提醒、改派、作废、留言、老板每日清单；田总一句话就能下任务**
