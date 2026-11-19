@@ -54,7 +54,7 @@ async function run(root, krouter) {
       TDH_ROSTER: path.join(root, 'roster.json'), TDH_GW_TOKENS: path.join(root, 'gw-tokens.json'),
       TDH_KNOW_LOG: path.join(root, 'know.log'), TDH_KB_CACHE: path.join(root, 'kb-cache'),
       TDH_KROUTER_CACHE: path.join(root, 'krouter-cache'), TDH_KB_ZONES: path.join(root, 'kb-zones.json'),
-      TDH_KROUTER: krouter ? '1' : '0' },
+      TDH_KROUTER: krouter ? '1' : '0', KROUTER_STATE_ROOT: path.join(root, 'krouter-state') },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   await new Promise((resolve, reject) => {
@@ -66,7 +66,12 @@ async function run(root, krouter) {
       mine: await ask(port, T.amy, { route: 'search', query: '大客户怎么报价' }),
       theirs: await ask(port, T.amy, { route: 'search', query: '底价是多少' }),
       company: await ask(port, T.eve, { route: 'search', query: '样品寄送流程' }),
-      off: await ask(port, T.amy, { route: 'search', query: '火星上的天气怎么样' }) };
+      off: await ask(port, T.amy, { route: 'search', query: '火星上的天气怎么样' }),
+      // company-krouter-hooks-v1: KRouter's own hooks, run for a desk.
+      start: await ask(port, T.eve, { route: 'hook', hook: 'start', session: 's1' }),
+      prompt1: await ask(port, T.eve, { route: 'hook', hook: 'prompt', text: '样品寄送流程怎么走', session: 's1' }),
+      prompt2: await ask(port, T.eve, { route: 'hook', hook: 'prompt', text: '样品寄送流程再说一遍', session: 's1' }),
+      quiet: await ask(port, T.eve, { route: 'hook', hook: 'prompt', text: '今天午饭吃什么', session: 's1' }) };
   } finally {
     child.kill();
   }
@@ -80,6 +85,10 @@ async function run(root, krouter) {
   put(company, 'content/emp-eve/_memory/02-methods/私人底价.md', '# 私人底价\n\neve 自己记的：聚氨酯筛板底价 8 元一公斤，不要告诉别人。\n');
   put(company, '_shared/_memory/02-methods/样品寄送.md', '# 样品寄送流程\n\n样品寄送流程：先填寄样单，主管批了再寄，运费公司出。\n');
   put(company, '_handbook/_company/rules.md', '# 规章\n\n上班九点打卡。\n');
+  // The company memory as KRouter keeps it: its zones map, the standing index and the trigger words its nightly writes.
+  put(company, '_shared/_memory/krouter-zones.psv', '01 项目|01-projects\n02 经验与方法|02-methods\n03 资料与证据|03-evidence\n04 已完成与复盘|04-reviews\n05 时间日志|05-logs\n90 系统文件|90-system\n');
+  put(company, '_shared/_memory/90-system/自动化/下意识.md', '---\ntitle: 下意识\n---\n\n- 寄样／样品：先填寄样单，主管批了再寄〔02 经验与方法/样品寄送.md〕\n');
+  put(company, '_shared/_memory/90-system/自动化/下意识触发词.psv', '# rel|words\n02-methods/样品寄送.md|样品寄送流程;样品审批\n');
 
   const on = await run(root, true);
   assert.ok(on.status.krouter && /^[0-9a-f]{7}$/.test(on.status.krouter.version), 'status names the pinned KRouter: ' + JSON.stringify(on.status.krouter));
@@ -93,7 +102,21 @@ async function run(root, krouter) {
   assert.ok(on.company.hits.some((h) => h.via === 'krouter' && /_shared\/_memory\/02-methods\/样品寄送\.md$/.test(h.path)), 'company memory reaches everyone: ' + JSON.stringify(on.company.hits));
   assert.ok(!on.off.hits.some((h) => h.via === 'krouter'), 'an off-topic question got KRouter hits: ' + JSON.stringify(on.off.hits));
 
+  // Session start: the company standing index.
+  assert.ok(/主管批了再寄/.test(on.start.text || ''), 'session start brings the standing index: ' + JSON.stringify(on.start));
+  // A message with a trigger phrase brings that page, once per session; an unrelated one brings nothing.
+  // (KRouter's own rule: a phrase under four characters inside a longer message does not count.)
+  assert.ok(/样品寄送/.test(on.prompt1.text || ''), 'a trigger word brings its page: ' + JSON.stringify(on.prompt1));
+  assert.strictEqual(on.prompt2.text, '', 'the same page is not brought twice in one session');
+  assert.strictEqual(on.quiet.text, '', 'nothing named, nothing brought');
+  // Bringing it is the hot cycle's use record, kept per bank.
+  const states = fs.existsSync(path.join(root, 'krouter-state')) ? fs.readdirSync(path.join(root, 'krouter-state')) : [];
+  const recalled = states.map((d) => path.join(root, 'krouter-state', d, 'recalled.jsonl')).filter((f) => fs.existsSync(f));
+  assert.ok(recalled.length === 1 && /"route": ?"trigger"/.test(fs.readFileSync(recalled[0], 'utf8')) && /样品寄送流程/.test(fs.readFileSync(recalled[0], 'utf8')),
+    'the use is logged in that bank\'s own state: ' + states.join(','));
+
   const off = await run(root, false);
+  assert.strictEqual(off.start.text, '', 'TDH_KROUTER=0: no hooks');
   assert.strictEqual(off.status.krouter, null, 'TDH_KROUTER=0 still reported KRouter');
   assert.ok(!off.mine.hits.some((h) => h.via), 'TDH_KROUTER=0 still used KRouter');
   assert.ok(off.mine.hits.some((h) => /大客户报价\.md$/.test(h.path)), 'without KRouter the memory page is still found');

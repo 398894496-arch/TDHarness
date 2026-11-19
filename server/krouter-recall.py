@@ -27,14 +27,90 @@ sys.path.insert(0, str(HERE / "vendor" / "krouter" / "scripts"))
 for k, v in (("KROUTER_HOST_CLI", "0"), ("KROUTER_NIGHTLY", "0"), ("KROUTER_RECALL_JUDGE", "0"), ("KROUTER_ANSWER_CARDS", "0")):
     os.environ.setdefault(k, v)
 
+import hashlib  # noqa: E402
+
 import recall_index  # noqa: E402
 
 VERSION = (HERE / "vendor" / "krouter" / "VERSION").read_text(encoding="utf-8").strip() if (HERE / "vendor" / "krouter" / "VERSION").exists() else ""
 
 
+# Each bank keeps its own KRouter state (what the prompt hook brought: recalled.jsonl, the hot-cycle ledger),
+# so the nightly hot cycle of one bank reads only that bank's uses. company-krouter-hooks-v1.
+STATE_ROOT = Path(os.environ.get("KROUTER_STATE_ROOT") or (Path(os.environ.get("TDH_ROOT") or "D:/dsh") / "runtime" / "krouter-state"))
+
+
+def bank_state(folder: Path) -> Path:
+    return STATE_ROOT / hashlib.sha1(str(folder.resolve()).encode("utf-8")).hexdigest()[:12]
+
+
+# A bank without its own alias table would fall back to the sample KRouter ships; give it an empty one.
+MAP_HEAD = "# id|aliases separated by ;|Vault-relative source|evidence anchor\n"
+
+
+def ensure_map(folder: Path) -> None:
+    try:
+        import zones
+
+        table = zones.path(folder, "90 系统文件/canonical_sources.psv")
+        if not table.exists():
+            table.parent.mkdir(parents=True, exist_ok=True)
+            table.write_text(MAP_HEAD, encoding="utf-8")
+    except Exception:  # noqa: BLE001  never in the way of an answer
+        pass
+
+
+DIGEST = "90 系统文件/自动化/下意识.md"
+DIGEST_LINES = 60
+
+
+def hook(req: dict) -> dict:
+    """KRouter's own hooks for a TDH desk (session_hook.py does the same for Claude Code on one machine).
+    start: the standing index (下意识) of each bank this person opens. prompt: what this message names
+    (recollect: alias table, trigger words; cold phrases sort last), at most two pages, each once per session,
+    logged as used (the hot cycle's record)."""
+    import recollect
+    import zones
+
+    which = str(req.get("hook") or "")
+    session = str(req.get("session") or "")[:64]
+    parts = []
+    hits_all = []
+    for bank in req.get("banks") or []:
+        folder = Path(str((bank or {}).get("dir") or ""))
+        if not folder.is_dir():
+            continue
+        os.environ["KROUTER_STATE_DIR"] = str(bank_state(folder))
+        ensure_map(folder)
+        if which == "start":
+            page = zones.path(folder, DIGEST)
+            if page.is_file():
+                lines = [l for l in page.read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("---")]
+                if lines:
+                    parts.append("\n".join(lines[:DIGEST_LINES]))
+            continue
+        text = str(req.get("text") or "").strip()
+        if not text or len(text) > 1500:
+            continue
+        try:
+            recollect.keep_index_fresh(folder)
+            found = recollect.recollect(folder, text)
+            hits = recollect.keep_new(found, "tdh", session)
+            recollect.log(hits, "tdh", session)
+        except Exception as e:  # noqa: BLE001  a bank that cannot answer leaves the others
+            parts.append("")
+            continue
+        for h in hits:
+            hits_all.append((str(bank.get("name") or ""), h))
+    if which == "prompt" and hits_all:
+        parts = [recollect.render([h for _, h in hits_all[:2]])]
+    return {"ok": True, "hook": which, "text": "\n\n".join(p for p in parts if p).strip()}
+
+
 def ask(req: dict) -> dict:
     if req.get("ping"):
         return {"ok": True, "version": VERSION}
+    if req.get("hook"):
+        return hook(req)
     query = str(req.get("query") or "").strip()
     try:
         limit = max(1, min(12, int(req.get("limit") or 6)))
@@ -47,6 +123,7 @@ def ask(req: dict) -> dict:
         if not query or not folder.is_dir():
             out.append({"name": name, "missing": not folder.is_dir(), "hits": []})
             continue
+        ensure_map(folder)
         try:
             res = recall_index.recall(folder, query, limit=limit)
         except Exception as e:  # noqa: BLE001  one bank failing leaves the others answered

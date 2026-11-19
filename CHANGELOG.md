@@ -6,6 +6,12 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 
 ## 2026.11.19.15
 
+**KRouter 的钩子接进员工端：开场下意识、每句话触发词、热周期的「用过」**（`company-krouter-hooks-v1`）
+- 和你本机的 KRouter 一样：每个新对话开场带上共享知识库的下意识索引（行政财务的人再加本部门的）；员工每句话按 KRouter 的触发词和别名匹配，碰到就把那一页的结论递给 Agent（每句最多两页，同一段对话每页只递一次），并记一次「用过」，热周期（60 天没用到就降权）看的就是这份记录。
+- 员工电脑没有 Python，KRouter 在服务器上跑：内核自带的 Claude Code 钩子插件（`@deepseek-ai/dsh-hooks-claude-code`）调客户端里的 `krouter-hook.js`，它问知识服务 `route=hook`，知识服务交给常驻的 KRouter（`krouter-recall.py`）用它自己的 `recollect` 匹配、记录。每个库有自己的状态目录（`runtime/krouter-state/<库>`），哪个库的用过记录只进哪个库。出任何问题钩子都不输出、不挡住这句话。
+- 每个库第一次被用到时建一份自己的空别名表，不再退回 KRouter 自带的示例表。
+- 证明：`scripts/prove-krouter-memory.js` 加了开场、触发词、同一对话不重复、无关不递、用过记录按库分开。
+
 **兼容性：装得上、能更新**（`company-compat-v1`）
 - **代理软件**：员工电脑开着 Clash 一类代理的「系统代理」时，安装包、TDH 主程序、更新脚本连 `tdharness.local` 都会被送进代理，代理解析不了这个局域网名字，安装、登录、更新全失败。现在这三个程序一启动就把默认代理设为直连（公司服务器只在局域网或加密网络里，用不到代理）。Mac 端的更新下载本来就是 `--noproxy`。
 - **WebView2**：TDH 的 Windows 窗口靠微软 WebView2。Win11 自带；Win10 靠系统更新装上，关了更新的电脑没有，以前要到登录成功后才报 `webview2-missing`。现在安装包装完、主程序每次启动前都检查，没有就从公司服务器取微软的安装器（发版时下载并核对是微软签名，`server/fetch-webview2.ps1`）给当前用户静默装上，不要管理员；装不上就在登录页说清楚。
