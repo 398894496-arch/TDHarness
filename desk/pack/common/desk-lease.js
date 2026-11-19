@@ -936,33 +936,34 @@ function remapSessionLogs(sessDir, rewrite) {
   return n;
 }
 
-function ensureSeatWorkspaces(ws, personal, org) {
+// company-single-workspace-v1: the desk shows one workspace, the person's own folder, titled 工作区.
+// There is no team seat any more (it was the whole company share); what someone did there stays
+// listed, under 工作区. Older desks titled the seat 个人 / 团队; both are still recognised here.
+const SEAT_TITLE = '工作区';
+const OLD_SEAT_TITLES = ['个人', '团队'];
+function isSeatTitle(t) {
+  return t === SEAT_TITLE || OLD_SEAT_TITLES.indexOf(t) >= 0;
+}
+
+function seatId(ws) {
+  return seatWorkspaceId(ws, SEAT_TITLE) || seatWorkspaceId(ws, '个人');
+}
+
+function ensureSeatWorkspaces(ws, personal, org) { // eslint-disable-line no-unused-vars
   if (!ws.tables) ws.tables = {};
   if (!ws.tables.workspaces) ws.tables.workspaces = {};
   const tables = ws.tables.workspaces;
   if (!ws.global) ws.global = { initialized: true, workspaceIds: [], archivedSessionIds: [] };
   if (!Array.isArray(ws.global.workspaceIds)) ws.global.workspaceIds = [];
-  const byTitle = {};
-  for (const id of Object.keys(tables)) {
-    const t = tables[id] && tables[id].title;
-    if (t) byTitle[t] = id;
-  }
   const now = new Date().toISOString();
-  if (!byTitle['个人']) {
+  const id = seatId(ws);
+  if (!id) {
     const pid = 'w-seat-' + Date.now().toString(36);
-    tables[pid] = { path: chairPath(personal), title: '个人', sessionIds: [], createdAt: now, updatedAt: now };
+    tables[pid] = { path: chairPath(personal), title: SEAT_TITLE, sessionIds: [], createdAt: now, updatedAt: now };
     ws.global.workspaceIds.push(pid);
   } else {
-    tables[byTitle['个人']].path = chairPath(personal);
-  }
-  if (org && norm(org) !== norm(personal)) {
-    if (!byTitle['团队']) {
-      const oid = 'w-org-' + Date.now().toString(36);
-      tables[oid] = { path: chairPath(org), title: '团队', sessionIds: [], createdAt: now, updatedAt: now };
-      ws.global.workspaceIds.push(oid);
-    } else {
-      tables[byTitle['团队']].path = chairPath(org);
-    }
+    tables[id].path = chairPath(personal);
+    tables[id].title = SEAT_TITLE;
   }
 }
 
@@ -1001,7 +1002,7 @@ function collapseSeatWorkspaces(ws, personal, org) {
     }
     for (const id of ids) {
       const t = tables[id] && tables[id].title;
-      if ((t === '个人' || t === '团队') && isUuid(id)) keep = id;
+      if (isSeatTitle(t) && isUuid(id)) keep = id;
     }
     const sids = [];
     for (const id of ids) {
@@ -1015,24 +1016,24 @@ function collapseSeatWorkspaces(ws, personal, org) {
     }
     tables[keep].sessionIds = sids;
     if (personal && key === seatKey(personal)) {
-      tables[keep].title = '个人';
+      tables[keep].title = SEAT_TITLE;
       tables[keep].path = chairPath(personal);
-    } else if (org && key === seatKey(org)) {
-      tables[keep].title = '团队';
-      tables[keep].path = chairPath(org);
     }
   }
-  const keepKeys = {};
-  if (personal) keepKeys[seatKey(personal)] = true;
-  if (org && seatKey(org) !== seatKey(personal || '')) keepKeys[seatKey(org)] = true;
-  if (Object.keys(keepKeys).length) {
+  // Only the person's own folder stays a workspace (company-single-workspace-v1); the conversations
+  // listed under any other row (the old team seat) move under it instead of disappearing.
+  if (personal) {
+    const pkey = seatKey(personal);
+    const seat = Object.keys(tables).find((id) => tables[id] && typeof tables[id].path === 'string' && seatKey(tables[id].path) === pkey);
     for (const id of Object.keys(tables)) {
       const row = tables[id];
-      if (!row || typeof row.path !== 'string') continue;
-      if (!keepKeys[seatKey(row.path)]) {
-        delete tables[id];
-        dropped += 1;
+      if (!row || typeof row.path !== 'string' || seatKey(row.path) === pkey) continue;
+      if (seat) {
+        const into = tables[seat].sessionIds || (tables[seat].sessionIds = []);
+        for (const sid of (row.sessionIds || [])) if (into.indexOf(sid) < 0) into.push(sid);
       }
+      delete tables[id];
+      dropped += 1;
     }
   }
   if (ws.global) ws.global.workspaceIds = Object.keys(tables);
@@ -1047,22 +1048,11 @@ function plantCatalog(personal, org) {
   const tables = {};
   tables[pid] = {
     path: chairPath(personal),
-    title: '个人',
+    title: SEAT_TITLE,
     sessionIds: [],
     createdAt: now,
     updatedAt: now,
   };
-  if (org && norm(org) !== norm(personal)) {
-    const oid = pid + '-org';
-    ids.push(oid);
-    tables[oid] = {
-      path: chairPath(org),
-      title: '团队',
-      sessionIds: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
   return {
     unit: { name: 'workspace', version: 2 },
     global: { initialized: true, workspaceIds: ids, archivedSessionIds: [] },
@@ -1113,7 +1103,7 @@ function reconcileWorkspaceSessions(ws, sessDir) {
   if (!ws || !ws.tables || !ws.tables.workspaces) return 0;
   const tables = ws.tables.workspaces;
   const order = ((ws.global && ws.global.workspaceIds) || Object.keys(tables)).filter((id) => tables[id]);
-  const personalId = seatWorkspaceId(ws, '个人') || order[0] || '';
+  const personalId = seatId(ws) || order[0] || '';
   const homes = walkSessionHomes(sessDir);
   const owner = new Map();
   for (const [sid, sl] of homes.entries()) {
@@ -1820,7 +1810,8 @@ function cmdSelftest() {
   remapDesk(winPers, winOrg);
   const wsWin = JSON.parse(fs.readFileSync(path.join(winPers, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
   if (norm(wsWin.tables.workspaces.w1.path) !== norm(livePath(winPers))) throw new Error('selftest-win-path');
-  if (norm(wsWin.tables.workspaces.w2.path) !== norm(livePath(winOrg))) throw new Error('selftest-win-org');
+  if (wsWin.tables.workspaces.w2) throw new Error('selftest-win-team-seat-kept');
+  if (wsWin.tables.workspaces.w1.title !== SEAT_TITLE) throw new Error('selftest-win-seat-title');
   const moved = path.join(winPers, '.dsh-desk', 'sessions', slug(livePath(winPers)), sid, 'session.jsonl.zstd');
   if (!fs.existsSync(moved)) throw new Error('selftest-win-slug');
   if (fs.existsSync(path.join(winPers, '.dsh-desk', 'sessions', macSlug))) throw new Error('selftest-win-old-slug');
@@ -1961,7 +1952,7 @@ function cmdSelftest() {
   remapDesk(persE, orgE);
   const wsE = JSON.parse(fs.readFileSync(path.join(persE, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
   const titles = Object.keys(wsE.tables.workspaces).map((id) => wsE.tables.workspaces[id].title).sort();
-  if (titles.join(',') !== '个人,团队') throw new Error('selftest-plant-titles');
+  if (titles.join(',') !== SEAT_TITLE) throw new Error('selftest-plant-titles ' + titles.join(','));
   wsE.tables.workspaces.dup = {
     path: persE,
     title: '_office',
@@ -1971,8 +1962,8 @@ function cmdSelftest() {
   };
   collapseSeatWorkspaces(wsE, persE, orgE);
   const after = Object.keys(wsE.tables.workspaces).map((id) => wsE.tables.workspaces[id].title).sort();
-  if (after.join(',') !== '个人,团队') throw new Error('selftest-collapse-titles');
-  const persRow = Object.keys(wsE.tables.workspaces).map((id) => wsE.tables.workspaces[id]).find((r) => r.title === '个人');
+  if (after.join(',') !== SEAT_TITLE) throw new Error('selftest-collapse-titles ' + after.join(','));
+  const persRow = Object.keys(wsE.tables.workspaces).map((id) => wsE.tables.workspaces[id]).find((r) => r.title === SEAT_TITLE);
   if (!persRow || (persRow.sessionIds || []).indexOf('session-dup') < 0) throw new Error('selftest-collapse-merge');
   fs.rmSync(boxEmpty, { recursive: true, force: true });
   const boxW = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-writable-'));
@@ -1998,19 +1989,21 @@ function cmdSelftest() {
   remapDesk(persB, orgB);
   const wsB = JSON.parse(fs.readFileSync(path.join(persB, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
   if (norm(wsB.tables.workspaces.w1.path) !== norm(livePath(persB))) throw new Error('selftest-boss-personal');
-  if (norm(wsB.tables.workspaces.w2.path) !== norm(livePath(orgB))) throw new Error('selftest-boss-org-root');
+  if (wsB.tables.workspaces.w2) throw new Error('selftest-boss-team-seat-kept');
   fs.rmSync(boxB, { recursive: true, force: true });
   const boxF = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-drop-chair-'));
   const persF = path.join(boxF, 'company', '_office');
   const orgF = path.join(boxF, 'company');
   fs.mkdirSync(path.join(persF, '.dsh-desk', 'storages'), { recursive: true });
+  // A conversation that was held in the old team seat, as it lies on the share.
+  fs.mkdirSync(path.join(persF, '.dsh-desk', 'sessions', slug('D:/dsh/company/content'), 'session-team'), { recursive: true });
   fs.writeFileSync(path.join(persF, '.dsh-desk', 'storages', 'workspace.json'), JSON.stringify({
     unit: { name: 'workspace', version: 2 },
     global: { initialized: true, workspaceIds: ['w1', 'w2', 'w3'] },
     tables: {
       workspaces: {
         w1: { path: 'D:/dsh/company/_office', title: '个人', sessionIds: [] },
-        w2: { path: 'D:/dsh/company/content', title: '团队', sessionIds: [] },
+        w2: { path: 'D:/dsh/company/content', title: '团队', sessionIds: ['session-team'] },
         w3: { path: 'D:/dsh/company/content/emp-bob', title: '别人', sessionIds: [] },
       },
     },
@@ -2018,9 +2011,11 @@ function cmdSelftest() {
   remapDesk(persF, orgF);
   const wsF = JSON.parse(fs.readFileSync(path.join(persF, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
   const titlesF = Object.keys(wsF.tables.workspaces).map((id) => wsF.tables.workspaces[id].title).sort();
-  if (titlesF.join(',') !== '个人,团队') throw new Error('selftest-drop-foreign');
-  const teamF = Object.values(wsF.tables.workspaces).find((r) => r.title === '团队');
-  if (!teamF || norm(teamF.path) !== norm(livePath(orgF))) throw new Error('selftest-seat-org');
+  if (titlesF.join(',') !== SEAT_TITLE) throw new Error('selftest-drop-foreign ' + titlesF.join(','));
+  // The old team seat's conversations stay listed, under the one workspace (company-single-workspace-v1).
+  const seatF = Object.values(wsF.tables.workspaces).find((r) => r.title === SEAT_TITLE);
+  if (!seatF || norm(seatF.path) !== norm(livePath(persF))) throw new Error('selftest-seat-path');
+  if ((seatF.sessionIds || []).indexOf('session-team') < 0) throw new Error('selftest-team-sessions-lost');
   if (wsF.tables.workspaces.w3) throw new Error('selftest-kept-foreign');
   const boxQ = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-bob-root-'));
   const persQ = path.join(boxQ, 'company', 'content', 'emp-bob');
@@ -2038,10 +2033,9 @@ function cmdSelftest() {
   }));
   remapDesk(persQ, orgQ);
   const wsQ = JSON.parse(fs.readFileSync(path.join(persQ, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
-  const persRowQ = Object.values(wsQ.tables.workspaces).find((r) => r.title === '个人');
-  const teamQ = Object.values(wsQ.tables.workspaces).find((r) => r.title === '团队');
+  const persRowQ = Object.values(wsQ.tables.workspaces).find((r) => r.title === SEAT_TITLE);
   if (!persRowQ || norm(persRowQ.path) !== norm(livePath(persQ))) throw new Error('selftest-emp-personal-ts');
-  if (!teamQ || norm(teamQ.path) !== norm(livePath(orgQ))) throw new Error('selftest-emp-share-root');
+  if (Object.keys(wsQ.tables.workspaces).length !== 1) throw new Error('selftest-emp-team-seat-kept');
   fs.rmSync(boxQ, { recursive: true, force: true });
   const boxI = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-instr-'));
   const ovI = path.join(boxI, 'overlay.yml');
@@ -2082,10 +2076,10 @@ function cmdSelftest() {
   }));
   remapDesk(persD, orgD);
   const wsD = JSON.parse(fs.readFileSync(path.join(persD, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
-  const personalD = Object.values(wsD.tables.workspaces).find((r) => r.title === '个人');
-  const teamD = Object.values(wsD.tables.workspaces).find((r) => r.title === '团队');
-  if (!teamD || teamD.sessionIds.indexOf(sidD) < 0) throw new Error('selftest-dup-keep-team');
-  if (personalD && personalD.sessionIds.indexOf(sidD) >= 0) throw new Error('selftest-dup-still-personal');
+  // One workspace now: a conversation listed under both old seats is listed once, under it.
+  const rowsD = Object.values(wsD.tables.workspaces);
+  if (rowsD.length !== 1 || rowsD[0].title !== SEAT_TITLE) throw new Error('selftest-dup-one-seat');
+  if (rowsD[0].sessionIds.filter((x) => x === sidD).length !== 1) throw new Error('selftest-dup-listed-once');
   fs.rmSync(boxDup, { recursive: true, force: true });
   const boxP = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-preset-pin-'));
   const ovP = path.join(boxP, 'overlay.yml');
