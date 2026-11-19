@@ -1855,6 +1855,22 @@ function addMemoryRecallSection(ctx) {
 	});
 }
 
+// company-artifact-theme-v1: an artifact follows the desk's light / dark look. The artifact panel shows the page in
+// its own frame; a page that fixes its own colours (a dark body, as the agent often chose) stayed dark on a light
+// desk (2026-11-19). The frame is told the desk's look (site patch on the document preview), the page follows it.
+function addArtifactThemeSection(ctx) {
+	const systemPrompt = ctx.systemPrompt;
+	if (systemPrompt == null || typeof systemPrompt.section !== "function") return;
+	const row = {
+		name: "company-artifact-theme",
+		order: 44,
+		text:
+			"写 artifact（右侧工件）的 HTML 时，配色要跟着桌面的浅色/深色外观走：颜色全写成 :root 上的 CSS 变量，默认是浅色（白或浅灰底、深色字），再用 @media (prefers-color-scheme: dark) { :root { ... } } 给出深色那一套；body 的 background 和 color 用这些变量。不要把底色写死成黑色或深色，也不要只做深色一套。图表、线条、文字颜色同样用变量，两种外观下都要看得清。员工明确要深色时再只用深色。",
+	};
+	if (typeof ctx.effect === "function") ctx.effect(() => systemPrompt.section(row), row.name);
+	else systemPrompt.section(row);
+}
+
 // company-zh-think-v2
 // Every desk, every model: think and answer in Simplified Chinese.
 // This used to be added only on a machine that had a local-model switch file,
@@ -2278,6 +2294,7 @@ function addZhThinkSection(ctx) {
 export function apply(ctx) {
 	const tools = typeof ctx.get === "function" ? ctx.get("tools") : ctx.tools;
 	addMemoryRecallSection(ctx);
+	addArtifactThemeSection(ctx);
 	addZhThinkSection(ctx);
 	wrapSkillOnce(tools);
 	wrapWebCompanyName(tools);
