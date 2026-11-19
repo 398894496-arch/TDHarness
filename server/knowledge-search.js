@@ -17,7 +17,9 @@
 //              company/_shared/_memory        company memory (admins and directors write it)
 //              brain/30-lessons, 00-company   corrections, company facts
 //              their own personal _memory and their own daily pages (11-l1, 10-logs)
-//   department company/_handbook/<dept>, brain/20-l2/<dept>
+//   department company/_handbook/<dept> of a department kept apart (runtime/kb-zones.json, below),
+//              brain/20-l2/<dept>
+//   everyone   company/_handbook/<dept> of every other department: the shared knowledge base
 //   director   + the daily pages and inbox of their department
 //   admin      every handbook, every daily page and lesson, the boss inbox
 // Raw conversations (brain/10-l0) never come up in a search; they are read one
@@ -29,6 +31,7 @@
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { spawn } = require('child_process');
 const { createIndex } = require('./kb-index');
 
 const ROOT = process.env.TDH_ROOT || 'D:\\dsh';
@@ -119,6 +122,24 @@ function personalMemory(person) {
   return person.role === 'admin' ? C('_office', '_memory') : C('content', 'emp-' + safe(person.login), '_memory');
 }
 
+// company-kb-zones-v1: the company knowledge base is one shared base, except the departments
+// listed in runtime/kb-zones.json { "private": ["<dept id>", ...] } (行政财务), whose handbook only
+// that department and admins open. No file: a department whose name has 财务 in it is kept apart.
+// secure-folders.ps1 reads the same file, so the share's folder rights agree with the search.
+const ZONES = process.env.TDH_KB_ZONES || path.join(ROOT, 'runtime', 'kb-zones.json');
+function privateDepts() {
+  const z = readJson(ZONES);
+  if (z && Array.isArray(z.private)) return new Set(z.private.map((d) => safe(d)).filter(Boolean));
+  const roster = readJson(ROSTER);
+  const depts = roster && Array.isArray(roster.depts) ? roster.depts : [];
+  return new Set(depts.filter((d) => d && /财务/.test(String(d.name || ''))).map((d) => safe(d.id)).filter(Boolean));
+}
+function handbookDepts() {
+  let names = [];
+  try { names = fs.readdirSync(C('_handbook'), { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== '_company').map((d) => d.name); } catch (e) { return []; }
+  return names;
+}
+
 function roots(person) {
   const out = [
     C('_handbook', '_company'),
@@ -132,6 +153,8 @@ function roots(person) {
   }
   const d = safe(person.dept);
   const bd = safe(person.bdept);
+  const apart = privateDepts();
+  for (const h of handbookDepts()) if (!apart.has(h) && h !== d) out.push(C('_handbook', h));
   if (d) out.push(C('_handbook', d));
   if (bd) out.push(B('20-l2', bd));
   if (person.role === 'director' && bd) out.push(B('11-l1', bd), B('10-logs', bd), B('_inbox', 'director', bd));
@@ -211,12 +234,113 @@ function resolveNamed(named) {
   return path.resolve(BRAIN, p);
 }
 
-function search(person, body) {
+// company-krouter-memory-v1: the memory layer (this person's own memory and the company memory) is
+// also asked of KRouter (server/krouter-recall.py, pinned in server/vendor/krouter), one bank per
+// folder, so its ranking and refusal never draw on a page the person cannot open. What KRouter is
+// sure of goes first; the handbook search below still answers everything and stands in when
+// KRouter is not there. Off with TDH_KROUTER=0.
+const KR_ON = process.env.TDH_KROUTER !== '0';
+const KR_SCRIPT = path.join(__dirname, 'krouter-recall.py');
+const KR_CACHE = process.env.TDH_KROUTER_CACHE || path.join(ROOT, 'runtime', 'krouter-cache');
+const KR_MS = Number(process.env.TDH_KROUTER_MS || 6000);
+function krPython() {
+  if (process.env.TDH_KROUTER_PYTHON) return process.env.TDH_KROUTER_PYTHON;
+  if (process.platform === 'win32') {
+    const p = 'C:\\Program Files\\Python312\\python.exe';
+    return fs.existsSync(p) ? p : 'python';
+  }
+  return 'python3';
+}
+let kr = null;       // { child, buf, waiting: [resolve] }
+let krChain = Promise.resolve();
+let krVersion = '';
+function krStart() {
+  if (kr || !KR_ON || !fs.existsSync(KR_SCRIPT)) return kr;
+  let child;
+  try {
+    child = spawn(krPython(), ['-u', KR_SCRIPT], {
+      env: { ...process.env, KROUTER_CACHE_DIR: KR_CACHE, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+      stdio: ['pipe', 'pipe', 'ignore'],
+      windowsHide: true,
+    });
+  } catch (e) { return null; }
+  const me = { child, buf: '', waiting: [] };
+  child.stdout.on('data', (c) => {
+    me.buf += c.toString('utf8');
+    let i;
+    while ((i = me.buf.indexOf('\n')) >= 0) {
+      const line = me.buf.slice(0, i);
+      me.buf = me.buf.slice(i + 1);
+      const w = me.waiting.shift();
+      if (w) { let j = null; try { j = JSON.parse(line); } catch (e) { j = null; } w(j); }
+    }
+  });
+  const gone = () => { if (kr === me) kr = null; for (const w of me.waiting.splice(0)) w(null); };
+  child.on('exit', gone);
+  child.on('error', gone);
+  kr = me;
+  return kr;
+}
+// One question at a time on the one process; a slow or dead one is replaced.
+function krAsk(req) {
+  const run = () => new Promise((resolve) => {
+    const k = krStart();
+    if (!k) return resolve(null);
+    const t = setTimeout(() => { try { k.child.kill(); } catch (e) { /* gone */ } resolve(null); }, KR_MS);
+    k.waiting.push((j) => { clearTimeout(t); resolve(j); });
+    try { k.child.stdin.write(JSON.stringify(req) + '\n'); } catch (e) { clearTimeout(t); resolve(null); }
+  });
+  const p = krChain.then(run, run);
+  krChain = p.then(() => null, () => null);
+  return p;
+}
+function memoryBanks(person) {
+  return [{ name: 'personal', dir: personalMemory(person) }, { name: 'company', dir: C('_shared', '_memory') }];
+}
+// How many of a bank's hits to take, by how sure KRouter is. A small bank (a new person's memory)
+// often says "none" with the right page first; one strong match of the question's words lets that
+// first page through.
+function krTake(bank) {
+  const c = String(bank.confidence || 'none');
+  if (c === 'high' || c === 'medium') return 3;
+  if (c === 'low') return 2;
+  return Number(bank.strong) >= 1 ? 1 : 0;
+}
+async function krouterHits(person, query) {
+  if (!KR_ON || !query) return [];
+  const banks = memoryBanks(person).filter((b) => fs.existsSync(b.dir));
+  if (!banks.length) return [];
+  const got = await krAsk({ query, limit: 6, banks });
+  if (!got || !got.ok || !Array.isArray(got.banks)) return [];
+  const out = [];
+  for (const b of got.banks) {
+    const dir = (banks.find((x) => x.name === b.name) || {}).dir;
+    if (!dir) continue;
+    for (const h of (b.hits || []).slice(0, krTake(b))) {
+      const full = path.resolve(dir, String(h.rel || ''));
+      if (!under(dir, full) || !fs.existsSync(full)) continue;
+      const doc = index.docs([full])[0];
+      if (doc && !fmAllows(person, doc.doc.fm)) continue;
+      if (String(h.status || '') === 'superseded') continue;
+      // KRouter picks the page; the passage shown is the one in it that answers the question
+      // (its own `how` line is the page's first rule, which may be about something else).
+      // A passage that is only the page's heading says nothing; then the page's first rule is shown.
+      const passage = index.search([full], [query], { limit: 1, perFile: 1 })[0];
+      const shown = passage ? hit(passage) : null;
+      if (shown && !/^#{1,6} [^\n]*$/.test(String(shown.text || '').trim())) out.push(Object.assign(shown, { via: 'krouter' }));
+      else out.push({ layer: 'memory', path: relName(full), line: Number(h.line) || 1, text: String(h.how || (shown && shown.text) || ''), title: path.basename(full, path.extname(full)), via: 'krouter' });
+    }
+  }
+  return out;
+}
+
+async function search(person, body) {
   const route = String(body.route || 'search');
   const query = String(body.query || '').trim();
   const who = { account: person.login, role: person.role, dept: person.dept };
   if (route === 'status') {
-    return { ok: true, status: 'ok', ...who, layer: 'lookup', hits: [], index: index.stats() };
+    if (!krVersion && KR_ON) { const p = await krAsk({ ping: true }); krVersion = (p && p.version) || ''; }
+    return { ok: true, status: 'ok', ...who, layer: 'lookup', hits: [], index: index.stats(), krouter: krVersion ? { version: krVersion, banks: memoryBanks(person).map((b) => b.name) } : null };
   }
   const named = String(body.path || body.evidence_path || '').trim();
   if (body.evidence && !named) return { ok: false, status: 'evidence-need-path', ...who, hits: [] };
@@ -234,7 +358,9 @@ function search(person, body) {
   // The company's synonyms, and the department's own (同义词.txt in its handbook).
   const syn = index.synonyms([C('_handbook', '_company')].concat(person.dept && person.role !== 'admin' ? [C('_handbook', safe(person.dept))] : []));
   const found = index.search(roots(person), [query], { limit: LIMIT, perFile: 3, allow: (full, fm) => fmAllows(person, fm), synonyms: syn });
-  return { ok: true, status: found.length ? 'ok' : 'not-found', ...who, layer: 'lookup', hits: found.map(hit) };
+  const mem = await krouterHits(person, query);
+  const hits = mem.concat(found.map(hit)).slice(0, LIMIT + mem.length);
+  return { ok: true, status: hits.length ? 'ok' : 'not-found', ...who, layer: 'lookup', hits };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -262,7 +388,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     let out;
-    try { out = search(person, body || {}); } catch (e) {
+    try { out = await search(person, body || {}); } catch (e) {
       out = { ok: false, status: 'search-failed', hits: [] };
     }
     audit(person.login, url.pathname, out.hits.length);

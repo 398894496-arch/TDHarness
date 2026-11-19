@@ -74,6 +74,15 @@ function Expect([string]$who, [string]$sid, [string]$path, [string]$what, [bool]
   }
 }
 
+# Departments kept apart from the shared knowledge base (company-kb-zones-v1), as secure-folders.ps1 reads them.
+$apart = @{}
+$zonesFile = Join-Path $Root 'runtime\kb-zones.json'
+if (Test-Path -LiteralPath $zonesFile) {
+  foreach ($x in @((Get-Content -LiteralPath $zonesFile -Raw -Encoding UTF8 | ConvertFrom-Json).private)) { if ($x) { $apart[[string]$x] = $true } }
+} else {
+  $finance = [string]::new([char[]](0x8D22, 0x52A1))
+  foreach ($dd in @($roster.depts)) { if ($dd -and ([string]$dd.name).Contains($finance)) { $apart[[string]$dd.id] = $true } }
+}
 $withOwn = @($people | Where-Object { Sid-Of ('smb-' + $_.login) })
 foreach ($p in $withOwn) {
   $sid = Sid-Of ('smb-' + $p.login)
@@ -102,7 +111,7 @@ foreach ($p in $withOwn) {
     Expect $who $sid $f 'write' $admin
   }
   foreach ($d in @($people | ForEach-Object { [string]$_.dept } | Where-Object { $_ -and $_ -ne 'company' } | Select-Object -Unique)) {
-    Expect $who $sid (Join-Path $Company ('_handbook\' + $d)) 'read' ($admin -or $p.dept -eq $d)
+    Expect $who $sid (Join-Path $Company ('_handbook\' + $d)) 'read' ($admin -or $p.dept -eq $d -or -not $apart.ContainsKey($d))
   }
 }
 # Each local administrator by name on runtime and brain: their unelevated programs (the

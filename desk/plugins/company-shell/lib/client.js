@@ -1772,6 +1772,8 @@ window.__ModuleLoader__.load({
 			if (s.indexOf("no-such-person") >= 0) return "花名册里没有这个人";
 			if (s.indexOf("role-bad") >= 0) return "角色不对";
 			if (s.indexOf("password-bad") >= 0) return "密码里不能有换行";
+			if (s.indexOf("password-wrong") >= 0) return "旧密码不对";
+			if (s.indexOf("password-same") >= 0) return "新密码和旧密码一样，换一个";
 			if (s.indexOf("action-unknown") >= 0) return "服务器还不认这个操作，需要更新人员服务";
 			if (s.indexOf("password-too-short") >= 0) return "密码至少 6 位";
 			if (s.indexOf("forbidden") >= 0) return "只有老板和管理能改人员";
@@ -5077,6 +5079,10 @@ window.__ModuleLoader__.load({
 			const busyHook = React.useState(false);
 			const doneHook = React.useState(false);
 			const editHook = React.useState(null);
+			// company-self-password-v1: everyone changes their own sign-in password here (people-api
+			// action self: the old one is checked, the new one is at least 6 characters). The share
+			// account has its own password, so the company drive is not affected.
+			const pwHook = React.useState(null);
 			const armHook = useArm();
 			const fileRef = React.useRef(null);
 			React.useEffect(function () {
@@ -5192,6 +5198,46 @@ window.__ModuleLoader__.load({
 						desc: "会显示在同事、人员页和侧边栏。",
 						side: btn("移除头像", { small: true, tone: "ghost", disabled: busyHook[0], onClick: function () { saveSelf({ avatar: "" }, "头像已移除。"); } })
 					}) : null,
+					pwHook[0] === null ? setRow("password", {
+						title: "登录密码",
+						desc: "改成只有你自己知道的密码。改完这台电脑不用重新登录，下次登录用新密码。",
+						side: btn("修改密码", { small: true, tone: "ghost", disabled: busyHook[0], onClick: function () { noteHook[1](""); pwHook[1]({ old: "", next: "", again: "" }); } })
+					}) : el("div", { className: "cs-set-row", key: "password" },
+						el("div", { className: "cs-set-main" },
+							el("div", { className: "cs-set-rt" }, el("span", null, "修改登录密码")),
+							el("form", {
+								className: "cs-form",
+								"data-mark": "company-self-password-v1",
+								style: { marginTop: 8 },
+								onSubmit: function (ev) {
+									ev.preventDefault();
+									const f = pwHook[0];
+									if (!f.old) { noteHook[1]("先填旧密码。"); return; }
+									if (f.next.length < 6) { noteHook[1]("新密码至少 6 位，现在是 " + f.next.length + " 位。"); return; }
+									if (f.next !== f.again) { noteHook[1]("两次输入的新密码不一样。"); return; }
+									if (f.next === f.old) { noteHook[1]("新密码和旧密码一样，换一个。"); return; }
+									saveSelf({ password_old: f.old, password_new: f.next }, "密码已改好。下次登录用新密码。").then(function (ok) { if (ok) pwHook[1](null); });
+								}
+							},
+								[["old", "旧密码", "current-password"], ["next", "新密码（至少 6 位）", "new-password"], ["again", "再输一次新密码", "new-password"]].map(function (x) {
+									return el("label", { className: "cs-field", key: x[0] }, el("span", null, x[1]),
+										el("input", {
+											className: "cs-input",
+											type: "password",
+											autoComplete: x[2],
+											value: pwHook[0][x[0]],
+											disabled: busyHook[0],
+											onChange: function (e) { const n = Object.assign({}, pwHook[0]); n[x[0]] = e.target.value; pwHook[1](n); }
+										}));
+								}),
+								el("div", { className: "cs-set-foot", style: { gridColumn: "1 / -1" } },
+									el("p", { className: "cs-set-note" }, "忘了旧密码就找管理员在「人员」里重设。"),
+									el("div", { style: { display: "flex", gap: 8 } },
+										btn("取消", { small: true, tone: "ghost", onClick: function () { pwHook[1](null); noteHook[1](""); } }),
+										btn(busyHook[0] ? "正在保存…" : "保存新密码", { submit: true, small: true, tone: "primary", disabled: busyHook[0] })))
+							)
+						)
+					),
 					setRow("logout", {
 						title: "退出登录",
 						desc: "本机账号会立刻清掉，窗口回到登录。",
