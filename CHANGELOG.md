@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.8
+
+**图片默认直接显示在对话里，按原始比例，不再被拉扁**
+- **拉扁的原因**：AI 交出来的图片（`present`），卡片下面的预览图放在一个纵向 flex 容器里。容器默认把子元素横向拉满，高度又被 `maxHeight: 360` 卡住，宽图就被拉成扁的（现场截图里的零件估测图就是这样）。现在图片和视频共用的样式改成宽高 `auto`、靠左对齐、`object-fit: contain`，按原图比例缩放（`company-inline-media-aspect-v1`，在 `patch_media_download.py` 里）。已经打过内联预览补丁的包只补这一处。
+- **默认在对话里显示**：员工端提示加了一条（`company-inline-image-default-v1`，写在 `company-shell` 源码里）：给员工看的图片存好后用 `present` 交出来，对话里直接显示；没调用 `present` 就用 Markdown 嵌图；不要只给侧边栏工件或下载链接，也不要重复显示同一张图；不拉伸、不裁切。
+- 这件事原来是另一个会话在做，做到一半停了，留下两处还没提交的改动。这里接手：提示改为直接写进源码，不再用站点补丁往 `company-shell` 里插；比例的修法从只改图片样式扩大到图片、视频共用的样式。
+- 新增 `scripts/prove-inline-media-aspect.py`。
+- **还没实测**：在客户端里真的出一张宽图看效果，要等这次更新装上。
+
 ## 2026.11.19.7
 
 **三个核心工具换掉：搜索路由用 Agent Reach，桌面软件用 Cua Driver（Windows / Mac 各用各的版本），浏览器仍是 OpenCLI**
