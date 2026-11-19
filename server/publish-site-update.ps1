@@ -139,6 +139,18 @@ foreach ($name in 'CompanyDesk-win.zip', 'CompanyDesk-mac.zip') {
   Write-Output ($name + ' ' + $o)
 }
 
+# 4b. The Mac download (company-mac-app-v1): TDHarness.app around this pack, in a folder with a
+#     link to /Applications, so a person drags it in. Built after the reseal so its BUILD.json is
+#     the final one. The download page comes from server\download.html on every publish.
+$MacApp = Join-Path (Split-Path -Parent $Server) 'desk\mac-app'
+$MacZip = Join-Path $Dist 'CompanyDesk-mac.zip'
+if ((Test-Path -LiteralPath $MacZip) -and (Test-Path -LiteralPath (Join-Path $MacApp 'TDHarness'))) {
+  $o = & $py $SitePy --site $SiteYml mac-app-zip --src $MacZip --file $MacApp --out (Join-Path $Dist 'TDHarness-mac.zip')
+  if ($LASTEXITCODE -ne 0) { throw 'mac-app-zip-failed' }
+  Write-Output ('TDHarness-mac.zip ' + $o)
+}
+Copy-Item -Force -LiteralPath (Join-Path $Server 'download.html') -Destination (Join-Path $Dist 'index.html')
+
 # 5. version.json + signature
 $winP = Join-Path $Dist 'CompanyDesk-win.zip'
 $macP = Join-Path $Dist 'CompanyDesk-mac.zip'
