@@ -1012,9 +1012,24 @@ function relay(route, req, body, res) {
         const used = tap.end();
         if (used) recordUsage(Object.assign({ t: Date.now(), login: callerOf(req) || 'unknown', model: modelName(body) || 'unknown', vendor: route.vendor }, used));
       };
-      r.on('data', (c) => { res.write(c); if (tap) tap.feed(c); });
-      r.on('end', () => { res.end(); settle(); resolve(); });
-      r.on('error', () => { res.end(); settle(); resolve(); });
+      // company-sse-done-v1: a chat-completions stream is over at "data: [DONE]". If the vendor
+      // (or a proxy in front of it) keeps the connection open after that, the desk used to wait
+      // for the idle timeout with the whole answer already on screen. End it here instead.
+      const sse = /text\/event-stream/i.test(String(r.headers['content-type'] || ''));
+      let tail = '';
+      let over = false;
+      const finish = () => { if (over) return; over = true; res.end(); settle(); resolve(); };
+      r.on('data', (c) => {
+        if (over) return;
+        res.write(c);
+        if (tap) tap.feed(c);
+        if (sse) {
+          tail = (tail + c.toString('latin1')).slice(-96);
+          if (/(^|\n)data: ?\[DONE\][ \t]*\r?\n/.test(tail)) { finish(); r.destroy(); }
+        }
+      });
+      r.on('end', finish);
+      r.on('error', finish);
     });
     up.on('timeout', () => up.destroy(new Error('upstream-idle')));
     up.on('error', reject);

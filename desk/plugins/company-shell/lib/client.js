@@ -576,6 +576,8 @@ window.__ModuleLoader__.load({
 			".pXSMma_headline:has([data-company-shell=\"brand-wordmark\"]) .pXSMma_headlineText,",
 			".pXSMma_headline:has([data-company-shell=\"brand-wordmark\"]) .pXSMma_previewBadge,",
 			".pXSMma_headline:has([data-company-shell=\"brand-wordmark-color\"]) .pXSMma_headlineText,",
+			".pXSMma_headline:has([data-company-shell=\"brand-wordmark\"]) .pXSMma_titleGroup,",
+			".pXSMma_headline:has([data-company-shell=\"brand-wordmark-color\"]) .pXSMma_titleGroup,",
 			".pXSMma_headline:has([data-company-shell=\"brand-wordmark-color\"]) .pXSMma_previewBadge {",
 			"  display: none !important;",
 			"}",
@@ -1771,7 +1773,7 @@ window.__ModuleLoader__.load({
 			if (s.indexOf("role-bad") >= 0) return "角色不对";
 			if (s.indexOf("password-bad") >= 0) return "密码里不能有换行";
 			if (s.indexOf("action-unknown") >= 0) return "服务器还不认这个操作，需要更新人员服务";
-			if (s.indexOf("password-too-short") >= 0) return "密码至少 8 位";
+			if (s.indexOf("password-too-short") >= 0) return "密码至少 6 位";
 			if (s.indexOf("forbidden") >= 0) return "只有老板和管理能改人员";
 			if (s.indexOf("role-forbidden") >= 0) return "这个角色只能老板设";
 			if (s.indexOf("person-missing") >= 0) return "花名册里没有这个人";
@@ -4717,8 +4719,20 @@ window.__ModuleLoader__.load({
 			if (q.usedPercent != null) return Math.max(0, Math.min(100, 100 - Number(q.usedPercent)));
 			return null;
 		}
+		// OpenAI reports used_percent as a whole number: 0 means under 1% used, not nothing.
+		function quotaUnderOne(q) {
+			return !!(q && q.loaded && !q.err && q.vendor === "gpt" && q.usedPercent != null && Number(q.usedPercent) === 0);
+		}
+		function quotaPctText(q, pct) {
+			if (pct == null) return "—";
+			return quotaUnderOne(q) ? ">99" : String(Math.round(pct));
+		}
 		function quotaSub(q) {
 			if (!q || !q.loaded) return "正在读取…";
+			if (quotaUnderOne(q)) {
+				const w = quotaWhen(q.resetsAt);
+				return (q.plan ? String(q.plan) + " · " : "") + "本周已用不到 1%（OpenAI 按整数报）" + (w ? " · " + w + " 刷新" : "");
+			}
 			if (q.err) return "额度接口没接通";
 			if (q.kind === "key" && quotaPercent(q) == null) return "走 API key，没有订阅额度";
 			if (quotaPercent(q) == null) return "订阅没有返回额度数据";
@@ -5309,6 +5323,73 @@ window.__ModuleLoader__.load({
 					el("path", { d: m.d, fill: m.fill || "currentColor", fillRule: m.rule || "nonzero" })) : null);
 		}
 
+		// company-server-key-v1: the vendor keys live in the server's gateway.env, never on a desk.
+		// The desk's own key box is hidden (company-no-add-key); this is where an admin types one.
+		function ServerKeyForm() {
+			useShellPulse();
+			const presetHook = React.useState("deepseek");
+			const keyHook = React.useState("");
+			const modelsHook = React.useState("");
+			const noteHook = React.useState("");
+			const toneHook = React.useState("");
+			const busyHook = React.useState(false);
+			const boundHook = React.useState({});
+			function load() {
+				fetchChannels().then(function (out) {
+					const next = {};
+					((out.j && out.j.models) || []).forEach(function (m) { if (m && m.id) next[m.id] = !!m.bound; });
+					boundHook[1](next);
+				});
+			}
+			React.useEffect(load, []);
+			if (shellRole !== "admin") return null;
+			const presets = [
+				{ value: "deepseek", label: "DeepSeek", id: "deepseek" },
+				{ value: "openai", label: "OpenAI / GPT（API key）", id: "gpt" },
+				{ value: "anthropic", label: "Anthropic / Claude", id: "opus" },
+				{ value: "kimi", label: "Kimi", id: "kimi" },
+				{ value: "glm", label: "智谱 GLM", id: "glm" },
+				{ value: "xai", label: "xAI / Grok（API key）", id: "grok-key" }
+			];
+			const cur = presets.filter(function (x) { return x.value === presetHook[0]; })[0] || presets[0];
+			function save(ev) {
+				ev.preventDefault();
+				const key = String(keyHook[0] || "").trim();
+				if (key.length < 8) { toneHook[1]("err"); noteHook[1]("先粘贴 API key。"); return; }
+				busyHook[1](true);
+				noteHook[1]("");
+				const body = { action: "add-key", preset: cur.value, key: key };
+				if (String(modelsHook[0] || "").trim()) body.models = String(modelsHook[0]).trim();
+				postChannels(body).then(function (out) {
+					busyHook[1](false);
+					if (!out.ok) { toneHook[1]("err"); noteHook[1](channelsErr(out)); return; }
+					keyHook[1]("");
+					toneHook[1]("");
+					noteHook[1]("已存到服务器：" + cur.label + "。对话框的模型菜单下次打开时就有它的模型。");
+					load();
+				});
+			}
+			const stored = presets.filter(function (x) { return boundHook[0][x.id]; }).map(function (x) { return x.label; });
+			return el("section", { className: "cs-set-group", "data-mark": "company-server-key-v1" },
+				el("div", { className: "cs-set-gh" }, el("span", { className: "cs-set-gl" }, "服务器模型密钥"),
+					el("span", { className: "cs-set-gx" }, stored.length ? "已存：" + stored.join("、") : "还没有")),
+				el("div", { className: "cs-set-card" },
+					el("form", { className: "cs-form", onSubmit: save },
+						el("label", { className: "cs-field" }, el("span", null, "提供商"),
+							selectBox(presetHook[0], presets.map(function (x) { return { value: x.value, label: x.label }; }), function (v) { presetHook[1](v); }, busyHook[0])),
+						el("label", { className: "cs-field" }, el("span", null, "模型名（可空，逗号分隔）"),
+							el("input", { className: "cs-input", value: modelsHook[0], disabled: busyHook[0], placeholder: "不填就用提供商的模型列表", onChange: function (e) { modelsHook[1](e.target.value); } })),
+						el("label", { className: "cs-field", style: { gridColumn: "1 / -1" } }, el("span", null, "API key（只存在服务器上，界面不回显）"),
+							el("input", { className: "cs-input", type: "password", "data-company-key": "1", autoComplete: "off", value: keyHook[0], disabled: busyHook[0], onChange: function (e) { keyHook[1](e.target.value); } })),
+						el("div", { className: "cs-set-foot", style: { gridColumn: "1 / -1" } },
+							el("p", { className: "cs-set-note" }, "员工电脑不保存任何 key，所有调用都经公司网关。"),
+							btn(busyHook[0] ? "正在保存…" : "保存到服务器", { submit: true, tone: "primary", disabled: busyHook[0] }))
+					)
+				),
+				setNote(noteHook[0], toneHook[0])
+			);
+		}
+
 		function ProxyFold() {
 			const q = useQuota();
 			const openHook = React.useState("grok");
@@ -5548,7 +5629,7 @@ window.__ModuleLoader__.load({
 				el("div", { className: "cs-quota" },
 					el("div", { className: "cs-quota-main" },
 						el("div", { className: "cs-quota-k" }, (q.vendor === "gpt" ? "GPT" : "Grok") + " 订阅剩余额度"),
-						el("div", { className: "cs-quota-v" }, pct == null ? "—" : Math.round(pct) + "%", el("small", null, quotaSub(q))),
+						el("div", { className: "cs-quota-v" }, pct == null ? "—" : quotaPctText(q, pct) + "%", el("small", null, quotaSub(q))),
 						meter(pct)
 					)
 				),
@@ -5556,7 +5637,8 @@ window.__ModuleLoader__.load({
 					el("div", { className: "cs-set-gh" }, el("span", { className: "cs-set-gl" }, "订阅反代")),
 					cards,
 					setNote(noteHook[0])
-				)
+				),
+				el(ServerKeyForm, null)
 			);
 		}
 
@@ -5940,7 +6022,7 @@ window.__ModuleLoader__.load({
 				el("div", { className: "cs-stats" },
 					el("div", { className: "cs-stat" },
 						el("div", { className: "cs-stat-k" }, q.vendor === "gpt" ? "GPT 订阅剩余" : "订阅剩余"),
-						el("div", { className: "cs-stat-v" }, pct == null ? "—" : Math.round(pct), pct == null ? null : el("small", null, "%")),
+						el("div", { className: "cs-stat-v" }, pct == null ? "—" : quotaPctText(q, pct), pct == null ? null : el("small", null, "%")),
 						meter(pct),
 						el("div", { className: "cs-stat-s" }, quotaSub(q))
 					),
@@ -6135,8 +6217,8 @@ window.__ModuleLoader__.load({
 					noteHook[1]("登录名只能用小写字母、数字和 . _ -，2 到 16 位（手机号可以）；中文请填在「显示名」里。");
 					return;
 				}
-				if (password.length < 8) {
-					noteHook[1]("初始密码至少 8 位，现在是 " + password.length + " 位。");
+				if (password.length < 6) {
+					noteHook[1]("初始密码至少 6 位，现在是 " + password.length + " 位。");
 					return;
 				}
 				toneHook[1]("");
@@ -6244,7 +6326,7 @@ window.__ModuleLoader__.load({
 									type: "password",
 									value: passHook[0],
 									autoComplete: "new-password",
-									placeholder: "至少 8 位",
+									placeholder: "至少 6 位",
 									onChange: function (e) { passHook[1](e.target.value); }
 								})),
 							el("label", { className: "cs-field" }, el("span", null, "角色"),

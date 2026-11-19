@@ -45,6 +45,9 @@ TICKET_ACTIONS = ("issue", "rename", "edit", "submit", "verdict", "withdraw", "a
 NOTIFY_EVERY = int(os.environ.get("TDH_NOTIFY_EVERY") or 600)
 DIGEST_HOUR = int(os.environ.get("TDH_DIGEST_HOUR") or 8)
 SEED_ADMIN = "tdh"
+# Shortest login password (2026-11-19: the site asked for 6, e.g. six digits). Failed sign-ins are
+# rate-limited (login_blocked: 15 minutes after repeated failures), so six digits are not guessed online.
+PASSWORD_MIN = 6
 # Largest request body read: a 12 MB task-card upload is about 16 MB as base64.
 BODY_MAX = 17 * 1024 * 1024
 HOST = "127.0.0.1"
@@ -846,7 +849,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not verify_password(pass_map().get(me), old):
                     fail("password-wrong")
                     return
-                if len(new) < 8:
+                if len(new) < PASSWORD_MIN:
                     fail("password-too-short")
                     return
                 if any(ch in new for ch in "\r\n"):
@@ -875,7 +878,7 @@ class Handler(BaseHTTPRequestHandler):
                 fail("login-retired")
                 return
             pw = str(payload.get("password") or "")
-            if len(pw) < 8:
+            if len(pw) < PASSWORD_MIN:
                 fail("password-too-short")
                 return
             if any(ch in pw for ch in "\r\n"):

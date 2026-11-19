@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.4
+
+**现场第二轮反馈：首屏标语、API key 输入框、6 位密码、额度显示；流式回复按时结束**
+- **首屏**：这个版本的内核把标语放在 `titleGroup` 里，原来隐藏规则写的 `headlineText` 在这个版本里不存在，所以「探索未至之境」一直没藏住。现在显示站点字标时（单色或彩色），整个 `titleGroup` 都隐藏。
+- **API key 输入框**：2026.11.19 把员工端自带的 key 框藏起来以后，界面上就没有地方填 key 了。原来写好的公司「加入模型」表单（`SubSection`）从 2026.10.11 起就没有挂到页面上。现在模型页的订阅卡片下面加了一块「服务器模型密钥」，只有管理员能看到：选提供商（DeepSeek 排在第一个），粘贴 key，点「保存到服务器」，key 存进 `gateway.env`，员工电脑上不留。旁边会显示服务器上已经存了哪些提供商的 key。
+- **6 位密码**：登录密码最短改成 6 位（`PASSWORD_MIN`），发放账号、自己改密码都按这个来。连续登录失败会锁 15 分钟，所以 6 位数字没法在线上被猜出来。`prove-people.py` 加了「6 位能发放」的用例。
+- **额度显示**：OpenAI 用量接口报的「已用」是整数，0 的意思是不到 1%。原来显示成「剩余 100%」，看起来像完全没用过；现在显示「>99%」，并注明「本周已用不到 1%（OpenAI 按整数报）」。
+- **流式回复按时结束**：网关看到 `data: [DONE]` 就结束给员工端的回复，不再等上游关连接。原来上游如果发完 `[DONE]` 却不关连接，员工端会一直等，直到空闲超时（网关 180 秒、员工端 300 秒）才结束。新增 `prove-gw-sse-done.js`：假的上游发完 `[DONE]` 后不关连接；这个测试在旧代码上，员工端 5 秒内收不到结束，新代码上马上结束。已加进 CI。
+
 ## 2026.11.19.3
 
 **彩色站点 Logo 的位置和大小**
