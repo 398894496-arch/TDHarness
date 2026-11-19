@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // company-krouter-hooks-v1: KRouter's own hooks on a TDH desk. The kernel's Claude-Code hook bridge
 // (@deepseek-ai/dsh-hooks-claude-code, configured in overlay.yml) runs this with the hook's JSON on stdin:
-//   start   (SessionStart)      the standing index (下意识) of the company memory, and of the department's own
+//   start   (SessionStart)      the experience digest and standing index (下意识) of the company memory, and of the department's own
 //                               for a department kept apart
 //   prompt  (UserPromptSubmit)  the pages this message names by KRouter's trigger words and aliases; bringing
 //                               one is what keeps a phrase in the hot cycle (60 days)
@@ -65,7 +65,7 @@ function ask(body, ms) {
   const add = got && got.ok && got.text ? String(got.text) : '';
   if (!add) return;
   const context = which === 'start'
-    ? '公司知识库的下意识索引（KRouter 每天夜里从共享知识库编出：已定的做法、纠错和经验）。员工的话碰到其中哪条，先用 company_knowledge route=search 打开原页再用：\n\n' + add
+    ? '公司知识库（KRouter 每天夜里从大家的对话里编出的经验和已定的事；各段末尾写了怎么用）：\n\n' + add
     : add;
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: EVENT, additionalContext: context } }) + '\n');
 })().catch(() => {}).finally(() => { process.exitCode = 0; });
