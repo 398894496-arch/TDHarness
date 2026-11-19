@@ -30,17 +30,18 @@ disable-model-invocation: true
 |---|---|---|
 | 公开文档、官网、无 cookie 的页 | `web_search` / `web_fetch` → 8450 | 不要为此开浏览器 |
 | 公司 `8443` 登录 / 下载 / 知识门 | 客户端登录窗、`/client/`、`company_knowledge` | 不要点选 8443 |
-| 点已开的日常网页、走登录态流程 | OpenCLI（`opencli browser`） | 不要调 `ego_*` / `browser_*` |
+| 点已开的日常网页、走登录态流程 | OpenCLI 2.0（`opencli browser --session work open <url>`；会话名写在 `--session` 后面） | 不要调 `ego_*` / `browser_*` |
 | 工具表没有 OpenCLI / `opencli` 不在 PATH | HOST 工具 `opencli` `action=ensure` | 不要找旧点选手，不要装 Playwright |
 
 ## 4. 代装 OpenCLI
 
 员工机还没有这只手时，调 HOST 工具 `opencli`，不要只丢 npm 命令给人。不要改 overlay。不要把 OpenCLI 打进 zip。
 
-1. `opencli` `action=ensure`：格子里没有就 `npm install @jackwener/opencli`，有则直接用（`OPENCLI_BIN` 可覆盖）
+1. `opencli` `action=ensure`：客户端自带 OpenCLI 2.0.3，一般直接就有；格子里没有才 `npm install @jackwener/opencli@2.0.3`（`OPENCLI_BIN` 可覆盖）
 2. `opencli` `action=doctor`（格子里等同 `opencli doctor`）
 3. Chrome 扩展不能静默装：打开 `https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk`，请人点一次「添加」
-4. 关桌，开新会话。之后用 `opencli browser`（bash / 侧栏终端）
+4. 关桌，开新会话。之后用 `opencli browser --session <名字> <命令>`（bash / 侧栏终端）。2.0 的结果都是 JSON：`{"ok":true,"data":…}`，失败是 `{"ok":false,"error":…}`。
+5. `doctor` 说扩展版本旧了（`extension-outdated`）：客户端更新换了新扩展，请员工在 `chrome://extensions` 里点 OpenCLI 的刷新按钮
 
 公开搜仍然只走 8450，不要用 OpenCLI 当搜索引擎。被挡的 `ego_*` / `browser_*` 会回 `click-retired`，下一步是 `opencli` `action=ensure`。
 

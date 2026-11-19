@@ -11,7 +11,9 @@ import { kernelWatchCutover, kernelWatchPlug, kernelWatchPublish, kernelWatchSna
 
 const OPENCLI_STORE =
 	"https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk";
-const OPENCLI_PKG = "@jackwener/opencli";
+// The same release the packs carry (server/fetch-opencli.ps1), so a desk that installs it itself
+// does not land on a newer major with other commands (company-opencli-v2).
+const OPENCLI_PKG = "@jackwener/opencli@2.0.3";
 
 export const name = "company-shell";
 export const inject = ["webServer", "tools", "systemPrompt"];
@@ -616,7 +618,7 @@ const COMPANY_MAP_ROWS = [
 	{ aliases: ["工单", "任务卡", "验收", "下达", "提交验收"], path: "_handbook/_company/desk.md", how: "工单在侧栏任务：下达、提交验收。对话完成不等于格子完成。这一条就是答案，停。不要再 company_knowledge。" },
 	{ aliases: ["手册", "检索", "工作边界", "本岗"], path: "_handbook/_company", how: "岗位手册打开即用。地图 how 已是结论。没有的正文说还不存在。不要 glob _handbook。" },
 	{ aliases: ["_office", "_shared", "_memory", "花名册", "椅子"], path: "_handbook/_company/work-boundary.md", how: "老板椅是 _office，团队盘根 $HOME/company。不要猜 _boss。共享区只读。记忆写入走 company_memory_write。不要 ls _memory。" },
-	{ aliases: ["公司桌", "tdharness", "companydesk", "agent工作台", "ai工作台", "核心功能", "能做什么", "完整agent"], path: "_handbook/_company/desk.md", how: "装在公司里的完整 Agent 工作台，本机真干活，不是聊天窗。一人一座：登录即用，换电脑对话和文件跟人走。能力全开：读改跑、搜网、点选走 OpenCLI 一只手。Full Access 只覆盖这台电脑和自己的椅子读写；共享区全员只读。公开网走公司出口。点选第一下 bash：opencli <site> whoami --window foreground，或 opencli browser work open <url>。HOST action=run。不要调 ego_* / browser_*。出图出短视频落格子。任务到四格验收在侧栏。手册打开即用。没有先例就说没有。资料在公司盘。飞书钉钉有接口，还没接通。HTML 用 artifact。这一条就是答案，停。" },
+	{ aliases: ["公司桌", "tdharness", "companydesk", "agent工作台", "ai工作台", "核心功能", "能做什么", "完整agent"], path: "_handbook/_company/desk.md", how: "装在公司里的完整 Agent 工作台，本机真干活，不是聊天窗。一人一座：登录即用，换电脑对话和文件跟人走。能力全开：读改跑、搜网、点选走 OpenCLI 一只手。Full Access 只覆盖这台电脑和自己的椅子读写；共享区全员只读。公开网走公司出口。点选第一下 bash：opencli <site> whoami --window foreground，或 opencli browser --session work open <url>。HOST action=run。不要调 ego_* / browser_*。出图出短视频落格子。任务到四格验收在侧栏。手册打开即用。没有先例就说没有。资料在公司盘。飞书钉钉有接口，还没接通。HTML 用 artifact。这一条就是答案，停。" },
 ];
 
 function mapNorm(s) {
@@ -904,7 +906,7 @@ export function wrapWebCompanyName(tools) {
 			if (isEgo) {
 				return {
 					ok: false,
-					error: "click-retired. One hand / 一只手: bash opencli <site> whoami --window foreground --keep-tab true OR opencli browser work open <url>. HOST action=run. Do not ego_* / browser_*. Public pages stay web_search.",
+					error: "click-retired. One hand / 一只手: bash opencli <site> whoami --window foreground --keep-tab true OR opencli browser --session work open <url>. HOST action=run. Do not ego_* / browser_*. Public pages stay web_search.",
 				};
 			}
 			if (n === "web_fetch" && isGithubHtmlUrl(q)) {
@@ -1410,7 +1412,7 @@ export function runOpencliAction(args) {
 				steps: [
 					"already have " + have,
 					"bash first: opencli <site> whoami --window foreground --keep-tab true",
-					"or: opencli browser work open <url> --window foreground",
+					"or: opencli browser --session work open <url> --window foreground",
 					"or this tool: action=run argv=[...]",
 				],
 			};
@@ -1422,7 +1424,7 @@ export function runOpencliAction(args) {
 			steps: [
 				"binary missing: action=ensure",
 				"then bash first: opencli <site> whoami --window foreground --keep-tab true",
-				"or: opencli browser work open <url> --window foreground",
+				"or: opencli browser --session work open <url> --window foreground",
 				"or this tool: action=run argv=[...]",
 				"action=doctor only if bridge down",
 				"Chrome Add only if doctor says extension missing: " + OPENCLI_STORE,
@@ -1451,7 +1453,28 @@ export function runOpencliAction(args) {
 	if (action === "doctor") {
 		const r = spawnOpencli(bin, ["doctor"], { encoding: "utf8", timeout: 30000, cwd });
 		const text = String(r.stdout || "") + String(r.stderr || "");
-		if (/Extension:\s*not connected|extension not connected/i.test(text)) {
+		// OpenCLI 2.x answers in JSON ({ ok, data: { extensionConnected, extensionOutdated, ... } });
+		// 1.x printed lines. Read the fields when there are any (company-opencli-v2).
+		let dr = null;
+		try { dr = JSON.parse(String(r.stdout || "").trim()); } catch { dr = null; }
+		const dd = dr && dr.ok === true && dr.data && typeof dr.data === "object" ? dr.data : null;
+		if (dd && dd.extensionConnected === true && dd.extensionOutdated === true) {
+			return {
+				ok: false,
+				status: "extension-outdated",
+				bin,
+				marker: "company-opencli-host-v1",
+				extensionDir: opencliExtensionDir(),
+				latest: dd.latestExtensionVersion || "",
+				guide: [
+					"用 Chrome（或 Edge）打开地址 chrome://extensions（Edge 是 edge://extensions）",
+					"找到 OpenCLI，点它右下角的刷新按钮（圆形箭头）",
+					"刷新后告诉我「好了」",
+				],
+				hint: "客户端更新带来了新版扩展，浏览器还在用旧的。带用户刷新一次，再调用 action=doctor 确认。",
+			};
+		}
+		if ((dd && dd.extensionConnected === false) || /Extension:\s*not connected|extension not connected/i.test(text)) {
 			// The one step a person has to do: put the bridge into their own browser.
 			const ext = opencliExtensionDir();
 			return {
@@ -1470,11 +1493,12 @@ export function runOpencliAction(args) {
 				hint: "带用户一步一步装：每次只说一步，等用户回复做完了再说下一步。装好后再调用一次 action=doctor 确认连上。还连不上就请用户在扩展列表里点 OpenCLI 的刷新按钮，或关掉浏览器再打开。不要让用户把密码告诉你，网站登录由用户自己在浏览器里完成。",
 			};
 		}
+		const good = dd ? !!(dd.connectivity && dd.connectivity.ok) || dd.extensionConnected === true : r.status === 0;
 		return {
-			ok: r.status === 0,
-			status: r.status === 0 ? "doctor-ok" : "doctor-fail",
+			ok: good,
+			status: good ? "doctor-ok" : "doctor-fail",
 			bin,
-			log: text,
+			log: text.slice(-1500),
 			marker: "company-opencli-host-v1",
 		};
 	}
@@ -1559,7 +1583,7 @@ function registerOpencliTool(ctx) {
 	tools.register({
 		name: "opencli",
 		description:
-			"Open a logged-in site. Prefer bash: opencli <site> … or opencli browser work open <url>. This tool default action=run + argv. ensure/doctor only if missing or down. Do not ego_* / browser_*.",
+			"Open a logged-in site. Prefer bash: opencli <site> … or opencli browser --session work open <url>. This tool default action=run + argv. ensure/doctor only if missing or down. Do not ego_* / browser_*.",
 		parameters: {
 			type: "object",
 			additionalProperties: false,
