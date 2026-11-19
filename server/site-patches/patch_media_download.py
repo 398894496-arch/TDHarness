@@ -16,27 +16,6 @@ MARK_RESOLVE = "company-sidebar-relative-path-v1"
 MARK_BUTTON = "company-sidebar-download-button-v1"
 MARK_MEDIA = "company-media-absolute-paths-v1"
 MARK_CARD = "company-presented-inline-media-v1"
-MARK_RATIO = "company-inline-image-aspect-ratio-v2"
-MARK_DEFAULT = "company-inline-image-default-v1"
-
-IMAGE_STYLE_V1 = '\t\t\t\tstyle: { ...box, background: "transparent", cursor: "zoom-in" },\n'
-IMAGE_STYLE_V2 = (
-    "\t\t\t\t// " + MARK_RATIO + ": avoid flex cross-axis stretching when maxHeight clamps the image.\n"
-    '\t\t\t\tstyle: { ...box, alignSelf: "flex-start", width: "auto", height: "auto", '
-    'objectFit: "contain", background: "transparent", cursor: "zoom-in" },\n'
-)
-
-
-def patch_inline_image_default(t: str) -> tuple[str, str]:
-    anchor = '\tconst row = { name: "company-task-card", order: 40, text: TASK_CARD_PROMPT };\n'
-    return edit_text(t, MARK_DEFAULT, anchor, anchor +
-        '\tconst imageRow = { name: "' + MARK_DEFAULT + '", order: 40, text: '
-        '"图片默认在对话中直接展示：用户要图片、效果图或图纸预览时，给出 PNG/JPEG/WebP 等实际图片，'
-        '优先使用 present 的图片内联预览；若没有调用 present，则在最终答复中用 Markdown 图片语法直接嵌图。'
-        '不要只给侧边栏工件或下载链接，也不要用多种方式重复展示同一张图。保留原始宽高比，不拉伸、不裁切。'
-        '如需要交互页面或矢量原稿，可另提供，不能替代对话里的图片预览。" };\n'
-        '\tif (typeof ctx.effect === "function") ctx.effect(() => systemPrompt.section(imageRow), imageRow.name);\n'
-        '\telse systemPrompt.section(imageRow);\n')
 
 
 def edit_text(text: str, marker: str, old: str, new: str) -> tuple[str, str]:
@@ -144,7 +123,7 @@ CARD_HELPERS = """		// company-presented-inline-media-v1: inline image/video and
 
 def patch_presented_card(t: str) -> tuple[str, str]:
     if MARK_CARD in t:
-        return edit_text(t, MARK_RATIO, IMAGE_STYLE_V1, IMAGE_STYLE_V2)
+        return t, "already"
     steps = [
         ("\t\tfunction PresentedFileCard({ file, cwd, phase, host, onPreview, actions, t }) {\n",
          CARD_HELPERS + "\t\tfunction PresentedFileCard({ file, cwd, phase, host, onPreview, actions, t, sessionId }) {\n"
@@ -201,7 +180,7 @@ def patch_presented_card(t: str) -> tuple[str, str]:
         if t.count(old) != 1:
             raise SystemExit("card-anchor-missing:" + old[:60].replace("\n", "|"))
         t = t.replace(old, new, 1)
-    return edit_text(t, MARK_RATIO, IMAGE_STYLE_V1, IMAGE_STYLE_V2)
+    return t, "patched"
 
 
 # rel 后缀 -> 补丁函数（rel 是相对 CompanyDesk/ 的路径）
