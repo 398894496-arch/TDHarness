@@ -629,7 +629,11 @@ def overlay_zip(src: Path, plugins: Path, host: str) -> int:
         if old is not None:
             zi.external_attr, zi.create_system = old.external_attr, old.create_system
         else:
-            zi.external_attr = (0o755 if name.endswith((".sh", ".command")) else 0o644) << 16
+            # A regular Unix file (0o100000 = S_IFREG), made by Unix (3): without create_system=3 a zip
+            # written on the Windows server says "MS-DOS" and unzip/ditto on a Mac drop the mode, so a new
+            # script (mac-join-off-lan.sh, 2026-11-19) arrived without its execute bit.
+            zi.create_system = 3
+            zi.external_attr = (0o100000 | (0o755 if name.endswith((".sh", ".command")) else 0o644)) << 16
         zout.writestr(zi, data)
 
     with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:

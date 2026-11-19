@@ -17,6 +17,9 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 - 服务器（`server/tailnet-site.ps1`、发布 2b 步）：多准备一份 `vendor-mac\`（入网密钥、服务器 tailnet 地址、Tailscale 官方 Mac 安装包），放进 Mac 包的 `vendor/`。DMG 里的 app 带着这份包，在家第一次装也能入网。
 - Windows（`company-setup-tailnet-always-v1`）：下载页的 Windows 按钮改给带着入网文件的安装包（`TDHarness-Setup-remote.exe`，下载下来仍叫 `TDHarness-Setup.exe`）。以前它在公司里能连上服务器就跳过入网，现在在公司里也先入网（Windows 问「是否允许更改」时点「是」），入网没成也照样装完，`TDHarness.exe` 启动时会再问；已在公司 tailnet 里的电脑不弹任何东西。
 - **修了一个让已装电脑永远入不了网的问题**（`company-tailnet-vendor-v1`）：`vendor/`（入网文件所在目录）不在客户端更新的范围里，已经装好的电脑更新时从来拿不到它，所以启动时的入网检查一直跳过（服务器上的 tailnet 里一台员工电脑都没有）。现在 `vendor/` 在 Windows 和 Mac 的更新范围里，`pack-update-check.js` 发现本机缺 `vendor/` 时也会补一次完整更新（增量包不带没变过的文件）。
+**Mac 包里新加的脚本带上执行权限**（`company-zip-unix-mode-v1`）
+- 发版在 Windows 服务器上写包，新加进包里的文件被标成「MS-DOS 来源」，Mac 解压时就把执行权限丢了：入网脚本 `mac-join-off-lan.sh` 装好后不可执行，`start.command` 跳过了它。现在服务器写进包的每个新文件都标成 Unix 普通文件、带上权限；`start.command` 用 bash 跑它，不再要求执行权限；`build-mac-dmg.sh` 给修复之前发的包补上权限。
+
 **Windows 安装包装之前先核对程序包**（`company-setup-verify-v1`）
 - 以前安装包下载完程序包不核对就展开。服务器正在发版（或者发版中途失败）时，下载页上的包和 `version.json` 会对不上，断点续传还可能把新旧两个包拼成一个，这时候装就装进了半成品。现在下载完先和服务器 `version.json` 里 Windows 包的 sha256 对一下；对不上就等一分钟、从头重下，最多 4 轮，还不行就说「服务器可能正在更新，过几分钟再装」，不装。
 - 发版时程序包正被人下载、替换不了，最多等 20 分钟（原来 80 秒，四百多 MB 的包在慢一点的线路上一两分钟下不完，这次发版就是这样失败的）。
