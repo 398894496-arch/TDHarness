@@ -3082,11 +3082,11 @@ window.__ModuleLoader__.load({
 				if (collapsed) props.toggleSidebar();
 				props.startSession();
 			}
-			const brandMark = React.createElement(P.Tooltip, { label: "新对话", delayMs: 500 },
+			const brandMark = React.createElement(P.Tooltip, { label: "新会话", delayMs: 500 },
 				React.createElement("button", {
 					className: "cs-side-brand",
 					type: "button",
-					"aria-label": "新对话",
+					"aria-label": "新会话",
 					onClick: openFreshSession
 				},
 					safeSlot(function () {
@@ -3297,7 +3297,9 @@ window.__ModuleLoader__.load({
 					toggleBtn
 				),
 
-				React.createElement("div", { className: "cs-side-new" },
+				// Wide: the logo itself opens a new session (brandMark), so no separate button.
+				// Collapsed: no logo is shown, so the icon stays.
+				wide ? null : React.createElement("div", { className: "cs-side-new" },
 					React.createElement(P.Tooltip, { label: "新会话", delayMs: 500, disabled: wide },
 						React.createElement("button", {
 							type: "button",
