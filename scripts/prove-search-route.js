@@ -15,9 +15,9 @@ const os = require('node:os');
 const SERVER = path.join(__dirname, '..', 'server');
 // A stand-in agent-reach: logs each call, answers like the real one (JSON, ok/items).
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tdh-reach-'));
-const REACH = path.join(tmp, process.platform === 'win32' ? 'agent-reach.cmd' : 'agent-reach');
 const LOG = path.join(tmp, 'calls.jsonl');
-const FAKE = path.join(tmp, 'fake.js');
+const FAKE = path.join(tmp, 'agent-reach.js');
+const REACH = FAKE;
 fs.writeFileSync(FAKE, `
 const fs = require('fs');
 const a = process.argv.slice(2);
@@ -27,8 +27,6 @@ if (a[0] === 'bilibili') say({ ok: false, items: [], error: { code: 'NEED_SETUP'
 else if (a[0] === 'read') say({ ok: true, items: [{ title: 'gumyr/build123d', url: a[1], text: 'A python CAD library.' }] });
 else say({ ok: true, channel: a[0], items: [{ title: a[0] + ' hit', url: 'https://reach.example/' + a[0], text: 'from ' + a[0] + ': ' + a[2] }] });
 `);
-if (process.platform === 'win32') fs.writeFileSync(REACH, '@"' + process.execPath + '" "' + FAKE + '" %*\r\n');
-else { fs.writeFileSync(REACH, '#!/bin/sh\nexec "' + process.execPath + '" "' + FAKE + '" "$@"\n'); fs.chmodSync(REACH, 0o755); }
 process.env.TDH_AGENT_REACH = REACH;
 process.env.TDH_AGENT_REACH_HOME = path.join(tmp, 'home');
 const calls = () => (fs.existsSync(LOG) ? fs.readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
