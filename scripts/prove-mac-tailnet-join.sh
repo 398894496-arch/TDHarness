@@ -57,7 +57,7 @@ r="$(run)"; [[ "$r" == skip-no-site-tailnet ]] || fail "no vendor: $r"
 mkdir -p "$ROOT/vendor"
 printf 'ip=%s\nnode=tdharness\n' "$SERVER" > "$ROOT/vendor/company-tailnet.txt"
 printf 'join-key-for-test\n' > "$ROOT/vendor/employee.auth"
-: > "$ROOT/vendor/Tailscale-macos.pkg"
+: > "$ROOT/vendor/Tailscale.pkg"
 
 # already on the company tailnet
 reset; mkdir -p "$T/app" && cp -R "$T/src/." "$T/app/"; echo company > "$T/state"

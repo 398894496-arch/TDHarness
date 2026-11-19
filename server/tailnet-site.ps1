@@ -3,7 +3,7 @@
 #   D:\dsh\runtime\tailscale\desk.key        the employee join key (a Tailscale auth key, reusable, pre-approved);
 #                                             the admin puts it here. Without it this script does nothing.
 #   -> D:\dsh\runtime\tailscale\vendor\       employee.auth, company-tailnet.txt, tailscale-setup.msi
-#   -> D:\dsh\runtime\tailscale\vendor-mac\   employee.auth, company-tailnet.txt, Tailscale-macos.pkg
+#   -> D:\dsh\runtime\tailscale\vendor-mac\   employee.auth, company-tailnet.txt, Tailscale.pkg
 # company-tailnet.txt is read from this server's own `tailscale status`: its tailnet address and name, the
 # address desks check to know they are on the company tailnet. The installer is Tailscale's official MSI,
 # downloaded once and kept only if Windows says it is signed by Tailscale Inc.
@@ -55,7 +55,7 @@ if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Tail
 $VendorMac = Join-Path $Dir 'vendor-mac'
 New-Item -ItemType Directory -Force -Path $VendorMac | Out-Null
 foreach ($n in 'employee.auth', 'company-tailnet.txt') { Copy-Item -Force -LiteralPath (Join-Path $Vendor $n) -Destination (Join-Path $VendorMac $n) }
-$pkg = Join-Path $VendorMac 'Tailscale-macos.pkg'
+$pkg = Join-Path $VendorMac 'Tailscale.pkg'
 $fresh = (Test-Path -LiteralPath $pkg) -and ((Get-Date) - (Get-Item -LiteralPath $pkg).LastWriteTime).TotalDays -lt 30
 if (-not $fresh) {
   $tmp = $pkg + '.download'

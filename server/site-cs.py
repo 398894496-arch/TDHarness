@@ -256,9 +256,10 @@ def replace_zip_member(src: Path, dst: Path, name: str, data: bytes, extra=None)
     return n
 
 
-def swap_in(tmp: Path, dst: Path, tries: int = 40, wait: float = 2.0) -> None:
+def swap_in(tmp: Path, dst: Path, tries: int = 240, wait: float = 5.0) -> None:
     """tmp.replace(dst), waiting while Windows refuses: a pack being downloaded right now (Caddy has
-    it open) cannot be replaced. 2026-11-19: a publish died here while a desk was taking the update."""
+    it open) cannot be replaced. 2026-11-19: a publish died here while a desk was taking the update,
+    and again after 80 s: a 400 MB pack on a slow line takes minutes. Now up to 20 minutes."""
     import time
     for i in range(tries):
         try:
@@ -267,6 +268,9 @@ def swap_in(tmp: Path, dst: Path, tries: int = 40, wait: float = 2.0) -> None:
         except PermissionError:
             if i == tries - 1:
                 raise
+            if i == 0 or i % 12 == 0:
+                sys.stderr.write("SWAP_WAIT %s is being downloaded; waiting (%ds)\n" % (dst.name, int(i * wait)))
+                sys.stderr.flush()
             time.sleep(wait)
 
 

@@ -5,7 +5,7 @@
 # server/tailnet-site.ps1):
 #   company-tailnet.txt   ip=<the server's tailnet address>, node=<its device name>
 #   employee.auth         the employee join key (a Tailscale auth key)
-#   Tailscale-macos.pkg   Tailscale's own installer (installed only if Apple says it is Tailscale's)
+#   Tailscale.pkg   Tailscale's own installer (installed only if Apple says it is Tailscale's)
 # Without them it does nothing. A Mac that already sees the server on its tailnet is never touched.
 # A Mac signed in to some other tailnet keeps that one: the company one is added as a second
 # account (`tailscale login`), never `up --reset`. In the office, a "later" is not asked again for 7
@@ -65,7 +65,7 @@ if [[ "$choice" != "继续" ]]; then
 fi
 
 if [[ ! -x "$TS" ]]; then
-  PKG="$V/Tailscale-macos.pkg"
+  PKG="$V/Tailscale.pkg"
   [[ -f "$PKG" ]] || { say "这台 Mac 没装 Tailscale，安装包里也没带。请联系管理员。"; done_with fail-no-pkg; }
   if [[ -z "${TDH_TS_INSTALL:-}" ]]; then
     sig="$(pkgutil --check-signature "$PKG" 2>&1 || true)"
