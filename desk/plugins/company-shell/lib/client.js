@@ -4731,25 +4731,35 @@ window.__ModuleLoader__.load({
 			if (!q || !q.loaded) return "正在读取…";
 			if (quotaUnderOne(q)) {
 				const w = quotaWhen(q.resetsAt);
-				return (q.plan ? String(q.plan) + " · " : "") + "本周已用不到 1%（OpenAI 按整数报）" + (w ? " · " + w + " 刷新" : "");
+				return (q.plan ? String(q.plan) + " · " : "") + "本周已用不到 1%（OpenAI 按整数报）" + (w ? " · " + w + " 重置" : "") + quotaAt(q);
 			}
 			if (q.err) return "额度接口没接通";
 			if (q.kind === "key" && quotaPercent(q) == null) return "走 API key，没有订阅额度";
 			if (quotaPercent(q) == null) return "订阅没有返回额度数据";
 			const kind = q.kind === "weekly" ? "本周" : (q.kind === "monthly" ? "本月" : "本期");
 			const when = quotaWhen(q.resetsAt);
-			return (q.plan ? String(q.plan) + " · " : "") + kind + (when ? " · " + when + " 刷新" : "");
+			return (q.plan ? String(q.plan) + " · " : "") + kind + (when ? " · " + when + " 重置" : "") + quotaAt(q);
+		}
+		function quotaAt(q) {
+			const n = Date.parse((q && q.fetchedAt) || "");
+			if (!n) return "";
+			try { return " · " + new Date(n).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) + " 读的"; } catch (err) { return ""; }
 		}
 		function meter(pct) {
 			if (pct == null) return null;
 			const tone = pct < 10 ? " cs-meter-err" : (pct < 30 ? " cs-meter-warn" : "");
 			return el("div", { className: "cs-meter" + tone }, el("i", { style: { width: pct + "%" } }));
 		}
+		// company-quota-refresh-v1: q.reload() asks for a reading taken now (the 刷新 button);
+		// q.fetchedAt says when the shown one was taken.
 		function useQuota() {
 			const qHook = React.useState({ loaded: false, usedPercent: null, remainingPercent: null, plan: "", kind: "", resetsAt: "", err: "" });
-			React.useEffect(function () {
-				fetchQuota().then(function (out) {
+			const busyHook = React.useState(false);
+			function load(fresh) {
+				busyHook[1](true);
+				fetchQuota(fresh).then(function (out) {
 					const j = out.j || {};
+					busyHook[1](false);
 					qHook[1]({
 						loaded: true,
 						usedPercent: out.ok ? j.usedPercent : null,
@@ -4757,12 +4767,18 @@ window.__ModuleLoader__.load({
 						plan: (out.ok && j.plan) || "",
 						kind: (out.ok && j.kind) || "",
 						resetsAt: (out.ok && j.resetsAt) || "",
+						fetchedAt: (out.ok && j.fetchedAt) || "",
 						vendor: (out.ok && j.vendor) || "grok",
-						err: out.ok ? "" : ((j.error && j.error.message) || j.error || ("http-" + out.status))
+						err: out.ok ? (j.quotaError || "") : ((j.error && j.error.message) || j.error || ("http-" + out.status))
 					});
 				});
-			}, []);
-			return qHook[0];
+			}
+			React.useEffect(function () { load(false); }, []);
+			return Object.assign({}, qHook[0], { busy: busyHook[0], reload: function () { load(true); } });
+		}
+		function quotaRefresh(q) {
+			if (!q || typeof q.reload !== "function") return null;
+			return el("button", { type: "button", className: "cs-chip", disabled: !!q.busy, title: "向 OpenAI 要一次最新的额度", onClick: function () { q.reload(); } }, q.busy ? "刷新中…" : "刷新");
 		}
 		function contextText(n) {
 			n = Number(n) || 0;
@@ -5200,10 +5216,12 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		function fetchQuota() {
+		function fetchQuota(fresh) {
+			const h = { "Accept": "application/json" };
+			if (fresh) h["X-Company-Fresh"] = "1";
 			return fetch("/company/grok-quota", {
 				credentials: "same-origin",
-				headers: { "Accept": "application/json" }
+				headers: h
 			}).then(function (res) {
 				return res.json().then(function (j) {
 					return { ok: !!(res.ok && j && j.ok !== false), j: j || {}, status: res.status };
@@ -5325,6 +5343,94 @@ window.__ModuleLoader__.load({
 
 		// company-server-key-v1: the vendor keys live in the server's gateway.env, never on a desk.
 		// The desk's own key box is hidden (company-no-add-key); this is where an admin types one.
+		// company-key-models-v1: which of a key vendor's models everyone sees. None ticked (the
+		// default) = the vendor's whole live list, so a model it adds shows up by itself.
+		function KeyModelPicker(props) {
+			const vendors = props.vendors || [];
+			const curHook = React.useState(vendors[0] ? vendors[0].vendor : "");
+			const listHook = React.useState({ loaded: false, rows: [], err: "" });
+			const pickHook = React.useState({});
+			const allHook = React.useState(true);
+			const noteHook = React.useState("");
+			const toneHook = React.useState("");
+			const busyHook = React.useState(false);
+			const cur = vendors.some(function (v) { return v.vendor === curHook[0]; }) ? curHook[0] : (vendors[0] ? vendors[0].vendor : "");
+			function load(v) {
+				if (!v) return;
+				listHook[1]({ loaded: false, rows: [], err: "" });
+				noteHook[1]("");
+				Promise.all([postChannels({ action: "list-models", vendor: v }), postChannels({ action: "picked-models", vendor: v })]).then(function (r) {
+					if (!r[0].ok) { listHook[1]({ loaded: true, rows: [], err: channelsErr(r[0]) }); return; }
+					const picked = ((r[1].j && r[1].j.models) || []).map(function (m) { return m && m.id; }).filter(Boolean);
+					const bag = {};
+					picked.forEach(function (id) { bag[id] = true; });
+					pickHook[1](bag);
+					allHook[1](!picked.length);
+					listHook[1]({ loaded: true, rows: (r[0].j && r[0].j.models) || [], err: "" });
+				});
+			}
+			React.useEffect(function () { load(cur); }, [cur, props.stamp]);
+			if (!vendors.length) return null;
+			const rows = listHook[0].rows;
+			const label = (vendors.filter(function (v) { return v.vendor === cur; })[0] || {}).label || cur;
+			function apply() {
+				const ids = allHook[0] ? [] : rows.map(function (m) { return m.id; }).filter(function (id) { return pickHook[0][id]; });
+				if (!allHook[0] && !ids.length) { toneHook[1]("err"); noteHook[1]("至少勾一个，或者选「全部开放」。"); return; }
+				busyHook[1](true);
+				postChannels({ action: "apply-models", vendor: cur, models: ids }).then(function (out) {
+					busyHook[1](false);
+					if (!out.ok) { toneHook[1]("err"); noteHook[1](channelsErr(out)); return; }
+					toneHook[1]("");
+					noteHook[1]((ids.length ? "已开放 " + ids.length + " 个 " + label + " 模型。" : "已开放 " + label + " 的全部模型，以后它出新模型会自动出现。")
+						+ (out.j && out.j.live ? "这台电脑的模型菜单已经更新；" : "") + "其他人下次登录时更新。");
+				});
+			}
+			function toggle(id) {
+				const next = Object.assign({}, pickHook[0]);
+				if (next[id]) delete next[id]; else next[id] = true;
+				pickHook[1](next);
+			}
+			const list = !listHook[0].loaded
+				? el("div", { className: "cs-vendor-msg" }, "正在向 " + label + " 要模型列表…")
+				: listHook[0].err
+					? el("div", { className: "cs-vendor-msg" }, listHook[0].err)
+					: el("div", { className: "cs-mlist" }, rows.map(function (m) {
+						const on = allHook[0] || !!pickHook[0][m.id];
+						return el("div", { className: "cs-mrow" + (on ? "" : " cs-mrow-off"), key: m.id },
+							el("button", {
+								type: "button",
+								role: "checkbox",
+								"aria-checked": on,
+								"aria-label": m.id,
+								disabled: allHook[0] || busyHook[0],
+								className: "cs-tick" + (on ? " is-on" : ""),
+								onClick: function () { toggle(m.id); }
+							}, TICK_SVG),
+							el("div", { className: "cs-mrow-name" }, el("span", null, m.id), m.image ? badge("识图") : null)
+						);
+					}));
+			return el("div", { className: "cs-set-card", "data-mark": "company-key-models-v1", style: { marginTop: 12 } },
+				el("div", { className: "cs-form" },
+					el("label", { className: "cs-field" }, el("span", null, "开放给大家的模型"),
+						selectBox(cur, vendors.map(function (v) { return { value: v.vendor, label: v.label }; }), function (v) { curHook[1](v); }, busyHook[0])),
+					el("div", { className: "cs-field" }, el("span", null, "范围"),
+						el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+							el("button", { type: "button", className: "cs-chip" + (allHook[0] ? " is-on" : ""), "aria-pressed": allHook[0], disabled: busyHook[0], onClick: function () { allHook[1](true); } }, "全部开放（跟着厂商更新）"),
+							el("button", { type: "button", className: "cs-chip" + (!allHook[0] ? " is-on" : ""), "aria-pressed": !allHook[0], disabled: busyHook[0], onClick: function () {
+								if (allHook[0]) { const bag = {}; rows.forEach(function (m) { bag[m.id] = true; }); pickHook[1](bag); }
+								allHook[1](false);
+							} }, "只开放勾选的"))),
+					el("div", { style: { gridColumn: "1 / -1" } }, list),
+					el("div", { className: "cs-set-foot", style: { gridColumn: "1 / -1" } },
+						el("p", { className: "cs-set-note" }, allHook[0]
+							? "模型列表每次从 " + label + " 实时取，它上新模型不用改这里。"
+							: "只有勾选的出现在大家的模型菜单里；" + label + " 上的新模型要回来勾上。"),
+						btn(busyHook[0] ? "正在保存…" : "保存给全公司", { tone: "primary", disabled: busyHook[0] || !listHook[0].loaded || !!listHook[0].err, onClick: apply }))
+				),
+				setNote(noteHook[0], toneHook[0])
+			);
+		}
+
 		function ServerKeyForm() {
 			useShellPulse();
 			const presetHook = React.useState("deepseek");
@@ -5334,6 +5440,7 @@ window.__ModuleLoader__.load({
 			const toneHook = React.useState("");
 			const busyHook = React.useState(false);
 			const boundHook = React.useState({});
+			const stampHook = React.useState(0);
 			function load() {
 				fetchChannels().then(function (out) {
 					const next = {};
@@ -5344,11 +5451,11 @@ window.__ModuleLoader__.load({
 			React.useEffect(load, []);
 			if (shellRole !== "admin") return null;
 			const presets = [
-				{ value: "deepseek", label: "DeepSeek", id: "deepseek" },
+				{ value: "deepseek", label: "DeepSeek", id: "deepseek", vendor: "deepseek" },
 				{ value: "openai", label: "OpenAI / GPT（API key）", id: "gpt" },
-				{ value: "anthropic", label: "Anthropic / Claude", id: "opus" },
-				{ value: "kimi", label: "Kimi", id: "kimi" },
-				{ value: "glm", label: "智谱 GLM", id: "glm" },
+				{ value: "anthropic", label: "Anthropic / Claude", id: "opus", vendor: "claude" },
+				{ value: "kimi", label: "Kimi", id: "kimi", vendor: "kimi" },
+				{ value: "glm", label: "智谱 GLM", id: "glm", vendor: "glm" },
 				{ value: "xai", label: "xAI / Grok（API key）", id: "grok-key" }
 			];
 			const cur = presets.filter(function (x) { return x.value === presetHook[0]; })[0] || presets[0];
@@ -5365,8 +5472,9 @@ window.__ModuleLoader__.load({
 					if (!out.ok) { toneHook[1]("err"); noteHook[1](channelsErr(out)); return; }
 					keyHook[1]("");
 					toneHook[1]("");
-					noteHook[1]("已存到服务器：" + cur.label + "。对话框的模型菜单下次打开时就有它的模型。");
+					noteHook[1]("已存到服务器：" + cur.label + "。" + (out.j && out.j.live ? "这台电脑的模型菜单已经有它的模型，" : "") + "其他人下次登录时就有。要只开放其中几个，在下面选。");
 					load();
+					stampHook[1](stampHook[0] + 1);
 				});
 			}
 			const stored = presets.filter(function (x) { return boundHook[0][x.id]; }).map(function (x) { return x.label; });
@@ -5386,7 +5494,8 @@ window.__ModuleLoader__.load({
 							btn(busyHook[0] ? "正在保存…" : "保存到服务器", { submit: true, tone: "primary", disabled: busyHook[0] }))
 					)
 				),
-				setNote(noteHook[0], toneHook[0])
+				setNote(noteHook[0], toneHook[0]),
+				el(KeyModelPicker, { stamp: stampHook[0], vendors: presets.filter(function (x) { return x.vendor && boundHook[0][x.id]; }).map(function (x) { return { vendor: x.vendor, label: x.label }; }) })
 			);
 		}
 
@@ -5628,7 +5737,8 @@ window.__ModuleLoader__.load({
 			return el("div", { className: "cs-set", "data-mark": "company-proxy-fold-v1" },
 				el("div", { className: "cs-quota" },
 					el("div", { className: "cs-quota-main" },
-						el("div", { className: "cs-quota-k" }, (q.vendor === "gpt" ? "GPT" : "Grok") + " 订阅剩余额度"),
+						el("div", { className: "cs-quota-k", style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
+							el("span", null, (q.vendor === "gpt" ? "GPT" : "Grok") + " 订阅剩余额度"), quotaRefresh(q)),
 						el("div", { className: "cs-quota-v" }, pct == null ? "—" : quotaPctText(q, pct) + "%", el("small", null, quotaSub(q))),
 						meter(pct)
 					)
@@ -6021,7 +6131,8 @@ window.__ModuleLoader__.load({
 			return setPage("同事", "谁在线、最近用了多少 token。用量来自服务器网关，经网关的模型调用都算在内。",
 				el("div", { className: "cs-stats" },
 					el("div", { className: "cs-stat" },
-						el("div", { className: "cs-stat-k" }, q.vendor === "gpt" ? "GPT 订阅剩余" : "订阅剩余"),
+						el("div", { className: "cs-stat-k", style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
+							el("span", null, q.vendor === "gpt" ? "GPT 订阅剩余" : "订阅剩余"), quotaRefresh(q)),
 						el("div", { className: "cs-stat-v" }, pct == null ? "—" : quotaPctText(q, pct), pct == null ? null : el("small", null, "%")),
 						meter(pct),
 						el("div", { className: "cs-stat-s" }, quotaSub(q))
