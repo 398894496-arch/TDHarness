@@ -87,6 +87,8 @@ internal static class AppHost
             ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
             try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; }
             catch { }
+            // company-compat-v1：连公司服务器一律直连，不走 Clash 一类代理的「系统代理」。
+            DeskPrereq.DirectToSite();
             TidyExtraShortcuts();
             Application.Run(new ShellForm());
             return 0;
@@ -780,6 +782,10 @@ internal static class AppHost
 
     internal static void RestoreProduct(Action<string> onProgress)
     {
+        // company-compat-v1：更新要下载 400 多 MB 再解开，空间不够就先说，不在半路失败。
+        var free = DeskPrereq.FreeBytes(Root);
+        if (free >= 0 && free < 1500L * 1024 * 1024)
+            throw new Exception(Path.GetPathRoot(Path.GetFullPath(Root)) + " 只剩 " + DeskPrereq.GbText(free) + "，更新至少要 1.5 GB，请先清理磁盘");
         StopDeskNode();
         var restore = Path.Combine(Root, "tree-restore.ps1");
         if (!File.Exists(restore)) throw new Exception("tree-restore-missing");
@@ -1722,12 +1728,26 @@ internal sealed class ShellForm : Form
             {
                 try { AppHost.EnsureCompanyNet(); }
                 catch (Exception ex) { AppHost.Log("ts-boot " + ex.Message); }
+                try { EnsureWebView2(); }
+                catch (Exception wvEx) { AppHost.Log("webview2-boot " + wvEx.Message); }
                 try { CheckForUpdate(); }
                 catch (Exception upEx) { AppHost.Log("update-check " + upEx.Message); ShowNote("", false); }
             }));
             boot.IsBackground = true;
             boot.Start();
         };
+    }
+
+    // company-compat-v1：窗口要微软 WebView2。没有就从公司服务器取微软的安装器装上（当前用户，不要管理员），
+    // 不等到登录成功后才报 webview2-missing。
+    private void EnsureWebView2()
+    {
+        var have = DeskPrereq.WebView2Version();
+        if (have.Length > 0) { AppHost.Log("webview2 " + have); return; }
+        ShowNote("正在安装微软 WebView2 组件（第一次需要，约一两分钟）…", false);
+        var ok = DeskPrereq.InstallWebView2(DeskPrereq.WebView2InstallerUrl(Site.ZipUrl), AppHost.Log, 600000);
+        AppHost.Log("webview2 " + (ok ? DeskPrereq.WebView2Version() : "missing"));
+        ShowNote(ok ? "" : "这台电脑缺微软 WebView2 组件，自动安装没成功。请联系管理员，或从微软官网下载「WebView2 Runtime」装上后再打开。", !ok);
     }
 
     // Runs on the boot thread. Only the dialog and the label touch the UI.
@@ -2014,7 +2034,7 @@ internal sealed class ShellForm : Form
         }
         catch (Exception ex)
         {
-            throw new Exception("webview2-missing " + ex.Message);
+            throw new Exception("这台电脑缺微软 WebView2 组件（webview2-missing " + ex.Message + "）。重新打开 TDHarness 会自动安装；还不行请联系管理员");
         }
         _web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
         _web.CoreWebView2.Settings.AreDevToolsEnabled = false;

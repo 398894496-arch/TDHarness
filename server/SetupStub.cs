@@ -45,6 +45,7 @@ internal static class Setup
             return TailnetJoin.Join(Path.Combine(dir, "tailscale-setup.msi"), Path.Combine(dir, "employee.auth"), TailnetJoin.ReadFacts(Path.Combine(dir, "company-tailnet.txt")), Log);
         }
         foreach (var a in argv) if (a == "--quiet") Quiet = true;
+        DeskPrereq.DirectToSite();
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         LogPath = Path.Combine(Path.GetTempPath(), "companydesk-setup.log");
@@ -127,6 +128,17 @@ internal static class Setup
             LogPath = Path.Combine(dest, "setup.log");
             Log(SetupMark.Substring(0, 24));
             Log("dest " + dest);
+            // company-compat-v1：先说清楚装不上的原因，不在下载到一半时才失败。
+            if (!Environment.Is64BitOperatingSystem)
+                throw new Exception("TDH 只支持 64 位 Windows，这台电脑是 32 位的系统");
+            // 重装时旧的那份会先清掉，空出 1 GB 多，所以只要 1.2 GB。
+            var need = Directory.Exists(Path.Combine(dest, "prefix")) ? 1200L * 1024 * 1024 : DeskPrereq.NeedBytes;
+            foreach (var where in new[] { dest, Path.GetTempPath() })
+            {
+                var free = DeskPrereq.FreeBytes(where);
+                if (free >= 0 && free < need)
+                    throw new Exception(Path.GetPathRoot(Path.GetFullPath(where)) + " 只剩 " + DeskPrereq.GbText(free) + "，安装至少要 " + DeskPrereq.GbText(need) + "。请先清理磁盘再装");
+            }
             SetStatus("正在关闭旧程序…");
             StopOldApp(dest);
             RetireOldCd();
@@ -153,6 +165,14 @@ internal static class Setup
             WriteBridge(root);
             WriteShortcuts(root);
             Log("copied");
+            // TDH 的窗口要微软 WebView2：Win10 关了系统更新的电脑可能没有，先装好（装给当前用户，不要管理员）。
+            if (DeskPrereq.WebView2Version().Length == 0)
+            {
+                SetStatus("正在安装微软 WebView2 组件（第一次需要，约一两分钟）…");
+                var ok = DeskPrereq.InstallWebView2(DeskPrereq.WebView2InstallerUrl(Site.ZipUrl), Log, 600000);
+                Log("webview2 " + (ok ? DeskPrereq.WebView2Version() : "missing"));
+            }
+            else Log("webview2 " + DeskPrereq.WebView2Version());
             Phase = "ts";
             SetStatus("正在接通公司网…");
             JoinCompanyNet(root);

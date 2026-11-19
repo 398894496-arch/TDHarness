@@ -147,6 +147,14 @@ if (Test-Path -LiteralPath $OclCur) {
   Write-Output 'OPENCLI_SKIP=not-fetched (run server\fetch-opencli.ps1)'
 }
 
+# 2e. Microsoft's WebView2 bootstrapper beside the Setup (company-compat-v1): a desk without the WebView2 Runtime
+#     (Windows 10 with updates turned off) installs it from here before it needs it.
+$wv = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Server 'fetch-webview2.ps1') 2>&1 | Out-String
+Write-Output $wv.Trim()
+if ($wv -match 'WEBVIEW2_SETUP_OK=1') {
+  Copy-Item -Force 'D:\dsh\runtime\vendor\webview2\MicrosoftEdgeWebview2Setup.exe' (Join-Path $Dist 'MicrosoftEdgeWebview2Setup.exe')
+}
+
 # 3. TDHarness.exe carries the build mark and the site address; Setup.exe carries the site address
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Server 'compile-apphost.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'compile-apphost-failed' }
