@@ -9,6 +9,9 @@ task_card tool.
 Life of a card:  待提交 --submit--> 待审批 --verdict--> 已通过 (archived)
                     ^                    |         \\--> 未通过 --submit--> 待审批
                     \\---- withdraw -----/
+The issuer (or an admin) can also set a due time, hand the card to someone else,
+or cancel it (已作废, archived, with a reason); anyone who sees a card can comment.
+collect_notices() says who should be told what (due soon, overdue), once each per day.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ import os
 import re
 import shutil
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 TITLE_MAX = 80
@@ -31,7 +35,32 @@ EVENTS_MAX = 80
 SESSION_RE = re.compile(r"^session-[A-Za-z0-9._-]{1,128}$")
 OPEN_STATES = ("待提交", "未通过")
 REVIEW_STATES = ("待审批",)
-STATES = ("待提交", "待审批", "已通过", "未通过")
+STATES = ("待提交", "待审批", "已通过", "未通过", "已作废")
+CLOSED_STATES = ("已通过", "已作废")
+COMMENT_MAX = 2000
+COMMENTS_MAX = 200
+SOON_MS = 24 * 3600 * 1000
+
+
+def parse_due(value) -> int:
+    """Due time in ms. Accepts ms, 'YYYY-MM-DD' (end of that day, server local time),
+    'YYYY-MM-DD HH:MM'; empty clears it. Anything else is refused."""
+    if value in (None, "", 0):
+        return 0
+    if isinstance(value, (int, float)):
+        if value < 1e12:                 # seconds, or nonsense: would read as 1970 and be overdue at once
+            raise Refused("due")
+        return int(value)
+    text = str(value).strip().replace("T", " ")
+    for fmt, end in (("%Y-%m-%d %H:%M", False), ("%Y-%m-%d", True)):
+        try:
+            d = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        if end:
+            d = d + timedelta(hours=23, minutes=59, seconds=59)
+        return int(d.timestamp() * 1000)
+    raise Refused("due")
 
 
 class Refused(Exception):
@@ -173,7 +202,11 @@ class Board:
         t["folder"] = str(folder).replace("\\", "/") if folder is not None else ""
         t["sessionIds"] = [s.get("id") for s in t.get("sessions") or [] if s.get("id")]
         t["may"] = self.abilities(who, card)
+        due = int(t.get("due") or 0)
+        t["overdue"] = bool(due) and t.get("state") in OPEN_STATES and now_ms() > due
+        t.setdefault("comments", [])
         t.pop("hidden_by", None)
+        t.pop("reminded", None)
         return t
 
     def abilities(self, who: dict, card: dict) -> dict:
@@ -184,7 +217,12 @@ class Board:
         # hand in someone else's work (and then approve it).
         mine = card.get("to") == login
         issuer = card.get("from") == login or role == "admin"
+        live = state not in CLOSED_STATES
         return {
+            "set_due": issuer and live,
+            "reassign": issuer and state in OPEN_STATES,
+            "cancel": issuer and live,
+            "comment": True,
             "edit_assignment": issuer and state in OPEN_STATES,
             "edit_summary": mine and state in OPEN_STATES,
             "submit": mine and state in OPEN_STATES,
@@ -288,6 +326,8 @@ class Board:
                 "archived": False,
                 "hidden_by": [],
                 "created_at": now_ms(),
+                "due": parse_due(body.get("due")),
+                "comments": [],
                 "events": [],
             }
             self.event(card, login, "下达给 " + target["login"] if target["login"] != login else "新建")
@@ -374,6 +414,47 @@ class Board:
                     hidden.append(login)
                 card["hidden_by"] = hidden
             self.event(card, login, "归档" if archived else "取消归档")
+        elif action == "set-due":
+            if not may["set_due"]:
+                raise Refused("due-role")
+            card["due"] = parse_due(body.get("due"))
+            card["reminded"] = {}
+            self.event(card, login, "截止改为 " + fmt_ms(card["due"]) if card["due"] else "取消截止时间")
+        elif action == "reassign":
+            if not may["reassign"]:
+                raise Refused("reassign-role")
+            target = people.get(str(body.get("to") or ""))
+            if target is None:
+                raise Refused("no-such-person")
+            if not self.may_issue(who, target) or target["login"] == card.get("to"):
+                raise Refused("issue-role")
+            card["to"] = target["login"]
+            card["dept"] = target.get("dept") or ""
+            card["reminded"] = {}
+            folder = self.task_folder(people, card)
+            if folder is not None:
+                try:
+                    folder.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    pass
+            self.event(card, login, "改派给 " + target["login"])
+        elif action == "cancel":
+            if not may["cancel"]:
+                raise Refused("cancel-role")
+            reason = clean_text(body.get("reason"), 2000)
+            if not reason:
+                raise Refused("cancel-reason")
+            card["state"] = "已作废"
+            card["archived"] = True
+            card["verdict"] = reason
+            self.event(card, login, "作废：" + reason)
+        elif action == "comment":
+            text = clean_text(body.get("text"), COMMENT_MAX)
+            if not text:
+                raise Refused("comment-empty")
+            rows = list(card.get("comments") or [])
+            rows.append({"t": now_ms(), "who": login, "text": text})
+            card["comments"] = rows[-COMMENTS_MAX:]
         elif action == "bind-session":
             sid = str(body.get("session") or "")
             if not SESSION_RE.match(sid):
@@ -525,6 +606,61 @@ class Board:
                         self.add_file(card, {"name": hit.name, "path": rel, "kind": "交付",
                                              "meta": size_text(hit.stat().st_size) + " · 随提交挂上", "at": now_ms()})
                         return
+
+
+def fmt_ms(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M") if ms else ""
+
+
+def collect_notices(board: "Board", people: dict, now: int | None = None) -> list[dict]:
+    """Who to tell what about due times, once per card and kind per day. Marks what it
+    returns as told and saves, so call it under the people service's lock.
+    Kinds: soon (due within 24h: the assignee), overdue (the assignee and the issuer)."""
+    now = now or now_ms()
+    day = datetime.fromtimestamp(now / 1000).strftime("%Y-%m-%d")
+    data = board.load()
+    out: list[dict] = []
+    for card in data["tickets"]:
+        due = int(card.get("due") or 0)
+        if not due or card.get("state") not in OPEN_STATES:
+            continue
+        told = card.setdefault("reminded", {})
+        kind = "overdue" if now > due else ("soon" if due - now <= SOON_MS else "")
+        if not kind or told.get(kind) == day:
+            continue
+        told[kind] = day
+        to = [card.get("to")] + ([card.get("from")] if kind == "overdue" and card.get("from") != card.get("to") else [])
+        word = "已超期" if kind == "overdue" else "快到期"
+        for login in to:
+            if login in people:
+                out.append({"to": login, "kind": kind, "ticket": card["id"],
+                            "text": "任务卡%s：「%s」截止 %s，负责人 %s，状态 %s" % (
+                                word, card.get("title"), fmt_ms(due), card.get("to"), card.get("state"))})
+    if out:
+        board.save(data)
+    return out
+
+
+def digest(board: "Board", people: dict, now: int | None = None) -> str:
+    """One morning page for an admin: open cards per person, overdue first, and what waits for review."""
+    now = now or now_ms()
+    rows = [c for c in board.load()["tickets"] if c.get("state") not in CLOSED_STATES]
+    if not rows:
+        return ""
+    lines = ["任务卡日报 %s：进行中 %d 张" % (datetime.fromtimestamp(now / 1000).strftime("%m-%d"), len(rows))]
+    late = [c for c in rows if c.get("due") and c.get("state") in OPEN_STATES and now > int(c["due"])]
+    review = [c for c in rows if c.get("state") in REVIEW_STATES]
+    if late:
+        lines.append("超期 %d 张：" % len(late))
+        lines += ["- %s「%s」截止 %s" % (c.get("to"), c.get("title"), fmt_ms(int(c["due"]))) for c in late[:30]]
+    if review:
+        lines.append("等审批 %d 张：" % len(review))
+        lines += ["- %s「%s」" % (c.get("to"), c.get("title")) for c in review[:30]]
+    by = {}
+    for c in rows:
+        by[c.get("to")] = by.get(c.get("to"), 0) + 1
+    lines.append("按人：" + "，".join("%s %d" % (k, v) for k, v in sorted(by.items(), key=lambda kv: -kv[1])))
+    return "\n".join(lines)
 
 
 def size_text(n: int) -> str:

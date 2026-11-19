@@ -271,6 +271,14 @@ $sitePy = Join-Path $Server 'site-cs.py'
 $caddyfile = Join-Path $Runtime 'caddy\Caddyfile'
 & $py $sitePy --site $SiteYml emit-caddy --out $caddyfile
 if ($LASTEXITCODE -ne 0) { throw 'caddyfile-failed' }
+# Extension packs drop handle blocks here (the Caddyfile imports ext\*.caddy).
+# The placeholder keeps the import matching a file before any pack is installed.
+$caddyExt = Join-Path $Runtime 'caddy\ext'
+New-Item -ItemType Directory -Force -Path $caddyExt | Out-Null
+$extKeep = Join-Path $caddyExt '00-placeholder.caddy'
+if (-not (Test-Path -LiteralPath $extKeep)) {
+  [IO.File]::WriteAllText($extKeep, "# Extension routes go in this folder as *.caddy files: handle /company/<pack>* { ... }`r`n", [Text.UTF8Encoding]::new($false))
+}
 
 Copy-Item -Force -LiteralPath (Join-Path $Server 'download.html') -Destination (Join-Path $Dist 'index.html')
 

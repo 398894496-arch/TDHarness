@@ -151,6 +151,14 @@ Then `publish-site-update.ps1` (step 2b, `server\tailnet-site.ps1`) puts three f
 
 Proofs: `scripts\prove-tailnet-join.ps1` (CI) checks the join logic offline; workflow `tailnet-e2e` runs `scripts\e2e-remote-setup.ps1` on a fresh Windows runner against a live site with an ephemeral key: join, resolve the site name over the tailnet, install the desk over it, refuse a second join.
 
+## Extension packs
+
+An industry pack or a site's own tool sits on top of this repository instead of forking it, so `git pull` keeps upgrading the product and the pack upgrades on its own. Two hooks, both kept across setup re-runs:
+
+- **Skills.** Put the pack's skills in the share's `_skills` (admins write it). Each desk builds its skills cache from the pack's own `company-*` skills with `_skills` laid over them (`desk/pack/common/sync-skills.js`): a skill there is added, or replaces the bundled one of the same name whole. Do not copy the bundled skills into `_skills`; that copy would go stale at the next update. A file named `.replace-bundled` in `_skills` keeps the old rule (only the share's skills, when it has any). `node scripts/prove-sync-skills.js` → `SYNC_SKILLS_PROVE_OK=1`.
+- **Routes.** The Caddyfile imports `D:\dsh\runtime\caddy\ext\*.caddy` inside the site, before the catch-all. A pack adds a file there with its own `handle /company/<pack>* { reverse_proxy 127.0.0.1:<port> }` and restarts the `Autostart-Caddy-8443` task. Only admins can write `D:\dsh\runtime`. Caddy passes the desk's `Authorization` header through untouched; the pack's service checks the token itself, as the knowledge search does. Setup makes the folder with a comment-only `00-placeholder.caddy`. `python scripts/prove-caddy-ext.py` → `CADDY_EXT_PROVE_OK=1`.
+- **The desk's door.** A pack adds no tool of its own (every tool goes out with every model request). The desk has one, `company_ext(pack, route, body)`: it POSTs the JSON to `/company/ext/<pack><route>` on the company site with the person's login token, refuses pack and route names that are not plain (`[a-z][a-z0-9-]`, `/[A-Za-z0-9_/-]`, no `..`) before anything leaves the desk, and adds `desk_files` (the path this desk opens) when the answer lists company-relative `files`. So a pack's route is `handle /company/ext/<pack>/*`, and its skills tell the agent which `pack`, `route` and `body` to send. `node scripts/prove-company-ext.mjs` → `COMPANY_EXT_PROVE_OK=1`.
+
 ## Upgrade, back up, uninstall
 
 **Upgrade.** On the server, in the clone, as Administrator:

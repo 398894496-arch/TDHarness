@@ -4,6 +4,45 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.18.5
+
+**Mac：公司盘中途掉线会自动重连；掉线期间写下的东西不再被藏起来**
+- **现象（11-18，客户现场的 Mac）**：一个会话一直报 `ENOTCONN`，接着报 `ENOENT ... session.v4.jsonl.zstd`。原因是 `~/company` 上的公司盘在运行中掉了：Mac 睡眠后唤醒，Tailscale 还没连上。客户端只在启动时挂一次盘，掉线后它在挂载点下面的本地空目录里继续干活：公司盘上的对话找不到了，新对话只存到了这台 Mac。
+- **自动重连**：座位心跳（`desk-lease.js watch`，每 12 秒一次）顺便检查 `~/company` 是不是公司盘。不是的话，在后台跑 `mac-mount-company.sh` 重挂，最多等 60 秒，不耽误心跳。断开和重新连上时，各弹一条系统通知（不是要点按钮的对话框）。
+- **彩色站点 Logo**：站点品牌目录 `runtime\brand\` 里放一个 `color` 文件，字标和小标就按原色画，不再当遮罩。原来当遮罩用，红底银字这种彩色 Logo 会变成一块单色的形状。没有这个文件，行为和原来一样。`prove-site-brand.py` 新增了这个情况的测试。
+- **不再藏数据**：挂盘前如果 `~/company` 没挂着、里面却有文件（旧的本地副本，或者掉线期间写下的东西），先把整个目录改名成 `~/company.local-<时间>` 再挂。什么都不删，事后可以核对、合并。原来是直接挂在上面，把这些文件盖住。
+- 证明：
+  - `desk-lease.js selftest` 新增挂载判断的用例：smbfs 才算；`companyX` 不算；本地 apfs 目录不算。
+  - 新增 `scripts/prove-mac-mount-aside.sh`：有文件的挂载点会被移走、内容原样保留，空的不动。这个测试在旧脚本上会失败；已加进 CI（Linux）。
+  - 没在真的 Mac 上让公司盘掉一次线来实测。
+
+## 2026.11.18.4
+
+**任务卡能跟进了：截止日期、到点提醒、改派、作废、留言、老板每日清单；田总一句话就能下任务**
+- **截止日期**：下达时填（也可以不填），下达人之后能改或清除。卡上显示截止时间，超期标红，智能体读卡时也能看到。
+- **到点提醒**：人员服务每 10 分钟检查一次。还有 24 小时内到期的卡提醒负责人；超期的卡提醒负责人和下达人。每张卡每种提醒每天只发一次；已通过、已作废的卡不再提醒。
+- **老板每日清单**：每天 8 点后发给管理员一页：超期的卡、等审批的卡、每人手上几张。
+- **企业微信**：提醒和每日清单都通过企业微信自建应用发出（`server/notify.py`），站点配好 `runtime/wecom.env` 和 `runtime/wecom-users.json`（登录名对应企业微信 userid）才会发。没配就不发，花名册之外的人也不发。可以设代理（这个接口只认应用的可信 IP）。日志 `runtime/notify.log` 只记谁、什么提醒、哪张卡、结果，不记内容和密钥。
+- **改派、作废**：都由下达人（或管理员）操作。改派只能在提交之前，而且只能改派给自己有权下达的人；作废必须写原因，卡作废后归档。
+- **留言**：看得到卡的人都能留言。留言不改变卡的状态，来回沟通不用再改任务内容。
+- **智能体**：`task_card` 加了三个动作：`issue`（用户明确说要派活时才用，比如「让小王周五前把报价发给客户」）、`comment`、`due`。权限仍由服务器把关：员工只能给自己开卡。
+- `company-ticket` skill 里的路径按代码改正了（原来写的 `inbox`、`_outbox`、`board.json` 早就不用了），并补上了新动作的用法。
+- 证明：`prove-tickets.py` 新增截止、改派（员工不能改派、总监不能跨部门改派、改派后原负责人看不到）、留言（看不到卡的人不能留言）、作废（要写原因、作废后不能再提交）的用例；新增 `prove-task-notify.py`（快到期、超期、每天只发一次、第二天再提醒、每日清单、企业微信只在配好后才发、只发给有对应关系的人，对着一个假的企业微信服务器测）。新加的测试进了 CI。界面改动只做了语法检查，还没在客户端里实际点过。
+
+## 2026.11.18.3
+
+**扩展包可以装在 TDH 上面，不用 fork：公司盘 `_skills` 里的 skill 叠加在自带 skill 上；Caddy 留出扩展路由目录；员工端一个统一入口 `company_ext`**
+- **skill 叠加**：原来公司盘 `_skills` 里只要有一个 skill，员工电脑就只用 `_skills` 里的，自带的 `company-*`（任务卡、知识库等）全部不加载。扩展包想加几个 skill，就只能把自带的也拷一份进去，TDH 一升级，这份拷贝就过期了。现在员工电脑启动时先放自带的 skill，再把 `_skills` 叠上去：新的就加上，同名的整个替换成 `_skills` 里那一份。缓存每次重新生成，两边都删掉的 skill 不会残留；生成到一半失败时，保留上一次的缓存。想保留旧规则（只用公司盘的），在 `_skills` 里放一个 `.replace-bundled` 文件。
+- **扩展路由**：生成的 Caddyfile 在站点里、兜底规则之前，`import D:/dsh/runtime/caddy/ext/*.caddy`。扩展包往这个目录放自己的 `handle /company/<包名>* { ... }`，重跑 setup 也不会被覆盖。setup 会建好这个目录，并放一个只有注释的 `00-placeholder.caddy`。这个目录只有管理员能写。
+- **员工端的统一入口 `company_ext`**：扩展包不给员工端加工具（每个工具定义都会随每次请求发出去）。员工端只多这一个工具：拿这个人的登录令牌，把 JSON POST 到公司站点的 `/company/ext/<包名><路由>`。包名、路由不合规（大写、`..`、不以 `/` 开头）在员工电脑上就拒掉，不发出去；扩展包返回公司盘内的相对路径 `files` 时，补上这台电脑能打开的 `desk_files`。扩展包的 Caddy 路由写成 `handle /company/ext/<包名>/*`，它的 skill 告诉智能体传什么 pack、route、body。
+- 说明：docs/SERVER.md 新增「Extension packs」一节；desk/README.md 里 skills 那一行同步更新。
+- 证明：
+  - 新增 `scripts/prove-sync-skills.js`：覆盖叠加、同名替换（旧文件不残留）、删除后不残留、`.replace-bundled`、没有共享盘几种情况。这份测试在旧代码上会失败。
+  - 新增 `scripts/prove-caddy-ext.py`：`import` 只有一行，位置在站点块里、兜底规则之前，大括号配对；setup 在启动 Caddy 之前就放好了占位文件。
+  - 新增 `scripts/prove-company-ext.mjs`：请求路径和令牌、不合规名字不出员工电脑、非 JSON 回答、扩展包的拒绝原样带回、桌面路径换算。
+  - 三个测试都已加进 CI。
+  - 没用真的 Caddy 跑 `caddy validate`（本机没有 Caddy，Windows 测试机也连不上），要在服务器上验证一次。
+
 ## 2026.11.18.2
 
 **任务卡：一张卡打开的范围不超过本人在共享盘上能打开的；不能自己审批自己的工作；任务板读坏了不会被清空；员工 Windows 电脑上，智能体能把交付物挂上卡**

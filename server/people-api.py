@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import desk_lease  # noqa: E402
 import tickets as ticket_board  # noqa: E402
+import notify  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
 ROSTER = Path(os.environ.get("TDH_ROSTER") or str(ROOT / "runtime" / "roster.json"))
@@ -37,7 +38,12 @@ BOARD = ticket_board.Board(
     Path(os.environ.get("TDH_COMPANY") or str(ROOT / "company")),
 )
 TICKET_ACTIONS = ("issue", "rename", "edit", "submit", "verdict", "withdraw", "archive",
-                  "bind-session", "unbind-session", "attach-file", "detach-file", "upload")
+                  "bind-session", "unbind-session", "attach-file", "detach-file", "upload",
+                  "set-due", "reassign", "cancel", "comment")
+# Due-time reminders and the admins' morning page go out through WeCom when runtime/wecom.env
+# is set up (server/notify.py); every NOTIFY_EVERY seconds, the page once a day from DIGEST_HOUR.
+NOTIFY_EVERY = int(os.environ.get("TDH_NOTIFY_EVERY") or 600)
+DIGEST_HOUR = int(os.environ.get("TDH_DIGEST_HOUR") or 8)
 SEED_ADMIN = "tdh"
 # Largest request body read: a 12 MB task-card upload is about 16 MB as base64.
 BODY_MAX = 17 * 1024 * 1024
@@ -1117,7 +1123,60 @@ class Handler(BaseHTTPRequestHandler):
         self._send(*json_bytes({"ok": False, "error": "not-found"}, 404))
 
 
+def notify_once(now_ms: int | None = None) -> list:
+    """One reminder round: due-soon / overdue notices, then the admins' page if it is time.
+    Returns [(login, kind, ticket, result)] for the proof."""
+    runtime = TOKEN_STORE.parent
+    wc = notify.WeCom(runtime)
+    done = []
+    if not wc.on:
+        return done                      # not set up: do not mark anything as told, nothing went out
+    people = people_by_login()
+    try:
+        with BOARD_MU:
+            notices = ticket_board.collect_notices(BOARD, people, now_ms)
+    except ticket_board.Refused:
+        return done                      # a damaged board: say nothing, change nothing
+    for n in notices:
+        r = wc.send(n["to"], n["text"])
+        notify.log(runtime, n["to"], n["kind"], n["ticket"], r)
+        done.append((n["to"], n["kind"], n["ticket"], r))
+    now = (now_ms or int(time.time() * 1000)) / 1000
+    day, hour = time.strftime("%Y-%m-%d", time.localtime(now)), time.localtime(now).tm_hour
+    state_file = runtime / "notify-state.json"
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if hour >= DIGEST_HOUR and state.get("digest_day") != day:
+        with BOARD_MU:
+            page = ticket_board.digest(BOARD, people, now_ms)
+        if page:
+            for login, row in people.items():
+                if row.get("role") == "admin" and row.get("status") != "disabled":
+                    r = wc.send(login, page)
+                    notify.log(runtime, login, "digest", "-", r)
+                    done.append((login, "digest", "-", r))
+        state["digest_day"] = day
+        try:
+            state_file.write_text(json.dumps(state), encoding="utf-8")
+        except OSError:
+            pass
+    return done
+
+
+def notify_loop() -> None:
+    while True:
+        time.sleep(NOTIFY_EVERY)
+        try:
+            notify_once()
+        except Exception:  # noqa: BLE001 - reminders must never take the people service down
+            pass
+
+
 def main() -> None:
+    if NOTIFY_EVERY > 0:
+        threading.Thread(target=notify_loop, name="notify", daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     sys.stdout.write("LISTEN=%s:%s\n" % (HOST, PORT))
     sys.stdout.flush()

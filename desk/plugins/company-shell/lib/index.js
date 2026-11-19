@@ -1927,6 +1927,7 @@ function cardText(card, sid, people) {
 	const lines = [];
 	lines.push("任务卡 " + card.id + "「" + card.title + "」 状态：" + card.state);
 	lines.push("下达人 " + nameOf(card.from) + " → 负责人 " + nameOf(card.to) + (card.dept ? " · 部门 " + card.dept : ""));
+	if (card.due) lines.push("截止 " + when(card.due) + (card.overdue ? "（已超期）" : ""));
 	lines.push("");
 	lines.push("【任务内容】");
 	lines.push(card.assignment || "（空）");
@@ -1957,6 +1958,12 @@ function cardText(card, sid, people) {
 		const log = owner.personal ? deskPath(owner.personal, root) + "/.dsh-desk/sessions/" + s.id + ".jsonl" : "";
 		lines.push("- " + (s.id === sid ? "【本会话】" : "") + (s.title || s.id) + " · " + nameOf(s.account) + " · " + when(s.at) + (log && s.id !== sid ? "\n  记录：" + log : ""));
 	}
+	const comments = (card.comments || []).slice(-8);
+	if (comments.length) {
+		lines.push("");
+		lines.push("【留言】");
+		for (const c of comments) lines.push("- " + when(c.t) + " " + nameOf(c.who) + "：" + c.text);
+	}
 	const events = (card.events || []).slice(-8);
 	if (events.length) {
 		lines.push("");
@@ -1985,12 +1992,18 @@ function registerTaskCardTool(ctx) {
 			"list: the cards this person can see. " +
 			"update: write the report draft (summary) or, for the issuer, the assignment. Write the full text; it replaces the old one. " +
 			"attach: hang a file that already exists on the card's deliverables. Files saved into the task folder are listed automatically and need no attach. " +
+			"issue: only when the user explicitly asks to give someone a task (\"让小王周五前把报价发给客户\"): to (login), title, assignment, due (YYYY-MM-DD); say back who, what and when. The server refuses what this person may not issue. " +
+			"comment: add a note to the card without changing its state. due: the issuer moves or clears the due day. " +
 			"Never claim the card was submitted or approved; only a person can do that on the card.",
 		parameters: {
 			type: "object",
 			additionalProperties: false,
 			properties: {
-				action: { type: "string", enum: ["get", "list", "update", "attach"] },
+				action: { type: "string", enum: ["get", "list", "update", "attach", "issue", "comment", "due"] },
+				to: { type: "string", description: "issue: the assignee's login (see list / the people on the card)." },
+				title: { type: "string", description: "issue: a short card title." },
+				due: { type: "string", description: "issue / due: YYYY-MM-DD, or empty to clear (due)." },
+				text: { type: "string", description: "comment: the note." },
 				ticket: { type: "string", description: "Card id (tk-...). Optional for get/update/attach: defaults to the card linked to this session." },
 				summary: { type: "string", description: "update: the full report text." },
 				assignment: { type: "string", description: "update: the full assignment text (issuer only)." },
@@ -2016,6 +2029,13 @@ function registerTaskCardTool(ctx) {
 				if (!rows.length) return { ok: true, text: "没有进行中的任务卡。" };
 				return { ok: true, text: rows.map((t) => "- " + t.id + "「" + t.title + "」 " + t.state + " · " + t.from + " → " + t.to + ((t.sessionIds || []).indexOf(sid) >= 0 ? " · 本会话关联" : "")).join("\n") };
 			}
+			if (action === "issue") {
+				const title = String(a.title || "").trim();
+				if (!title || !a.to) return { ok: false, error: "issue needs to and title" };
+				const j = await mailboxCall({ action: "issue", to: String(a.to), title, assignment: String(a.assignment || title), due: String(a.due || "") });
+				if (!j.ok) return { ok: false, error: j.error || "issue-failed" };
+				return { ok: true, text: "已下达任务卡 " + j.ticket + "。\n\n" + cardText(j.card || {}, sid, j.people) };
+			}
 			let ticket = String(a.ticket || "");
 			let card = null;
 			let people = [];
@@ -2035,6 +2055,12 @@ function registerTaskCardTool(ctx) {
 				if (!j.ok) return { ok: false, error: j.error || "update-failed" };
 				return { ok: true, text: "已写进任务卡 " + ticket + "。\n\n" + cardText(j.card || {}, sid, j.people) };
 			}
+			if (action === "comment" || action === "due") {
+				const body = action === "comment" ? { action: "comment", ticket, text: String(a.text || "") } : { action: "set-due", ticket, due: String(a.due || "") };
+				const j = await mailboxCall(body);
+				if (!j.ok) return { ok: false, error: j.error || action + "-failed" };
+				return { ok: true, text: (action === "comment" ? "已留言。" : "截止时间已更新。") + "\n\n" + cardText(j.card || {}, sid, j.people) };
+			}
 			if (action === "attach") {
 				const rel = companyRel(a.path);
 				if (!rel) return { ok: false, error: "attach needs path" };
@@ -2048,6 +2074,66 @@ function registerTaskCardTool(ctx) {
 			card = (j.tickets || []).find((t) => t.id === ticket) || card;
 			if (card == null) return { ok: false, error: "no such card or not visible: " + ticket };
 			return { ok: true, text: cardText(card, sid, people) };
+		},
+	});
+}
+
+// company-ext-v1. One door for extension packs (an industry pack, a site's own tool):
+// POST JSON to /company/ext/<pack>/<route> on the company site with this person's
+// login token, the way the task card and knowledge tools reach the server. A pack
+// adds its Caddy route (runtime/caddy/ext) and its skills (_skills); it adds no tool,
+// so the tool list sent with every request does not grow per pack.
+const EXT_PACK_RE = /^[a-z][a-z0-9-]{1,30}$/;
+const EXT_ROUTE_RE = /^\/[A-Za-z0-9_\/-]{1,80}$/;
+const EXT_TEXT_MAX = 20000;
+
+export async function companyExtCall(args, root) {
+	const a = args || {};
+	const pack = String(a.pack || "");
+	const route = String(a.route || "");
+	if (!EXT_PACK_RE.test(pack)) return { ok: false, error: "pack must be a short lowercase name, like mfg" };
+	if (!EXT_ROUTE_RE.test(route) || route.indexOf("..") >= 0) return { ok: false, error: "route must look like /quote" };
+	const body = Buffer.from(JSON.stringify(a.body && typeof a.body === "object" ? a.body : {}));
+	const out = await proxyCompany("/company/ext/" + pack + route, "POST", body);
+	let j = null;
+	try { j = JSON.parse(out.body.toString("utf8")); } catch { j = null; }
+	if (j == null) return { ok: false, error: "ext " + pack + " answered " + out.status + " (not JSON; is the pack installed?)" };
+	// Files a pack wrote on the company share come back company-relative; add the path this desk opens.
+	if (Array.isArray(j.files)) {
+		const base = root == null ? deskCompanyRoot() : root;
+		j.desk_files = j.files.map((f) => (base ? base + "/" + String(f).replace(/^\/+/, "") : String(f)));
+	}
+	return { ok: out.status < 400 && j.ok !== false, status: out.status, value: j };
+}
+
+function registerExtTool(ctx) {
+	const tools = typeof ctx.get === "function" ? ctx.get("tools") : ctx.tools;
+	if (tools == null || typeof tools.register !== "function") return;
+	tools.register({
+		name: "company_ext",
+		description:
+			"Call a company extension pack installed on the company server (for example pack=mfg: quotes, drawings, production progress). " +
+			"Use it only when a company skill tells you the pack, route and body. The answer is the pack's JSON.",
+		parameters: {
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				pack: { type: "string", description: "Pack name, e.g. mfg." },
+				route: { type: "string", description: "Route inside the pack, e.g. /quote." },
+				body: { type: "object", description: "JSON body the skill describes." },
+			},
+			required: ["pack", "route"],
+		},
+		output: {
+			schema: { type: "object", additionalProperties: true, properties: { ok: { type: "boolean" } } },
+			render(_args, value) {
+				const v = value || {};
+				const text = v.value !== undefined ? JSON.stringify(v.value, null, 1) : String(v.error || "failed");
+				return [{ type: "text", text: (v.ok ? "" : "company_ext: ") + text.slice(0, EXT_TEXT_MAX) }];
+			},
+		},
+		async execute(args) {
+			return companyExtCall(args);
 		},
 	});
 }
@@ -2161,6 +2247,7 @@ export function apply(ctx) {
 	// watch_video (Grok only) and the shop tools (shop_recipe, shop_write) are not registered
 	// (2026-11-18): every tool is sent with every request, and these were dead weight.
 	registerTaskCardTool(ctx);
+	registerExtTool(ctx);
 	addTaskCardSection(ctx);
 	addKouboSection(ctx);
 	addWebSearchTipSection(ctx);

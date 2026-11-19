@@ -95,9 +95,20 @@ jobs:
         run: node desk-lease.js selftest
       - name: Prove knowledge-search recall (right page first, off-topic refused, synonyms)
         run: node scripts/prove-kb-recall.js
+      - name: Prove desk skills cache lays the site's _skills over the bundled skills
+        run: node scripts/prove-sync-skills.js
+      - name: Prove the Caddyfile imports extension routes inside the site
+        run: python scripts/prove-caddy-ext.py
+      - name: Prove the company_ext door (token, path checks, desk paths)
+        run: node scripts/prove-company-ext.mjs
+      - name: Prove the Mac mount script keeps what was written while the share was down
+        if: runner.os != 'Windows'
+        run: bash scripts/prove-mac-mount-aside.sh
       - name: Prove people management, including removing an account for good
         if: runner.os == 'Linux'
         run: python3 scripts/prove-people.py
+      - name: Prove task-card reminders (due soon, overdue, the admins' page, WeCom against a fake)
+        run: python scripts/prove-task-notify.py
       - name: Prove task cards (share reach, no self-approval, damaged board, body limits)
         if: runner.os == 'Linux'
         run: python3 scripts/prove-tickets.py

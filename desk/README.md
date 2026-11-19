@@ -26,7 +26,7 @@ The source of the desk's own parts: everything in a desk pack that this project 
 | `desk-lease.js` | one person, one desk at a time; moves the person's conversations with them (`node desk-lease.js selftest`, CI on Linux and Windows) |
 | `tree-check.js`, `tree-restore.*`, `pack-update-check.js` | check the desk's own files against `BUILD.json` on launch, repair, offer updates |
 | `win-client-mount.ps1`, `win-junction-shim.cjs` / `mac-*.js`, `mac-mount-company.sh` | the company share and the Mac login |
-| `skills/` | the company skills the agent sees (a site's own `_skills` on the share wins when it has any) |
+| `skills/` | the company skills the agent sees; a site's own `_skills` on the share is laid over them (a site skill is added, or replaces the bundled one of the same name; a `.replace-bundled` file there keeps the old share-only rule) |
 | `home/settings.yaml`, `home/profiles/web/*` | the desk profile: persona, tools, the desktop-control server |
 | `mac/presets/` | the Mac agent preset |
 | `NOTICE.txt` | the parts and licenses, shown in the pack |
