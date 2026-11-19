@@ -4,6 +4,13 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.15
+
+**共享盘断一下，对话不再中断**（`company-session-io-retry-v1`、`company-smb-ipv4-v1`）
+- 田总的 Mac 16:07:23 和服务器的共享盘连接断了又重连，旧文件句柄没接上；这时 Agent 正往共享盘上的对话记录里写，报 `EIO`，截回也报 `EIO`，这一轮就停了（`failed to roll back append …`）。
+- 内核补丁：写对话记录遇到连接类错误（`EIO`、`ETIMEDOUT`、`ENOTCONN` 等），每 5 秒重试、最多一分钟：先把文件截回这一批之前的长度，再整批重写。用打过补丁的真实代码模拟断线实测：写到一半断了能恢复且没有残留半截内容；一直不回来就照旧报错，文件完好。
+- Mac 挂公司盘改用服务器的 IPv4 地址。按名字挂时，Mac 在公司里会走 IPv6 链路本地地址（mDNS），Wi-Fi 一重连就断；在加密网络里名字本来就解析到 tailnet 的 IPv4。只接受内网和 tailnet 地址段，代理软件的假 IP（198.18.x）不用。
+
 ## 2026.11.19.14
 
 **任务卡点对点**（`company-ticket-p2p-v1`）
