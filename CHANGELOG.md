@@ -4,6 +4,13 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.3
+
+**彩色站点 Logo 的位置和大小**
+- 首屏：原来只有单色字标才会把旁边的标语和「预览版」藏掉，彩色 Logo 不在这条规则里，所以标语还在，Logo 也被挤在一个 34 像素宽的格子里。现在彩色 Logo 也适用这条规则：首屏只显示 Logo，高 64 像素，居中。
+- 侧栏左上角：彩色 Logo 高 26 像素（原来 20），在侧栏里水平居中，收起侧栏的按钮还留在右边。
+- 单色字标、只有小标、没有 Logo 的站点，显示都和原来一样。
+
 ## 2026.11.19.2
 
 **GPT 订阅额度在客户服务器上能查到了**
