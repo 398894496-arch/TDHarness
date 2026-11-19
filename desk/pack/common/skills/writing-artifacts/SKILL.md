@@ -12,6 +12,6 @@ disable-model-invocation: true
 产物在桌子的产物库（`$DSH_HOME/artifacts`，右侧「图」），不是工作区里的 `artifacts/` 文件夹。打开就是可改的预览，改完点保存。不要再切源码框。
 
 - 一整份 HTML，CSS/JS 写进文件里。iframe 没有外网。
-- 要 `<title>`，`body` 写明背景和字色。
+- 要 `<title>`。配色跟着桌面的浅色/深色外观走：颜色写成 `:root` 上的 CSS 变量，默认浅色，用 `@media (prefers-color-scheme: dark)` 给深色那一套，`body` 的背景和字色用这些变量。不要写死深色底，也不要只做一套。员工明确要深色时再只用深色。
 - 报告就写文章，不要套一层 App 壳。
 - 改同一份就再 `artifact` 同一 `path`。
