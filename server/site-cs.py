@@ -252,8 +252,22 @@ def replace_zip_member(src: Path, dst: Path, name: str, data: bytes, extra=None)
     if n != 1:
         tmp.unlink(missing_ok=True)
         raise SystemExit("replace-zip-member-missing")
-    tmp.replace(dst)
+    swap_in(tmp, dst)
     return n
+
+
+def swap_in(tmp: Path, dst: Path, tries: int = 40, wait: float = 2.0) -> None:
+    """tmp.replace(dst), waiting while Windows refuses: a pack being downloaded right now (Caddy has
+    it open) cannot be replaced. 2026-11-19: a publish died here while a desk was taking the update."""
+    import time
+    for i in range(tries):
+        try:
+            tmp.replace(dst)
+            return
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(wait)
 
 
 def put_zip_dir(src: Path, folder: Path, prefix: str) -> int:
@@ -274,7 +288,7 @@ def put_zip_dir(src: Path, folder: Path, prefix: str) -> int:
             zout.writestr(item, zin.read(item.filename))
         for name, data in files.items():
             zout.writestr(name, data)
-    tmp.replace(src)
+    swap_in(tmp, src)
     return len(files)
 
 
@@ -342,7 +356,7 @@ def put_zip_archive(src: Path, archive: Path, prefix: str, keep: list) -> int:
             zi.create_system = 3  # Unix, so unzip on a Mac applies the mode bits
             zi.external_attr = (stat.S_IFREG | mode) << 16
             zout.writestr(zi, data)
-    tmp.replace(src)
+    swap_in(tmp, src)
     return len(files)
 
 
@@ -492,7 +506,7 @@ def rewrite_zip(src: Path, dst: Path, host: str) -> int:
                 data, k = site_rewrite(name, data, host)
                 n += k
             zout.writestr(item, data)
-    tmp.replace(dst)
+    swap_in(tmp, dst)
     return n
 
 
@@ -601,7 +615,7 @@ def overlay_zip(src: Path, plugins: Path, host: str) -> int:
         missing = [nm for nm in names if not any((h, nm) in present for h in PLUGIN_HOMES)]
         if missing:
             raise SystemExit("overlay-plugin-not-in-pack:" + ",".join(missing))
-    tmp.replace(src)
+    swap_in(tmp, src)
     return n
 
 
@@ -625,7 +639,7 @@ def retarget_zip(src: Path, dst: Path, old: str, new: str) -> int:
                 data, k = pat.subn(new_b, data)
                 n += k
             zout.writestr(item, data)
-    tmp.replace(dst)
+    swap_in(tmp, dst)
     return n
 
 
