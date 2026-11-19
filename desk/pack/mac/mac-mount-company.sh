@@ -101,8 +101,24 @@ if [ ! -f "$PASSFILE" ]; then
 fi
 chmod 600 "$PASSFILE" 2>/dev/null || true
 
+# company-smb-ipv4-v1: mount by the server's IPv4 address. By name, a Mac in the office reaches the server
+# over its IPv6 link-local address (mDNS), which drops whenever the Wi-Fi re-joins; an open conversation log
+# then failed with EIO (2026-11-19, TDH). Over the tailnet the name already resolves to the tailnet IPv4.
+v4_of() {
+  local h="$1" ip=""
+  if [[ "$h" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "$h"; return; fi
+  ip="$(dscacheutil -q host -a name "$h" 2>/dev/null | awk '/^ip_address:/ { print $2; exit }')"
+  # Only an office or tailnet address; a proxy's fake IP (198.18.x) or anything else keeps the name.
+  case "$ip" in
+    10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) ;;
+    *) ip="" ;;
+  esac
+  echo "${ip:-$h}"
+}
+
 try_mount() {
-  "$NODE" "$SMB_JS" mount "$1" "$SHARE" "$MNT" "$SMB_USER" "$PASSFILE"
+  "$NODE" "$SMB_JS" mount "$(v4_of "$1")" "$SHARE" "$MNT" "$SMB_USER" "$PASSFILE"
 }
 
 # Password stays in the 600 file. Do not print it. Strip it from mount stderr.
