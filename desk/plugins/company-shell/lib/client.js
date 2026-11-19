@@ -569,13 +569,22 @@ window.__ModuleLoader__.load({
 			".cs-side .qDHVXG_iconButton { width: 28px; height: 28px; }",
 			// Hero fish sits in a 34px grid track. A wordmark is wider (often ~6:1), so
 			// widen that first column when our mark is the occupant.
-			".pXSMma_headline:has([data-company-shell=\"brand-wordmark\"]) {",
-			"  grid-template-columns: auto !important;",
+			".pXSMma_headline:has([data-company-shell=\"brand-wordmark\"]),",
+			".pXSMma_headline:has([data-company-shell=\"brand-wordmark-color\"]) {",
+			"  grid-template-columns: auto !important; justify-content: center !important;",
 			"}",
 			".pXSMma_headline:has([data-company-shell=\"brand-wordmark\"]) .pXSMma_headlineText,",
-			".pXSMma_headline:has([data-company-shell=\"brand-wordmark\"]) .pXSMma_previewBadge {",
+			".pXSMma_headline:has([data-company-shell=\"brand-wordmark\"]) .pXSMma_previewBadge,",
+			".pXSMma_headline:has([data-company-shell=\"brand-wordmark-color\"]) .pXSMma_headlineText,",
+			".pXSMma_headline:has([data-company-shell=\"brand-wordmark-color\"]) .pXSMma_previewBadge {",
 			"  display: none !important;",
 			"}",
+			// A coloured wordmark in the sidebar head: centred over the sidebar (the toggle keeps its corner).
+			".cs-side-head:has([data-company-shell=\"brand-wordmark-color\"]) { position: relative; height: 56px; margin-bottom: 4px; }",
+			".cs-side-head:has([data-company-shell=\"brand-wordmark-color\"]) .cs-side-brand {",
+			"  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);",
+			"}",
+			".cs-side-head:has([data-company-shell=\"brand-wordmark-color\"]) .cs-icon-btn { position: relative; z-index: 1; }",
 			".pXSMma_headline:has([data-company-shell=\"brand-text\"]) {",
 			"  grid-template-columns: auto auto !important;",
 			"}",
@@ -3073,11 +3082,11 @@ window.__ModuleLoader__.load({
 				if (collapsed) props.toggleSidebar();
 				props.startSession();
 			}
-			const brandMark = React.createElement(P.Tooltip, { label: "新对话", delayMs: 500 },
+			const brandMark = React.createElement(P.Tooltip, { label: "新会话", delayMs: 500 },
 				React.createElement("button", {
 					className: "cs-side-brand",
 					type: "button",
-					"aria-label": "新对话",
+					"aria-label": "新会话",
 					onClick: openFreshSession
 				},
 					safeSlot(function () {
@@ -3288,7 +3297,9 @@ window.__ModuleLoader__.load({
 					toggleBtn
 				),
 
-				React.createElement("div", { className: "cs-side-new" },
+				// Wide: the logo itself opens a new session (brandMark), so no separate button.
+				// Collapsed: no logo is shown, so the icon stays.
+				wide ? null : React.createElement("div", { className: "cs-side-new" },
 					React.createElement(P.Tooltip, { label: "新会话", delayMs: 500, disabled: wide },
 						React.createElement("button", {
 							type: "button",
@@ -4539,15 +4550,20 @@ window.__ModuleLoader__.load({
 			const w = compact ? h : Math.round(h * (SITE_BRAND_RATIO || 1));
 			if (SITE_BRAND_COLOR) {
 				// Not brand-mark / brand-wordmark: those get a background colour painted through the mask.
+				// A coloured logo is the whole headline on the hero (no tagline beside it), so it is
+				// drawn larger there, and a little larger (centred) in the sidebar.
+				const ch = compact ? h : (props.size >= 30 ? 64 : 34);
+				const cw = compact ? h : Math.round(ch * (SITE_BRAND_RATIO || 1));
 				return React.createElement("span", {
 					className: props.className,
-					"data-company-shell": "brand-color",
+					"data-company-shell": compact ? "brand-mark-color" : "brand-wordmark-color",
 					role: "img",
 					"aria-label": SITE_BRAND_LABEL,
 					style: {
 						display: "inline-block",
-						width: w + "px",
-						height: h + "px",
+						flex: "none",
+						width: cw + "px",
+						height: ch + "px",
 						backgroundImage: "url(" + src + ")",
 						backgroundRepeat: "no-repeat",
 						backgroundPosition: "center",
