@@ -104,6 +104,26 @@ if (Test-Path -LiteralPath $CuaCur) {
   Write-Output 'CUA_DRIVER_SKIP=not-fetched (run server\fetch-cua-driver.ps1)'
 }
 
+# 2d. Browser (company-opencli-v2): the OpenCLI bundle fetch-opencli.ps1 built (vendor\opencli\current.txt
+#     names the version) replaces opencli\ in both packs: the package with its dependencies and the
+#     Chrome extension of the same release.
+$OclRoot = 'D:\dsh\runtime\vendor\opencli'
+$OclCur = Join-Path $OclRoot 'current.txt'
+if (Test-Path -LiteralPath $OclCur) {
+  $ov = (Get-Content -LiteralPath $OclCur -Raw).Trim()
+  $odir = Join-Path $OclRoot ($ov + '\opencli')
+  if (-not (Test-Path -LiteralPath (Join-Path $odir 'node_modules\@jackwener\opencli\dist\src\main.js'))) { throw ('opencli-bundle-missing ' + $odir) }
+  foreach ($name in 'CompanyDesk-win.zip', 'CompanyDesk-mac.zip') {
+    $zip = Join-Path $Dist $name
+    if (-not (Test-Path -LiteralPath $zip)) { continue }
+    $o = & $py $SitePy --site $SiteYml put-zip-archive --src $zip --archive $odir --name 'CompanyDesk/opencli/' --keep 'node_modules/,extension/,package.json'
+    if ($LASTEXITCODE -ne 0) { throw ('opencli-put-failed-' + $name) }
+    Write-Output ('OPENCLI ' + $ov + ' ' + $name + ' ' + $o)
+  }
+} else {
+  Write-Output 'OPENCLI_SKIP=not-fetched (run server\fetch-opencli.ps1)'
+}
+
 # 3. TDHarness.exe carries the build mark and the site address; Setup.exe carries the site address
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Server 'compile-apphost.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'compile-apphost-failed' }

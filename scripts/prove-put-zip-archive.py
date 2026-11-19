@@ -75,4 +75,18 @@ with tempfile.TemporaryDirectory() as d:
     r = run("put-zip-archive", "--src", str(pack), "--archive", str(wz), "--name", "CompanyDesk/cua-driver/", "--keep", "tool.exe,missing.exe")
     if r.returncode == 0 or "put-zip-archive-missing:missing.exe" not in (r.stdout + r.stderr):
         fail("a listed path the archive lacks did not fail")
+    # A folder laid out as the pack wants it (OpenCLI: node_modules + extension), taken as is.
+    folder = d / "opencli"
+    (folder / "node_modules" / "@x" / "cli").mkdir(parents=True)
+    (folder / "node_modules" / "@x" / "cli" / "main.js").write_text("console.log(1)")
+    (folder / "extension").mkdir()
+    (folder / "extension" / "manifest.json").write_text('{"version":"1.0.27"}')
+    (folder / "README.local").write_text("not listed")
+    r = run("put-zip-archive", "--src", str(pack), "--archive", str(folder), "--name", "CompanyDesk/opencli/", "--keep", "node_modules/,extension/")
+    if r.returncode != 0 or "PUT_ARCHIVE=2" not in r.stdout:
+        fail("folder put: " + r.stdout + r.stderr)
+    with zipfile.ZipFile(pack) as z:
+        got = sorted(n for n in z.namelist() if n.startswith("CompanyDesk/opencli/"))
+        if got != ["CompanyDesk/opencli/extension/manifest.json", "CompanyDesk/opencli/node_modules/@x/cli/main.js"]:
+            fail("folder put left " + ",".join(got))
 print("PUT_ZIP_ARCHIVE_PROVE_OK=1")

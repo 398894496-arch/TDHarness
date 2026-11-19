@@ -4,6 +4,29 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.9
+
+**YouTube 搜索修好；OpenCLI 升到 2.0.3；内核：工具参数被截断时不再执行**
+- **YouTube**（`company-search-youtube-proxy-v1`）：
+  - 原因：Agent Reach 给自己设了 `NO_PROXY=localhost,…`（免得连本机服务时走代理）。Python 的规则是环境变量里只要有任何 `*_PROXY`，就不再读系统代理，于是 yt-dlp 改成直连。youtube.com 在国内会被解析到别家的地址，连接停在 SynSent。服务器上抓到它卡在连 `157.240.7.20:443`。
+  - 修法：YouTube、X、Reddit 这几个国内连不上的站点，搜索和读链接都由网关明确交给出口代理：`gateway.env` 里的 `GW_SEARCH_PROXY`，没配就用 CLIProxyAPI 已经在用的那个。国内站点照旧直连。
+  - 网关原来那个 YouTube 通道改用 Agent Reach 带的 yt-dlp，原来它在系统里找不到 yt-dlp。
+  - 服务器实测：直接用 yt-dlp 3 秒搜到，第二条是客户自己的视频。
+- **OpenCLI 2.0.3**（`company-opencli-v2`）：
+  - 客户端包里的 OpenCLI 从 1.8.8 换成 2.0.3，扩展从 1.0.24 换成配套的 1.0.27（SHA-256 对过 GitHub 上登记的值）。
+  - 服务器用 `server/fetch-opencli.ps1` 准备好这份包（版本钉死），发布时换进两个客户端包的 `opencli/`。`put-zip-archive` 现在也能直接接受一个目录。
+  - 跟着 2.0 的变化改了几处：
+    - 会话名改成 `--session`：网店采集拼的命令、员工端提示、`company-web` 技能都改了；
+    - 结果包成 `{ok, data}`：网店采集读 eval 结果时先拆开，同时兼容 1.x；
+    - `doctor` 改成读 JSON 里的 `extensionConnected` / `extensionOutdated`。扩展是旧版时，带员工在扩展页点一下刷新。
+  - 员工电脑自己安装时也钉在 2.0.3，不会装到以后的 3.0。
+- **工具参数严格解析**（`company-toolargs-strict-v1`，Harness 审查提的问题）：
+  - 原来：内核的 openai-completions 适配器收尾工具调用时，参数解析不了会去「补全没写完的 JSON」，再不行给 `{}`。回答在工具调用中途被截断时，工具就带着半截参数执行，比如写文件只写进去一半。
+  - 现在：能严格解析，或者只修字符串里的不规范写法就能解析，照常执行；只能靠补全才解析出来，这一轮按出错结束，报错写明是哪个工具，什么都不执行。参数为空照旧是 `{}`。
+  - 做成站点补丁（`server/site-patches/patch_toolargs_strict.py`），每次发布都会打到包里的内核文件上。
+  - 新增 `scripts/prove-toolargs-strict.mjs`：在真实内核上跑完整参数、字符串里有裸换行、没有参数、被截断四种情况。没打补丁时，被截断的那次会把半截内容交出去执行。
+- **还没实测**：OpenCLI 2.0.3 在员工电脑的浏览器里实际点网页、网店采集走一遍；工具参数被截断这种情况要等它在真实对话里碰到。
+
 ## 2026.11.19.8
 
 **图片默认直接显示在对话里，按原始比例，不再被拉扁**

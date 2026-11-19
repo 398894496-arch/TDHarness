@@ -165,6 +165,17 @@ export function buildBatchExpr(items) {
 	);
 }
 
+/**
+ * OpenCLI 2.x wraps every result: { ok: true, data } or { ok: false, error }. 1.x printed the
+ * value itself. Give the value either way; a 2.x failure is undefined (company-opencli-v2).
+ */
+export function cliValue(v) {
+	if (v && typeof v === "object" && !Array.isArray(v) && typeof v.ok === "boolean" && ("data" in v || "error" in v)) {
+		return v.ok ? v.data : undefined;
+	}
+	return v;
+}
+
 /** opencli prints warnings before its JSON. Take the first balanced block. */
 export function extractJson(text) {
 	const s = String(text || "");
@@ -355,9 +366,11 @@ export function ensurePageWebview(deps, bridge, opts) {
 	};
 }
 
-function opencliArgv(profile, session, rest) {
+// OpenCLI 2.x: the page session is an option (`browser --session <name> <command>`), no longer
+// the word after `browser`.
+export function opencliArgv(profile, session, rest) {
 	const head = profile ? ["--profile", profile] : [];
-	return [...head, "browser", session, ...rest];
+	return [...head, "browser", "--session", session, ...rest];
 }
 
 function runCli(deps, bin, argv, timeout, cwd) {
@@ -379,7 +392,7 @@ export function ensurePage(deps, bin, opts) {
 	const probe = "({u:location.href,m:!!(window.lib&&window.lib.mtop)})";
 	const look = () => {
 		const r = runCli(deps, bin, opencliArgv(profile, session, ["eval", probe]), 60000, cwd);
-		const v = extractJson(r.out);
+		const v = cliValue(extractJson(r.out));
 		return v && typeof v === "object" ? v : undefined;
 	};
 	let seen = look();
@@ -582,7 +595,7 @@ export function runShopRecipe(args, deps = {}) {
 	}
 
 	const r = runCli(deps, bin, opencliArgv(profile, session, ["eval", expr]), 90000, cwd);
-	const parsed = extractJson(r.out);
+	const parsed = cliValue(extractJson(r.out));
 	if (r.status !== 0 || parsed === undefined) {
 		return fail("eval-failed", {
 			...common,

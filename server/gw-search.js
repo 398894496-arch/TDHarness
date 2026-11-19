@@ -28,6 +28,18 @@ const YT_MS = 8000;
 const REACH_MS = 8000;
 const REACH = process.env.TDH_AGENT_REACH || 'D:\\dsh\\tools\\bin\\agent-reach.exe';
 const REACH_HOME = process.env.TDH_AGENT_REACH_HOME || 'D:\\dsh\\runtime\\agent-reach-home';
+// yt-dlp: the one Agent Reach installed (D:\\dsh\\tools\\uv-tools\\agent-reach\\Scripts), else PATH.
+const YT_DLP = process.env.TDH_YT_DLP || 'D:\\dsh\\tools\\uv-tools\\agent-reach\\Scripts\\yt-dlp.exe';
+// company-search-youtube-proxy-v1: youtube.com does not resolve to YouTube from inside China, and a
+// direct connect hangs. Agent Reach sets NO_PROXY for its own loopback calls, and with any *_PROXY
+// variable set Python stops reading the system proxy, so yt-dlp went direct. YouTube calls get the
+// proxy named here; sites inside China stay direct.
+const OUT_PROXY_CHANNELS = new Set(['youtube', 'twitter', 'reddit']);
+const OUT_PROXY_HOSTS = /(?:^|\.)(?:youtube\.com|youtu\.be|x\.com|twitter\.com|reddit\.com)$/i;
+function outProxy(ctx) {
+  const p = ctx && typeof ctx.searchProxy === 'function' ? ctx.searchProxy() : '';
+  return p && /^https?:\/\/[^\s]+$/i.test(p) ? p : '';
+}
 
 function mergeSignal(parent, ms) {
   const t = AbortSignal.timeout(ms);
@@ -344,11 +356,13 @@ async function wikiSearch(upFetch, query, n, signal) {
   return sources;
 }
 
-function ytSearch(query, n, signal) {
+function ytSearch(query, n, signal, proxy) {
   return new Promise((resolve, reject) => {
-    const child = spawn('yt-dlp', [
-      '--flat-playlist', '--no-warnings', '-J', 'ytsearch' + n + ':' + query
-    ], { windowsHide: true });
+    let bin = 'yt-dlp';
+    try { if (fs.statSync(YT_DLP).isFile()) bin = YT_DLP; } catch {}
+    const child = spawn(bin, [
+      '--flat-playlist', '--no-warnings', '-J', '--socket-timeout', '6'
+    ].concat(proxy ? ['--proxy', proxy] : []).concat(['ytsearch' + n + ':' + query]), { windowsHide: true });
     let out = '';
     let err = '';
     const fail = (msg) => {
@@ -397,10 +411,11 @@ function reachOn() {
   try { return fs.statSync(REACH).isFile(); } catch { return false; }
 }
 
-function reachCall(args, ms, signal) {
+function reachCall(args, ms, signal, proxy) {
   return new Promise((resolve, reject) => {
     if (!reachOn()) return reject(new Error('reach-missing'));
     const env = Object.assign({}, process.env, { HOME: REACH_HOME, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' });
+    if (proxy) { env.HTTPS_PROXY = proxy; env.HTTP_PROXY = proxy; }
     // A .js stand-in (the proof) runs under this Node: Windows will not exec a .cmd without a shell.
     const js = /\.js$/i.test(REACH);
     const child = execFile(js ? process.execPath : REACH, js ? [REACH].concat(args) : args, { env, timeout: ms, maxBuffer: 8 << 20, windowsHide: true, encoding: 'utf8' }, (e, out) => {
@@ -417,8 +432,9 @@ function reachCall(args, ms, signal) {
 }
 
 function reachSearch(channel) {
-  return async (upFetch, q, n, signal) => {
-    const j = await reachCall([channel, 'search', q, '--limit', String(n)], REACH_MS, signal);
+  return async (upFetch, q, n, signal, ctx) => {
+    const proxy = OUT_PROXY_CHANNELS.has(channel) ? outProxy(ctx) : '';
+    const j = await reachCall([channel, 'search', q, '--limit', String(n)], REACH_MS, signal, proxy);
     const out = [];
     for (const it of Array.isArray(j.items) ? j.items : []) {
       if (!it || !it.url) continue;
@@ -434,12 +450,12 @@ function reachSearch(channel) {
 // Links Agent Reach reads by their site (it knows how to get the content out of these).
 const REACH_READ = /^(?:www\.)?(?:github\.com|bilibili\.com|b23\.tv|youtube\.com|youtu\.be|v2ex\.com|x\.com|twitter\.com|reddit\.com|xiaohongshu\.com|xueqiu\.com)$/i;
 
-async function reachRead(url) {
+async function reachRead(url, ctx) {
   let host = '';
   try { host = new URL(url).hostname; } catch { return null; }
   if (!REACH_READ.test(host) || !reachOn()) return null;
   try {
-    const j = await reachCall(['read', url], FETCH_MS, null);
+    const j = await reachCall(['read', url], FETCH_MS, null, OUT_PROXY_HOSTS.test(host) ? outProxy(ctx) : '');
     const it = Array.isArray(j.items) && j.items[0];
     const text = it && (it.text || it.title) ? [it.title, it.author, it.text].filter(Boolean).join('\n\n') : '';
     if (!text) return null;
@@ -464,7 +480,7 @@ const RUNNERS = {
   github: githubSearch,
   bilibili: biliSearch,
   wikipedia: wikiSearch,
-  youtube: (upFetch, q, n, signal) => ytSearch(q, n, signal)
+  youtube: (upFetch, q, n, signal, ctx) => ytSearch(q, n, signal, outProxy(ctx))
 };
 
 function msOf(id) {
@@ -476,7 +492,7 @@ async function runOne(id, ctx, query, n, signal) {
   if (signal && signal.aborted) throw new Error('engine-timeout');
   const run = RUNNERS[id];
   if (!run) throw new Error('unknown');
-  return run(ctx.upFetch, query, n, signal);
+  return run(ctx.upFetch, query, n, signal, ctx);
 }
 
 async function runChannels(ctx, channels, query, n) {
@@ -861,7 +877,7 @@ async function handleFetch(res, body, ctx) {
   try {
     // A link on GitHub, Bilibili, YouTube and the like: Agent Reach reads it by its site. Those
     // hosts are public by name, so the private-address guard below has nothing to add for them.
-    const out = (await reachRead(url)) || await runFetch(ctx.upFetch, url);
+    const out = (await reachRead(url, ctx)) || await runFetch(ctx.upFetch, url);
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify(out));
   } catch (e) {

@@ -1412,7 +1412,10 @@ const server = http.createServer(async (req, res) => {
       caller: callerOf(req) || 'desk',
       note: (line) => { try { console.log(line); } catch (e) { /* log only */ } },
       // Deep search through the ChatGPT subscription's own web_search (company-search-route-v2).
-      hasGptSearch: () => gptSubOn(env) && keyOk(env.OPENAI_API_KEY)
+      hasGptSearch: () => gptSubOn(env) && keyOk(env.OPENAI_API_KEY),
+      // Sites blocked from inside China (YouTube, X, Reddit) go out through this proxy: GW_SEARCH_PROXY
+      // in gateway.env, else the one CLIProxyAPI already uses (company-search-youtube-proxy-v1).
+      searchProxy: () => String(env.GW_SEARCH_PROXY || '').trim() || quotaProxy(readCodexAuth(), env)
     };
     if (url === '/search') await gwSearch.handleSearch(res, body, ctx);
     else await gwSearch.handleFetch(res, body, ctx);
