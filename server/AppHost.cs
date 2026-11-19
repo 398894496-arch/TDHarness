@@ -611,7 +611,12 @@ internal static class AppHost
             MessageBoxButtons.OK, MessageBoxIcon.Information);
         try
         {
-            RestoreProduct();
+            if (!RestoreProductSettled(null, null))
+            {
+                MessageBox.Show("服务器正在发布新版本，这次先用现在这版登录，下次打开再更新。", "TDHarness",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
         }
         catch (Exception ex)
         {
@@ -822,8 +827,43 @@ internal static class AppHost
         lock (errBuf) { se = errBuf.ToString(); }
         Log("tree-restore " + so.Replace("\r", " ").Replace("\n", " | ") + " " + se);
         if (p.ExitCode != 0 || so.IndexOf("TREE_RESTORE_OK=1") < 0)
+        {
+            if ((so + se).IndexOf("restore-verify-failed", StringComparison.Ordinal) >= 0)
+                throw new Exception(VerifyMismatch);
             throw new Exception("tree-restore-failed");
+        }
         SyncDeskHome();
+    }
+
+    // company-update-settle-v1：下载的包和服务器的 version.json 对不上（服务器正在发版，或者下载中途包换了），
+    // 不算更新失败：等一分钟、从头重下一次；还对不上就这次先用现在这版，下次打开再更新。
+    // 2026-11-19：一晚连发几次版，一台正在更新的电脑撞上了，弹了「更新没完成（tree-restore-failed）」。
+    internal const string VerifyMismatch = "tree-restore-verify";
+
+    // 返回 true = 装好了；false = 服务器在发版，这次没更新（不是错误）。其他失败照旧抛出。
+    internal static bool RestoreProductSettled(Action<string> onProgress, Action onWait)
+    {
+        for (var round = 1; round <= 2; round++)
+        {
+            try
+            {
+                RestoreProduct(onProgress);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (ex.Message != VerifyMismatch) throw;
+                Log("update-verify-mismatch round " + round);
+            }
+            if (round == 2) break;
+            if (onWait != null)
+            {
+                try { onWait(); } catch { }
+            }
+            Thread.Sleep(60000);
+        }
+        Log("update-deferred server-publishing");
+        return false;
     }
 
     internal static void StopDeskNode()
@@ -1721,18 +1761,28 @@ internal sealed class ShellForm : Form
     {
         SetLoginEnabled(false);
         ShowNote(first, false);
+        bool installed;
         try
         {
-            AppHost.RestoreProduct(delegate(string line)
+            installed = AppHost.RestoreProductSettled(delegate(string line)
             {
                 var text = AppHost.ProgressText(line);
                 if (text.Length > 0) ShowNote(text, false);
+            }, delegate
+            {
+                ShowNote("服务器正在发布新版本，一分钟后重新下载…", false);
             });
         }
         catch (Exception ex)
         {
             AppHost.Log("update-restore-fail " + ex.Message);
             ShowNote("更新没完成（" + ex.Message + "），先用现在这版登录。", true);
+            SetLoginEnabled(true);
+            return;
+        }
+        if (!installed)
+        {
+            ShowNote("服务器正在发布新版本，这次先用现在这版登录，下次打开再更新。", false);
             SetLoginEnabled(true);
             return;
         }

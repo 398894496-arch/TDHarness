@@ -137,6 +137,13 @@ def main():
                 zi.external_attr = 0o100755 << 16
                 zz.writestr(zi, "old")
                 zz.writestr("CompanyDesk/plugins/dsh-artifact/package.json", "{}")
+                if plat == "mac":
+                    # As a publish on the Windows server wrote it before company-zip-unix-mode-v1:
+                    # "made by MS-DOS", so unzip on a Mac ignored the 755.
+                    dos = zipfile.ZipInfo("CompanyDesk/mac-join-off-lan.sh")
+                    dos.create_system = 0
+                    dos.external_attr = 0o755 << 16
+                    zz.writestr(dos, "old")
                 zz.writestr("CompanyDesk/skills/skills/company-web/SKILL.md", "stale nested copy")
                 for home in ("CompanyDesk/plugins/", "CompanyDesk/home/profiles/web/node_modules/"):
                     for n in names:
@@ -165,6 +172,11 @@ def main():
                     fail("overlay put the other platform's files in the %s pack: %s" % (plat, sorted(other & got)[:3]))
                 if (zz.getinfo("CompanyDesk/" + starter).external_attr >> 16) != 0o100755:
                     fail("overlay lost the mode bits of " + starter)
+                for i in zz.infolist():
+                    if i.filename.endswith((".sh", ".command")) and i.filename.count("/") == 1:
+                        if i.create_system != 3 or (i.external_attr >> 16) != 0o100755:
+                            fail("%s is not a Unix 755 file in the %s pack (system %d, mode %o): a Mac drops the execute bit"
+                                 % (i.filename, plat, i.create_system, i.external_attr >> 16))
                 shell = zz.read("CompanyDesk/plugins/company-shell/lib/index.js")
                 if b"{{TDH_HOST}}" in shell or b"proof.local" not in shell:
                     fail("overlay did not write the site address into company-shell")

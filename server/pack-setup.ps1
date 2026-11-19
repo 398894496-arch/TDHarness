@@ -5,7 +5,8 @@ $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
 if ($env:TDH_REPO) { $Repo = $env:TDH_REPO }
 $Server = Join-Path $Repo 'server'
-$Dist = 'D:\dsh\client-dist'
+# The publish works in a staging folder (company-publish-staged-v1) and names it in TDH_DIST.
+$Dist = if ($env:TDH_DIST) { $env:TDH_DIST } else { 'D:\dsh\client-dist' }
 $SiteYml = if ($env:TDH_SITE) { $env:TDH_SITE } else { 'D:\dsh\site.yml' }
 $StubCs = Join-Path $Server 'SetupStub.cs'
 $TailnetCs = Join-Path $Server 'TailnetJoin.cs'

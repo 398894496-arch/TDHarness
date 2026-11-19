@@ -53,6 +53,10 @@ PS1_NEW = """  # Resume + retry. @@resume-download
   $done = [long]0
   $total = [long]-1
   $attempt = 0
+  # company-resume-if-range-v1: resume only into the same file. If-Range makes the server answer a resume
+  # with the whole new file when the pack was replaced meanwhile (a publish), instead of splicing its
+  # second half onto the old one's first.
+  $same = ''
   $tick = [Diagnostics.Stopwatch]::StartNew()
   Progress 'download' 0 0
   while ($true) {
@@ -61,10 +65,17 @@ PS1_NEW = """  # Resume + retry. @@resume-download
       $req.Method = 'GET'
       $req.Timeout = 60000
       $req.ReadWriteTimeout = 120000
-      if ($done -gt 0) { $req.AddRange($done) }
+      if ($done -gt 0) {
+        $req.AddRange($done)
+        if ($same) { $req.Headers.Add('If-Range', $same) }
+      }
       $resp = $req.GetResponse()
       try {
         if ($done -gt 0 -and [int]$resp.StatusCode -ne 206) { $done = [long]0 }
+        if ($done -eq 0) {
+          $same = [string]$resp.Headers['ETag']
+          if (-not $same) { $same = [string]$resp.Headers['Last-Modified'] }
+        }
         if ($total -lt 0 -or $done -eq 0) { $total = $done + [long]$resp.ContentLength }
         $mode = if ($done -gt 0) { [IO.FileMode]::Append } else { [IO.FileMode]::Create }
         $src = $resp.GetResponseStream()

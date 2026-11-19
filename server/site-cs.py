@@ -274,6 +274,45 @@ def swap_in(tmp: Path, dst: Path, tries: int = 240, wait: float = 5.0) -> None:
             time.sleep(wait)
 
 
+LIVE_LAST = ("version.json", "version.sig")
+
+
+def go_live(stage: Path, live: Path) -> int:
+    """company-publish-staged-v1: move a publish's finished files from `stage` into the download folder.
+    Everything except version.json/version.sig goes first (new delta packs, Setup, the packs: each waits
+    while a desk is still downloading the old one), then version.json and version.sig together, so the
+    packs and version.json desks see disagree for moments, not for the whole publish. Delta packs no
+    longer listed in the new version.json are removed afterwards."""
+    files = sorted(p for p in stage.rglob("*") if p.is_file())
+    first = [p for p in files if p.relative_to(stage).as_posix() not in LIVE_LAST]
+    last = [stage / n for n in LIVE_LAST if (stage / n).is_file()]
+    n = 0
+    for p in first + last:
+        dst = live / p.relative_to(stage)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        swap_in(p, dst)
+        n += 1
+        sys.stdout.write("LIVE %s\n" % p.relative_to(stage).as_posix())
+    ver = live / "version.json"
+    deltas = live / "delta"
+    if ver.is_file() and deltas.is_dir():
+        doc = json.loads(ver.read_text(encoding="utf-8-sig"))
+        keep = set()
+        for row in doc.values():
+            if isinstance(row, dict):
+                for d in (row.get("deltas") or {}).values():
+                    if isinstance(d, dict) and isinstance(d.get("file"), str):
+                        keep.add(d["file"].replace("\\", "/").split("/")[-1])
+        for f in deltas.glob("*.zip"):
+            if f.name not in keep:
+                try:
+                    f.unlink()
+                    sys.stdout.write("LIVE_PRUNED delta/%s\n" % f.name)
+                except OSError:
+                    pass  # still being downloaded; the next publish removes it
+    return n
+
+
 def put_zip_dir(src: Path, folder: Path, prefix: str) -> int:
     """Add or replace every file of `folder` under `prefix` (e.g. CompanyDesk/vendor/); the rest is copied as is."""
     import zipfile
@@ -626,14 +665,18 @@ def overlay_zip(src: Path, plugins: Path, host: str) -> int:
         zi = zipfile.ZipInfo(name, date_time=(2026, 10, 11, 0, 0, 0))
         zi.compress_type = zipfile.ZIP_DEFLATED
         old = was.get(name)
-        if old is not None:
+        if old is not None and old.create_system == 3 and (old.external_attr >> 16) & 0o170000:
             zi.external_attr, zi.create_system = old.external_attr, old.create_system
         else:
             # A regular Unix file (0o100000 = S_IFREG), made by Unix (3): without create_system=3 a zip
             # written on the Windows server says "MS-DOS" and unzip/ditto on a Mac drop the mode, so a new
-            # script (mac-join-off-lan.sh, 2026-11-19) arrived without its execute bit.
+            # script (mac-join-off-lan.sh, 2026-11-19) arrived without its execute bit. An entry an earlier
+            # publish wrote that way is repaired here too, keeping its permission bits.
+            mode = ((old.external_attr >> 16) & 0o777) if old is not None else 0
+            if not mode:
+                mode = 0o755 if name.endswith((".sh", ".command")) else 0o644
             zi.create_system = 3
-            zi.external_attr = (0o100000 | (0o755 if name.endswith((".sh", ".command")) else 0o644)) << 16
+            zi.external_attr = (0o100000 | mode) << 16
         zout.writestr(zi, data)
 
     with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
@@ -743,7 +786,7 @@ def main() -> None:
     ap.add_argument("--site", required=True)
     ap.add_argument(
         "cmd",
-        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip", "put-zip-archive", "mac-app-zip"),
+        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip", "put-zip-archive", "mac-app-zip", "go-live"),
     )
     ap.add_argument("--out")
     ap.add_argument("--src")
@@ -802,6 +845,12 @@ def main() -> None:
             raise SystemExit("put-zip needs --src --file <folder> --name <prefix in the zip>")
         n = put_zip_dir(Path(args.src), Path(args.file), args.name)
         sys.stdout.write("PUT=%s\n" % n)
+        return
+    if args.cmd == "go-live":
+        if not args.src or not args.out:
+            raise SystemExit("go-live needs --src <stage folder> --out <download folder>")
+        n = go_live(Path(args.src), Path(args.out))
+        sys.stdout.write("GO_LIVE_FILES=%s\n" % n)
         return
     if args.cmd == "mac-app-zip":
         if not args.src or not args.out or not args.file:

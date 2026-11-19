@@ -17,6 +17,13 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 - 服务器（`server/tailnet-site.ps1`、发布 2b 步）：多准备一份 `vendor-mac\`（入网密钥、服务器 tailnet 地址、Tailscale 官方 Mac 安装包），放进 Mac 包的 `vendor/`。DMG 里的 app 带着这份包，在家第一次装也能入网。
 - Windows（`company-setup-tailnet-always-v1`）：下载页的 Windows 按钮改给带着入网文件的安装包（`TDHarness-Setup-remote.exe`，下载下来仍叫 `TDHarness-Setup.exe`）。以前它在公司里能连上服务器就跳过入网，现在在公司里也先入网（Windows 问「是否允许更改」时点「是」），入网没成也照样装完，`TDHarness.exe` 启动时会再问；已在公司 tailnet 里的电脑不弹任何东西。
 - **修了一个让已装电脑永远入不了网的问题**（`company-tailnet-vendor-v1`）：`vendor/`（入网文件所在目录）不在客户端更新的范围里，已经装好的电脑更新时从来拿不到它，所以启动时的入网检查一直跳过（服务器上的 tailnet 里一台员工电脑都没有）。现在 `vendor/` 在 Windows 和 Mac 的更新范围里，`pack-update-check.js` 发现本机缺 `vendor/` 时也会补一次完整更新（增量包不带没变过的文件）。
+**发版期间员工电脑不再更新失败**
+- 一台 Windows 正在更新时撞上了发版，弹出「更新没完成（tree-restore-failed）」：发版要十几分钟，一步步直接改下载目录里的包，`version.json` 到最后才跟上，这期间下载的包验签对不上。今晚连发几次版，撞上的概率很高。
+- 发版先在旁边做好（`company-publish-staged-v1`）：所有步骤都在 `D:\dsh\client-stage` 里做，最后一步 `site-cs.py go-live` 才放进下载目录，`version.json` 和签名最后放，包和 `version.json` 对不上的时间从十几分钟缩到几秒。发版中途失败，下载目录原封不动。`compile-apphost.ps1`、`pack-setup.ps1` 用 `TDH_DIST` 指向暂存目录。
+- 续传只接同一个文件（`company-resume-if-range-v1`）：续传时带 `If-Range`，服务器上的包换过了就从头给新文件，不再把新包的后半段拼到旧包的前半段上（在服务器上实测：同一文件 206 续传，换过的文件 200 整个给）。
+- Windows 客户端（`company-update-settle-v1`）：下载的包验签对不上，等一分钟从头重下一次；还对不上就说「服务器正在发布新版本，这次先用现在这版登录，下次打开再更新」，不当作出错。
+- 证明：`scripts/prove-publish-go-live.py`；`scripts/prove-desk-source.py` 加了一条：Mac 包顶层的脚本都要是 Unix 755 文件（以前发版写成「MS-DOS」的条目也会被改正）。
+
 **Mac 包里新加的脚本带上执行权限**（`company-zip-unix-mode-v1`）
 - 发版在 Windows 服务器上写包，新加进包里的文件被标成「MS-DOS 来源」，Mac 解压时就把执行权限丢了：入网脚本 `mac-join-off-lan.sh` 装好后不可执行，`start.command` 跳过了它。现在服务器写进包的每个新文件都标成 Unix 普通文件、带上权限；`start.command` 用 bash 跑它，不再要求执行权限；`build-mac-dmg.sh` 给修复之前发的包补上权限。
 
