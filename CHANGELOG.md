@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19
+
+**客户现场报的三个设置页问题：DeepSeek 填了 key 却不出模型、发放账号发不出去、订阅额度只认 Grok**
+- **DeepSeek 填了 key 不出模型**：`company-no-add-key` 本来是要藏起员工端自带的「填 API key」输入框（key 只能存在服务器上），但 2026.10.11 起它的 CSS 写成了 `display: inline-block`，等于没藏。管理员把 DeepSeek key 填进了这个框，key 只存在那台电脑上（`.credentials.yaml` 里的 `DEEPSEEK_OFFICIAL_KEY`），什么都不会读它，服务器网关也没拿到，所以一个 DeepSeek 模型都不显示。现在这个框真的藏起来了；公司自己的两个框不受影响：服务器端「加入模型」的 key 框带 `data-company-key`，人员页的初始密码框带 `.cs-input`。「加入模型」的预设里补上了 DeepSeek（排在第一个）和 xAI；网关那边早就有这两个预设，只是界面上没有。
+- **发放账号**：原来不管是登录名还是密码不对，都只显示一句灰字「登录名和至少 8 位的初始密码都要填」。初始密码只填了 6 位时，看起来就像按钮坏了。现在会说清是哪一项不对：没填登录名、登录名不合规（顺带说明手机号可以用）、或者「初始密码至少 8 位，现在是 6 位」，并且用红字显示。服务器拒绝时的提示也改成红字。
+- **订阅额度**：设置里「订阅剩余额度」原来只认 Grok，没绑 Grok 的站点就显示「走 API key，没有订阅额度」。现在没绑 Grok、但开了 GPT 订阅（`GPT_SUBSCRIPTION=1`）时，同一个额度接口会去查 ChatGPT 的用量。查法和 Codex 的 /status 一样，用服务器上 CLIProxyAPI 存的订阅登录，令牌不出服务器，走 CLIProxyAPI 自己配的代理；结果缓存 60 秒。界面显示「GPT 订阅剩余额度」、剩余百分比和刷新时间。只显示 OpenAI 实际返回的窗口里最长的那个（Pro 现在只有每周）。
+- **只留需要的订阅**：`gateway.env` 里写 `SITE_SUBSCRIPTIONS=gpt`，设置页「订阅反代」就只列 GPT，不再列没用的 Grok、Claude，下面那行 `login-not-installed` 也不会再出现。不写这一项，三个都列，和原来一样。
+- 证明：gw-auth、gw-tls、models、people、desk-source、site-brand、scan 都通过。额度接口和界面改动在客户服务器上实测，见那边的记录。
+
 ## 2026.11.18.5
 
 **Mac：公司盘中途掉线会自动重连；掉线期间写下的东西不再被藏起来**
