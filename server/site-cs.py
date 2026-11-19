@@ -360,6 +360,57 @@ def put_zip_archive(src: Path, archive: Path, prefix: str, keep: list) -> int:
     return len(files)
 
 
+MAC_APP_README = """把 TDHarness 拖到旁边的「应用程序」里，就装好了。
+
+第一次打开：在「应用程序」里双击 TDHarness。系统说「无法验证开发者」时，
+打开「系统设置 → 隐私与安全性」，在下面找到 TDHarness，点「仍要打开」，以后就不用了。
+（老一点的 macOS：在 TDHarness 图标上点右键，选「打开」。）
+
+装好以后客户端会自己更新，不用再来下载。
+"""
+
+
+def mac_app_zip(src: Path, app_dir: Path, out: Path, name: str = "TDHarness") -> int:
+    """The Mac download a person drags to install (company-mac-app-v1): a folder holding
+    <name>.app, a link to /Applications and a short note. The app is the desk shell in app_dir
+    (desk/mac-app: the WKWebView launcher, ad-hoc signed on its own, Info.plist, icon) around this
+    publish's pack (src, CompanyDesk-mac.zip) as Contents/Resources, modes and links as shipped.
+    Updates then land in Resources the way they do for a desk installed by hand."""
+    import stat
+    import zipfile
+
+    top = name + "/"
+    contents = top + name + ".app/Contents/"
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    n = 0
+
+    def put(zout, arcname, data, mode, link=False):
+        zi = zipfile.ZipInfo(arcname, date_time=(2026, 10, 11, 0, 0, 0))
+        zi.compress_type = zipfile.ZIP_STORED if link else zipfile.ZIP_DEFLATED
+        zi.create_system = 3
+        zi.external_attr = ((stat.S_IFLNK if link else stat.S_IFREG) | mode) << 16
+        zout.writestr(zi, data)
+
+    with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        put(zout, contents + "Info.plist", (app_dir / "Info.plist").read_bytes(), 0o644)
+        put(zout, contents + "MacOS/" + name, (app_dir / "TDHarness").read_bytes(), 0o755)
+        put(zout, contents + "Resources/AppIcon.icns", (app_dir / "AppIcon.icns").read_bytes(), 0o644)
+        put(zout, top + "应用程序", b"/Applications", 0o755, link=True)
+        put(zout, top + "安装说明.txt", MAC_APP_README.encode("utf-8"), 0o644)
+        for item in zin.infolist():
+            rel = item.filename.replace("\\", "/")
+            if not rel.startswith("CompanyDesk/") or rel == "CompanyDesk/" or rel.endswith("/"):
+                continue
+            zi = zipfile.ZipInfo(contents + "Resources/" + rel[len("CompanyDesk/"):], date_time=item.date_time)
+            zi.compress_type = item.compress_type
+            zi.create_system = item.create_system
+            zi.external_attr = item.external_attr
+            zout.writestr(zi, zin.read(item.filename))
+            n += 1
+    swap_in(tmp, out)
+    return n
+
+
 MAC_TREE_RUN = (
     b"# Tree check is log-only. Do not pop on a dirty local tree (hot plant).\n"
     b"# Update already ran before the desk started.\n"
@@ -684,7 +735,7 @@ def main() -> None:
     ap.add_argument("--site", required=True)
     ap.add_argument(
         "cmd",
-        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip", "put-zip-archive"),
+        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip", "put-zip-archive", "mac-app-zip"),
     )
     ap.add_argument("--out")
     ap.add_argument("--src")
@@ -743,6 +794,12 @@ def main() -> None:
             raise SystemExit("put-zip needs --src --file <folder> --name <prefix in the zip>")
         n = put_zip_dir(Path(args.src), Path(args.file), args.name)
         sys.stdout.write("PUT=%s\n" % n)
+        return
+    if args.cmd == "mac-app-zip":
+        if not args.src or not args.out or not args.file:
+            raise SystemExit("mac-app-zip needs --src <CompanyDesk-mac.zip> --file <desk/mac-app> --out <TDHarness-mac.zip>")
+        n = mac_app_zip(Path(args.src), Path(args.file), Path(args.out), args.name or "TDHarness")
+        sys.stdout.write("MAC_APP_FILES=%s\n" % n)
         return
     if args.cmd == "put-zip-archive":
         if not args.src or not args.archive or not args.name or not args.keep:

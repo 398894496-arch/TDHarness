@@ -4,6 +4,19 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.19.12
+
+**Mac 版做成拖拽安装：下载、解开，把 TDHarness 拖进「应用程序」**
+- **原来**：下载页上的 Mac 版是 `CompanyDesk-mac.zip`，解开是一个 `CompanyDesk` 程序文件夹（3.8 万个文件），里面没有 `.app`，和页面上「把 TDHarness 放到应用程序」的说明对不上。
+- **现在**（`company-mac-app-v1`）：每次发布在程序包封好以后，服务器生成 `TDHarness-mac.zip`。解开是一个 `TDHarness` 文件夹，里面有 `TDHarness.app`、一个「应用程序」替身和一份安装说明，把 App 拖到替身上就装好了，用法和 DMG 一样。真正的 DMG 只能在 Mac 上做，发布是在 Windows 服务器上跑的，所以用这个办法。
+  - `.app` 里的 `Contents/Resources` 就是这次发布的程序包，可执行权限和软链接都照原样保留。以后的自动更新也落在这里，和手工装的 `.app` 一样。
+  - 外壳程序（Swift，WKWebView）放进了 `desk/mac-app/`：Intel 和 Apple 芯片两种架构，用源码 `src/CompanyDesk.release.swift` 编出来，和管理员 Mac 上正在跑的那份字符串一个不差。另外有 `Info.plist`，和用 TDH 自己的图标做的 `AppIcon.icns`。
+  - **签名**：保留编译时链接器自带的临时签名，不另外用 `codesign` 签。完整签名会要求整个 `.app` 都有配套的资源签名，而 `.app` 是在 Windows 上拼的，没有这层资源签名，系统就会报「已损坏」。现在系统把它当成「未签名的 App」：第一次打开到「系统设置 → 隐私与安全性」点「仍要打开」就行。要完全不提示，得用苹果开发者账号签名并公证。
+- **下载页**：Mac 按钮改成新的安装包，写清楚怎么拖、第一次怎么打开；Windows 的说明改成「用管理员发给你的账号登录」；证书提示写成「点高级 → 继续前往」。以后每次发布都会更新下载页（原来只在装服务器时拷一次）。
+- **Windows**：仍是 `TDHarness-Setup.exe`，双击后从服务器下载程序并装好，桌面和开始菜单各建一个图标。
+- 新增 `scripts/prove-mac-app-zip.py`。
+- **还没实测**：在一台没装过的 Mac 上，从下载页下载、拖进应用程序、第一次打开。
+
 ## 2026.11.19.11
 
 **员工自己改密码；记忆层接 KRouter，每个账号自动建自己的记忆库；企业知识库分「行政财务」和「共享」两块**
