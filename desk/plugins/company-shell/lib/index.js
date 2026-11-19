@@ -2158,6 +2158,24 @@ function addTaskCardSection(ctx) {
 	else systemPrompt.section(row);
 }
 
+// company-inline-image-default-v1: a picture for the person shows in the conversation, not only
+// as a file in the sidebar. present() puts it in the chat at its own proportions (the card's
+// image style is fixed by the site patch company-inline-media-aspect-v1).
+const INLINE_IMAGE_PROMPT =
+	"给员工看的图片（效果图、图纸预览、照片、生成或改过的图）默认直接显示在对话里：图片文件存好后，用 present 交出它，对话里就会直接显示这张图。" +
+	"没有调用 present 时，在最后的回复里用 Markdown 图片语法嵌进去。" +
+	"不要只给侧边栏工件或下载链接，也不要用两种方式重复显示同一张图。" +
+	"图片保持原始宽高比：不拉伸、不裁切，不要为了铺满改成别的尺寸。" +
+	"交互页面或矢量原稿可以另外给，但不能代替对话里的这张图。";
+
+function addInlineImageSection(ctx) {
+	const systemPrompt = ctx.systemPrompt;
+	if (systemPrompt == null || typeof systemPrompt.section !== "function") return;
+	const row = { name: "company-inline-image-default", order: 41, text: INLINE_IMAGE_PROMPT };
+	if (typeof ctx.effect === "function") ctx.effect(() => systemPrompt.section(row), row.name);
+	else systemPrompt.section(row);
+}
+
 // Talking-head rough cut (koubo): present only on a machine where the tool
 // is installed, so other desks are not told about a command they do not have.
 function kouboHome() {
@@ -2259,6 +2277,7 @@ export function apply(ctx) {
 	registerTaskCardTool(ctx);
 	registerExtTool(ctx);
 	addTaskCardSection(ctx);
+	addInlineImageSection(ctx);
 	addKouboSection(ctx);
 	addWebSearchTipSection(ctx);
 	addOpencliSection(ctx);
