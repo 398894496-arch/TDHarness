@@ -44,6 +44,23 @@ Write-Output ('BACKUP=' + $bak)
 & $py $DeltaPy remember --dist $Dist --history $History
 if ($LASTEXITCODE -ne 0) { throw 'delta-remember-failed' }
 
+# 1b. Staging (company-publish-staged-v1): every step below works on copies in client-stage, and step 6
+#     moves the finished files into the download folder at the end. Until then desks keep downloading the
+#     live packs and the version.json that matches them. 2026-11-19: four publishes in one evening each
+#     changed the live packs for 15 minutes before version.json followed, and a desk updating meanwhile
+#     failed its check (tree-restore-failed). A publish that fails now leaves the live folder untouched.
+$Live = $Dist
+$Stage = 'D:\dsh\client-stage'
+if (Test-Path -LiteralPath $Stage) { Remove-Item -Recurse -Force -LiteralPath $Stage }
+New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+foreach ($name in 'CompanyDesk-win.zip', 'CompanyDesk-mac.zip') {
+  $p = Join-Path $Live $name
+  if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $Stage $name) }
+}
+$Dist = $Stage
+$env:TDH_DIST = $Stage
+Write-Output ('STAGE=' + $Stage)
+
 # 2. Site patches (idempotent). With this server's Caddy root exported, desks reach the
 #    gateway over TLS (8443/gw) and carry the root; TDHarness.exe in step 3 follows the same file.
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Server 'export-ca.ps1')
@@ -184,6 +201,12 @@ $signRc = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 Write-Output $signOut.Trim()
 if ($signRc -ne 0) { throw 'pack-sign-failed' }
+
+# 6. Go live: the finished files into the download folder, version.json and its signature last.
+$o = & $py $SitePy --site $SiteYml go-live --src $Stage --out $Live
+if ($LASTEXITCODE -ne 0) { Write-Output $o; throw 'go-live-failed' }
+Write-Output ($o | Select-String -Pattern 'GO_LIVE_FILES|LIVE_PRUNED' | ForEach-Object { $_.Line })
+Remove-Item -Recurse -Force -LiteralPath $Stage -ErrorAction SilentlyContinue
 Write-Output ('WIN_MARK=' + $winMark)
 Write-Output ('MAC_MARK=' + $macMark)
 Write-Output 'PUBLISH_OK=1'
