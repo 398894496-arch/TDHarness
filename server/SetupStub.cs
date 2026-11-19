@@ -261,11 +261,34 @@ internal static class Setup
         return true;
     }
 
+    private static TailnetJoin.Facts EmbeddedFacts()
+    {
+        try
+        {
+            using (var src = Assembly.GetExecutingAssembly().GetManifestResourceStream("tdh-ts/company-tailnet.txt"))
+            using (var rd = new StreamReader(src, Encoding.UTF8))
+                return TailnetJoin.ParseFacts(rd.ReadToEnd());
+        }
+        catch { return new TailnetJoin.Facts(); }
+    }
+
+    // company-setup-tailnet-always-v1：带着入网文件的安装包在公司里也先入网，装好就能在家用。
+    // 在公司里入网没成（点了「否」、没有管理员权限）照样安装，TDHarness.exe 启动时会再问。
+    // 已在公司 tailnet 里的电脑不弹任何东西。
     private static void EnsureRemoteNet()
     {
-        if (TailnetJoin.SiteReachable(Site.Host, 8443, 2500)) return;
+        var inOffice = TailnetJoin.SiteReachable(Site.Host, 8443, 2500);
         if (!HasTsResources())
+        {
+            if (inOffice) return;
             throw new Exception("连不上公司服务器 " + Site.Host + "：请在公司局域网里安装，或向管理员要「远程版」安装包");
+        }
+        var have = TailnetJoin.FindTailscale();
+        if (have != null && TailnetJoin.OnCompany(have, EmbeddedFacts()))
+        {
+            Log("ts-on-company");
+            return;
+        }
         var dir = Path.Combine(Path.GetTempPath(), "tdh-ts-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         Directory.CreateDirectory(dir);
         try
@@ -278,9 +301,17 @@ internal static class Setup
                     src.CopyTo(dst);
             }
             SetStatus("正在加入公司加密网络…");
-            if (!Quiet) MessageBox.Show("这台电脑要先加入公司的加密网络（Tailscale），才能在这里安装和使用 TDH，只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。", "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            var ask = inOffice
+                ? "为了在家里也能用 TDH，这台电脑要加入公司的加密网络（Tailscale），只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。"
+                : "这台电脑要先加入公司的加密网络（Tailscale），才能在这里安装和使用 TDH，只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。";
+            if (!Quiet) MessageBox.Show(ask, "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
             var rc = TailnetJoin.RunElevated(Application.ExecutablePath, "--ts-join \"" + dir + "\"", 360000, Log);
             Log("ts-join-result " + rc);
+            if (inOffice)
+            {
+                if (rc != 0) Log("ts-join-in-office-failed " + rc + " (installing anyway)");
+                return;
+            }
             if (rc == -1223) throw new Exception("没有加入公司网络（选了「否」），装不了。请重新运行安装包，在 Windows 询问时点「是」");
             if (rc != 0) throw new Exception("没能加入公司网络（" + rc + "）。这台电脑可能没有管理员权限，请联系管理员；日志：" + Path.Combine(Path.GetTempPath(), "companydesk-setup-ts.log"));
             SetStatus("正在连接公司服务器…");

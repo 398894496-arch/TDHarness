@@ -111,6 +111,9 @@ jobs:
         run: python3 scripts/prove-inline-media-aspect.py
       - name: Prove the Mac download is a TDHarness.app to drag into Applications
         run: python3 scripts/prove-mac-app-zip.py
+      - name: Prove a Mac joins the company tailnet once, and never replaces another tailnet
+        if: runner.os == 'Linux'
+        run: bash scripts/prove-mac-tailnet-join.sh
       - name: Prove desk skills cache lays the site's _skills over the bundled skills
         run: node scripts/prove-sync-skills.js
       - name: Prove the Caddyfile imports extension routes inside the site
