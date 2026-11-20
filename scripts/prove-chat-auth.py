@@ -73,6 +73,7 @@ class FakeTinode:
         self.sessions: dict = {}
         self.subs: list = []
         self.made: list = []
+        self.fail_once: set = set()  # logins whose next login to an existing account is refused once
         self.lock = threading.Lock()
         fake = self
 
@@ -112,6 +113,10 @@ class FakeTinode:
                 if kind == "login":
                     st, r = ask(fake.people_port, {"endpoint": "auth", "secret": body["secret"], "addr": "127.0.0.1"})
                     uid = (r.get("rec") or {}).get("uid")
+                    who0 = base64.b64decode(body["secret"]).decode("utf-8").split(":", 1)[0]
+                    if uid and who0 in fake.fail_once:
+                        fake.fail_once.discard(who0)
+                        uid = None
                     if not uid and r.get("newacc"):
                         # As Tinode does: make the account, tell the people service its uid.
                         who = base64.b64decode(body["secret"]).decode("utf-8").split(":", 1)[0]
@@ -235,6 +240,8 @@ def provision(first_root: Path) -> None:
     (static / "index.prod.js").write_text('var k="AQ' + "x" * 30 + '";', encoding="utf-8")
     port = free_port()
     fake = FakeTinode(port)
+    # lfh's first directory step fails (as 郭迎's did on 11-20); the next round must finish it.
+    fake.fail_once = {"lfh"}
     env = dict(os.environ, TDH_ROOT=str(root), TDH_PEOPLE_PORT=str(port), DSH_LEASE_DIR=str(runtime / "lease"),
                TDH_SMB_LEDGER=str(root / "smb-ledger.jsonl"), TDH_TINODE_URL="http://127.0.0.1:%d" % fake.port,
                TDH_CHAT_DIR_DELAY="0.3", TDH_CHAT_PROVISION_DELAY="0.3", TDH_CHAT_PROVISION_EVERY="2")
@@ -252,6 +259,11 @@ def provision(first_root: Path) -> None:
         check(links == want, "every active person has an account, the disabled one none: " + json.dumps(links))
         check(sorted(fake.made) == sorted([("tdh", "tdh"), ("lfh", "梁风禾"), ("nn", "nn")]), "made once each, under the roster name: " + json.dumps(fake.made, ensure_ascii=False))
         check(covered(), "every two of them have a chat open: " + json.dumps(fake.subs))
+        deadline = time.time() + 15
+        while time.time() < deadline and len(json.loads((runtime / "tinode-directory.json").read_text(encoding="utf-8")).get("lfh") or []) < 2:
+            time.sleep(0.2)
+        dirs = json.loads((runtime / "tinode-directory.json").read_text(encoding="utf-8"))
+        check(not fake.fail_once and sorted(dirs.get("lfh") or []) == ["UNN", "UTDH"], "a failed directory step is finished by the next round: " + json.dumps(dirs))
         time.sleep(2.5)
         check(len(fake.made) == 3, "the next round makes nothing again: " + json.dumps(fake.made, ensure_ascii=False))
     finally:
