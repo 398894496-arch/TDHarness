@@ -84,6 +84,8 @@ jobs:
         run: node scripts/prove-gpt-media.js
       - name: Prove desktop control shows the model one tool (mcp-one.cjs)
         run: node scripts/prove-mcp-one.js
+      - name: Prove the agent cannot open this desk's own page in a browser (company-desk-self-open-v1)
+        run: node scripts/prove-desk-self-open.mjs
       - name: Prove a site's brand comes from the server only (patch_site_brand.py)
         run: python scripts/prove-site-brand.py
       - name: Prove the company-share rights (throwaway accounts; fails if the share opens again)

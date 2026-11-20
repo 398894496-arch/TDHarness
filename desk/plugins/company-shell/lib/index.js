@@ -853,6 +853,50 @@ export function wrapKnowledgeBudget(definition) {
 	return definition;
 }
 
+// company-desk-self-open-v1: opening this desk's own page (127.0.0.1:17803) in a browser from
+// inside a turn took the desk down twice on a Mac (2026-11-20 03:03 and 08:31, lease-watch
+// WATCH_STOP=desk-down, every pending tool call "interrupted", the person signed out). The page
+// is already on screen; reading it over HTTP (curl) stays allowed.
+const DESK_PORTS = new Set(["17803"]);
+const SELF_OPEN_REFUSAL =
+	"desk-self-open. 这个地址就是 TDH 自己的界面，在浏览器里再打开会把桌面端带崩、所有人被登出。不要打开它；要核对界面用 curl 读 HTTP 状态，或请用户看当前窗口。";
+
+export function isOwnDeskUrl(raw) {
+	const s = String(raw || "").trim();
+	if (!s) return false;
+	let u;
+	try {
+		u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : "http://" + s);
+	} catch {
+		return false;
+	}
+	const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+	const local = host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "0.0.0.0" || /^127\./.test(host);
+	return local && DESK_PORTS.has(u.port);
+}
+
+// A browser open of this desk's own page, by any of the three doors the agent has.
+export function opensOwnDesk(name, args) {
+	const a = args && typeof args === "object" ? args : {};
+	if (name === "sidebar_open") return isOwnDeskUrl(a.target || a.url);
+	if (name === "opencli") {
+		const argv = Array.isArray(a.argv) ? a.argv.map(String) : [];
+		// argv with no action runs too (2026-11-20 09:01: that call took the desk down)
+		if ((a.action != null && a.action !== "run") || !argv.includes("browser")) return false;
+		return argv.some(isOwnDeskUrl);
+	}
+	if (name === "bash") {
+		const cmd = String(a.command || "");
+		for (const line of cmd.split(/[\n;&|]+/)) {
+			if (!/\b(opencli\b[^]*\bbrowser\b|open\b|xdg-open\b|start\b|google-chrome\b|chrome(\.exe)?\b)/i.test(line)) continue;
+			if (/\bcurl\b|\bwget\b|Invoke-WebRequest/i.test(line)) continue;
+			const urls = line.match(/(https?:\/\/)?(127(\.\d+){3}|localhost|\[::1\]|0\.0\.0\.0):\d+[^\s'"]*/gi) || [];
+			if (urls.some(isOwnDeskUrl)) return true;
+		}
+	}
+	return false;
+}
+
 export function wrapWebCompanyName(tools) {
 	if (tools == null || typeof tools.register !== "function" || tools.__companyWebName) return tools;
 	// Keep the caller's `this`. 0.2.x hands each agent its own scoped tools
@@ -863,8 +907,18 @@ export function wrapWebCompanyName(tools) {
 		if (!definition || typeof definition.execute !== "function") return definition;
 		const n = String(definition.name || "");
 		const isEgo = n.indexOf("ego_") === 0 || n.indexOf("browser_") === 0;
-		if (n !== "web_search" && n !== "web_fetch" && !isEgo) return definition;
+		const selfGuard = n === "sidebar_open" || n === "opencli" || n === "bash";
+		if (n !== "web_search" && n !== "web_fetch" && !isEgo && !selfGuard) return definition;
+		if (definition.__companySelfGuard) return definition;
 		const inner = definition.execute.bind(definition);
+		if (selfGuard) {
+			definition.__companySelfGuard = true;
+			definition.execute = async function (args, exec) {
+				if (opensOwnDesk(n, args)) throw new Error(SELF_OPEN_REFUSAL);
+				return inner(args, exec);
+			};
+			return definition;
+		}
 		definition.execute = async function (args, exec) {
 			const st = webState(exec);
 			if (n === "web_search") {
@@ -961,6 +1015,11 @@ export function wrapWebCompanyName(tools) {
 			wrapExec(tools.get("ego_space_open"));
 			wrapExec(tools.get("ego_http"));
 			wrapExec(tools.get("browser_navigate"));
+			// The kernel's own bash and sidebar_open (and opencli when it came first) are in the registry
+			// before this plugin: guard them here, the register wrapper only sees later ones.
+			wrapExec(tools.get("bash"));
+			wrapExec(tools.get("sidebar_open"));
+			wrapExec(tools.get("opencli"));
 		} catch {
 			/* official search tools may register after this host row */
 		}

@@ -4,6 +4,35 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.20.6
+
+**任务做到一半被登出修好；服务挂了自动拉起；每天早上给田总的日报；财务对账、排产草稿、原料行情**
+- **任务中途弹「座位已过期，请重新打开」**（`company-desk-self-open-v1`，电脑端，这一版起生效）：
+  - 现象：Agent 干到一半（比如让它「全面审查 Harness 链路和各项工具是否健康」），界面弹出「座位已过期，请重新打开」，没跑完的工具调用全部中断。
+  - 原因：Agent 为了「检查浏览器入口」，用 `opencli browser open` 或 `sidebar_open` 把 TDH 自己的界面（`127.0.0.1:17803`）又开了一份。本机桌面进程随即挂掉，座位守护记的是 `WATCH_STOP=desk-down`，座位跟着过期。11-20 一台 Mac 上 03:03、08:31、09:01 三次都是这样；同一次对话里打开普通网站再关掉，没事。
+  - 修法：Agent 用 `sidebar_open`、`opencli`（带不带 `action` 都算）或 bash 里的 `opencli browser open` / `open` 打开本机 17803 时直接拒绝，告诉它改用 curl 读状态，或请用户看当前窗口。curl、其他本机端口（聊天用的 17811 起）和公网页面照常。
+  - 内核自带的 `bash`、`sidebar_open` 比公司插件先注册，原来的包装只管之后注册的工具，这次把已经在的也包上了。`node scripts/prove-desk-self-open.mjs` → `DESK_SELF_OPEN_PROVE_OK=1`，进 CI。
+- **保留崩溃现场**（`company-desk-err-keep-v1`）：Mac 和 Windows 员工端启动时，先把上一次非空的 `web-runtime.err` 存成 `web-runtime.err.prev`，再清空。下次再挂能看到原因。
+- **桌面控制的红字报错**（`company-mcp-one-templates-v1`）：cua-driver 不支持 `resources/templates/list`，Agent 一问就显示 `Error: Unknown method`。`mcp-one.cjs` 把这种回答换成空列表，`prove-mcp-one.js` 加了这一条。
+- 下面这些在服务器端，11-20 已上线，不用更新电脑端：
+  - 聊天：
+    - 群里打 @ 弹出成员名单，被 @ 的人看到「[有人@我]」，读之前一直在（`company-chat-at-v1`）。
+    - 不做语音通话，聊天页里灰着的电话按钮已去掉。
+    - 聊天页的逻辑测试进了 CI（`prove-chat-client.js`，用服务器同版本的 tinode-sdk 0.25.3）。
+  - 服务挂了自动拉起（`company-watchdog-v1`）：
+    - 起因：11-20 网关进程挂了两个多小时没人知道，GPT 全部报 502，额度显示「没接通」。原来的计划任务只在开机时启动一次。
+    - 现在计划任务 `TDH-Watchdog` 每 2 分钟查一遍网关、知识库、人员、网站入口、聊天、订阅反代、扩展包的端口，连续两次不通就拉起来。
+    - 网关、知识库、人员服务崩溃时，原因写进 `logs\<名>-crash.log`（`company-crash-log-v1`）。
+    - `setup-server.ps1` 重装时会先挂上「维护中」开关，期间看门狗不动。
+  - 每日日报（`company-daily-report-v1`）：
+    - 每天 7:30（北京时间）用聊天发给田总：资金、生产、任务卡，以及每人昨天在 TDH 里做了什么（GPT 概括，没用 TDH 的列一行）；周一多一块行情。
+    - 完整网页在收件人个人文件夹的「日报」里。
+    - 只在 7:30 起 4 小时内发，晚上重启服务不会补发。
+  - 制造业扩展包（TDH-manufacturing）：
+    - 财务对账：付款、收款、报销单对发票，出口单证和收汇，资金日报。财务把表拖进对话就自动入库。
+    - 排产草稿：明天建议做哪些单、要问一下的单、赶不上发货的、备料。排产员把生产表拖进对话入库。
+    - 原料行情：取生意社的基准价，只摘原文里的数字。
+
 ## 2026.11.20.5
 
 **聊天换成 TDH 自己的界面（微信式），截图按钮直接截图，深浅色跟着 TDH**
