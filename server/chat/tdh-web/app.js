@@ -1144,5 +1144,7 @@
 	ReactDOM.createRoot(document.getElementById("root")).render(h(App));
 	start();
 	window.__tdhChat = { S, client, bump, open: openTopic,
-		act: { sendText, sendFiles, recall, quote, createGroup, togglePin, toggleMute, forwardTo, leaveGroup } }; // for checks in the desk's tests and a person's own debugging
+		act: { sendText, sendFiles, recall, quote, createGroup, togglePin, toggleMute, forwardTo, leaveGroup },
+		// company-chat-client-test-v1: the page's own logic, for scripts/prove-chat-client.js (CI)
+		fn: { atDraft, plain, mentionsMe, mentionedUnread, allMessages, contentOf, renderContent, safeUrl, listed, unread } }; // for checks in the desk's tests and a person's own debugging
 })();
