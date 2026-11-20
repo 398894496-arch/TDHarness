@@ -49,7 +49,7 @@ class Fake(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         if self.path == "/v1/chat/completions":
             SEEN["gw"].append((self.headers.get("Authorization"), body))
-            out = {"choices": [{"message": {"content": "整理了甲公司的报价单并核了料重。注意：报价还没发给客户。"}}]}
+            out = {"choices": [{"message": {"content": "整理了甲公司的报价单并核了料重。\n注意：报价还没发给客户。"}}]}
         else:
             SEEN["pack"].append((self.headers.get("Authorization"), body))
             out = {"title": "资金", "lines": ["壹通达 余额：人民币 1,000.00", "付了款还没收到票 8,000.00"]}
@@ -113,7 +113,7 @@ t = out["text"]
 check(out["day"] == "2026-11-20" and t.startswith("TDH 日报 11-20（周五）"), "yesterday's page, weekday: " + t[:30])
 check("【资金】" in t and "壹通达 余额：人民币 1,000.00" in t and "外面的" not in t, "the loopback pack's lines, nothing from elsewhere")
 check("【任务卡】进行中 2 张" in t and "alice「报价」" in t, "the cards' page")
-check("【员工】1 人用了 TDH，1 人没用" in t and "王小丽：整理了甲公司的报价单" in t and "没用 TDH：李大海" in t, "people: " + t)
+check("【员工】1 人用了 TDH，1 人没用" in t and "王小丽：整理了甲公司的报价单并核了料重。 注意：报价还没发给客户。" in t and "没用 TDH：李大海" in t, "people, one line each: " + t)
 check("离职的" not in t and "tdh：" not in t, "disabled and skipped logins left out")
 auth, body = SEEN["gw"][0]
 prompt = body["messages"][0]["content"]
