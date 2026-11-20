@@ -51,6 +51,7 @@
 		members: {}, // group -> [uid]
 		tried: {}, // topic -> seq last fetched for the list (a chat whose messages are all gone is not asked again)
 		drafts: {}, // topic -> text
+		ats: {}, // topic -> [{ uid, label }]: the people picked with @ for the draft (label is "@name")
 		pending: {}, // topic -> [{ file, url }]: pictures and files waiting in the input box (a screenshot, a paste)
 		shooting: false,
 		reply: null, // { seq, content, label }
@@ -152,7 +153,8 @@
 		if (!t || name === S.topic || t.isSubscribed()) { pump(); return; }
 		fetching = true;
 		S.tried[name] = t.seq | 0;
-		let q = t.startMetaQuery().withLaterData(1).withDesc();
+		// A group's unread ones too (up to 20), so an @ that is not the last message still shows as [有人@我].
+		let q = t.startMetaQuery().withLaterData(t.isGroupType() ? Math.min(Math.max(unread(t), 1), 20) : 1).withDesc();
 		if (t.isGroupType()) q = q.withSub();
 		t.subscribe(q.build()).then(() => {
 			if (t.isGroupType()) rememberMembers(t);
@@ -293,6 +295,36 @@
 		if (!content || typeof content === "string" || !Array.isArray(content.ent)) return false;
 		return content.ent.some((e) => e && e.tp === "MN" && e.data && e.data.val === S.meId);
 	}
+	// company-chat-at-v1: whether any unread message of a chat @ me (the list's [有人@我] stays until it is read, as
+	// WeChat's, not only while that message is the last one).
+	function mentionedUnread(c) {
+		if (unread(c) <= 0) return false;
+		const read = c.read | 0;
+		return allMessages(c).some((m) => m && !m._deleted && (m.seq | 0) > read && m.from !== S.meId && mentionsMe(contentOf(c, m)));
+	}
+	// The words with the people picked by @ as mentions (Drafty MN, the person's id in data.val; Tinode's own page reads
+	// the same); null when none of them is left in the text.
+	function atDraft(text, picks) {
+		const labels = Array.from(new Set(picks.map((p) => p.label))).sort((a, b) => b.length - a.length);
+		const used = {};
+		const parts = [];
+		let from = 0;
+		let i = 0;
+		while (i < text.length) {
+			const label = text[i] === "@" ? labels.find((l) => text.startsWith(l, i)) : null;
+			if (!label) { i++; continue; }
+			if (i > from) parts.push(text.slice(from, i));
+			const same = picks.filter((p) => p.label === label);
+			const k = used[label] | 0;
+			used[label] = k + 1;
+			parts.push({ label, uid: same[Math.min(k, same.length - 1)].uid });
+			i += label.length;
+			from = i;
+		}
+		if (!parts.some((p) => typeof p !== "string")) return null;
+		if (from < text.length) parts.push(text.slice(from));
+		return parts.reduce((d, p) => Drafty.append(d, typeof p === "string" ? (Drafty.parse(p) || Drafty.init(p)) : Drafty.mention(p.label, p.uid)), Drafty.init(""));
+	}
 	// Every message of a chat in order, with the places where one was deleted (topic.messages() leaves those out;
 	// Tinode keeps them as { low, hi, _deleted } in the same list). Edits are folded into their message by contentOf.
 	function allMessages(t) {
@@ -393,12 +425,16 @@
 	function sendText(text) {
 		const t = S.topic && client.getTopic(S.topic);
 		if (!t || !text.trim()) return;
-		// Plain words go as a string (Tinode makes it formatted only when it is: links, bold…); a quote needs Drafty.
-		let content = text;
+		// Plain words go as a string (Tinode makes it formatted only when it is: links, bold…); a quote or an @ needs
+		// Drafty.
+		const picks = S.ats[S.topic] || [];
+		delete S.ats[S.topic];
+		const body = picks.length ? atDraft(text, picks) : null;
+		let content = body || text;
 		let head = null;
 		if (S.reply) {
 			head = { reply: "" + S.reply.seq };
-			content = Drafty.append(Drafty.sanitizeEntities(S.reply.content), Drafty.parse(text) || Drafty.init(text));
+			content = Drafty.append(Drafty.sanitizeEntities(S.reply.content), body || Drafty.parse(text) || Drafty.init(text));
 		}
 		const pub = t.createMessage(content, true);
 		if (head) pub.head = Object.assign({}, pub.head || {}, head);
@@ -651,7 +687,7 @@
 			let preview = last ? plain(contentOf(c, last)) : "";
 			if (last && c.isGroupType() && last.from && last.from !== S.meId) preview = userName(last.from, c) + "：" + preview;
 			if (last && last._deleted) preview = S.recalled[c.name + ":" + last.low] != null ? "你撤回了一条消息" : isHidden(c.name, last.low) ? "" : "撤回了一条消息";
-			const at = n > 0 && last && mentionsMe(last.content);
+			const at = mentionedUnread(c);
 			return h("div", {
 				key: c.name,
 				className: "row" + (rank(c) > 0 ? " pinned" : "") + (c.name === S.topic ? " on" : ""),
@@ -713,7 +749,7 @@
 			case "BR": return h("br", { key });
 			case "HL": return h("mark", { key }, values);
 			case "LN": { const u = safeUrl(data && data.url); return u ? h("a", { key, href: u, target: "_blank", rel: "noopener noreferrer" }, values) : h("span", { key }, values); }
-			case "MN": return h("span", { key, className: (values && String(values).startsWith("➦")) ? "fwd" : "mention" }, values);
+			case "MN": return h("span", { key, className: (values && String(values).startsWith("➦")) ? "fwd" : "mention" + (data && data.val === S.meId ? " me" : "") }, values);
 			case "IM": count++; only = only || "IM"; return h(Picture, { key, data });
 			case "EX": count++; only = only || "EX"; return h(FileCard, { key, data });
 			case "AU": return h("span", { key }, "[语音]");
@@ -844,14 +880,55 @@
 		const [drop, setDrop] = useState(false);
 		const text = S.drafts[t.name] || "";
 		const keyAt = useRef(0);
+		const [at, setAt] = useState(null); // { start, q, i }: an @ being typed in a group, and the row picked
+		const atRow = useRef(null);
 		useEffect(() => { focusInput = () => { if (ta.current) ta.current.focus(); }; });
-		useEffect(() => { if (ta.current) ta.current.focus(); }, [t.name]);
+		useEffect(() => { setAt(null); if (ta.current) ta.current.focus(); }, [t.name]);
+		useEffect(() => { if (atRow.current) atRow.current.scrollIntoView({ block: "nearest" }); }, [at && at.i]);
 		const set = (v) => {
 			S.drafts[t.name] = v;
 			bump();
 			if (Date.now() - keyAt.current > 3000 && t.isSubscribed()) { keyAt.current = Date.now(); try { t.noteKeyPress(); } catch (e) { /* not now */ } }
 		};
 		const pend = S.pending[t.name] || [];
+		// company-chat-at-v1: "@" (or "＠") then a part of a name, right before the caret, in a group.
+		const findAt = (v, caret) => {
+			if (!t.isGroupType()) return null;
+			const before = v.slice(0, caret);
+			const p = Math.max(before.lastIndexOf("@"), before.lastIndexOf("＠"));
+			if (p < 0) return null;
+			const q = before.slice(p + 1);
+			return q.length > 16 || /[\s@＠]/.test(q) ? null : { start: p, q, i: 0 };
+		};
+		const people = at ? (S.members[t.name] || []).filter((u) => u !== S.meId).map((u) => ({ uid: u, name: userName(u, t) }))
+			.filter((p) => !at.q || p.name.toLowerCase().includes(at.q.toLowerCase()))
+			.sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN")) : [];
+		const atI = at ? Math.min(at.i, Math.max(people.length - 1, 0)) : 0;
+		const caretTo = (pos) => requestAnimationFrame(() => { if (ta.current) { ta.current.focus(); ta.current.setSelectionRange(pos, pos); } });
+		const choose = (p) => {
+			const caret = ta.current ? ta.current.selectionStart : text.length;
+			const label = "@" + p.name;
+			S.ats[t.name] = (S.ats[t.name] || []).concat([{ uid: p.uid, label }]);
+			setAt(null);
+			set(text.slice(0, at.start) + label + " " + text.slice(caret));
+			caretTo(at.start + label.length + 1);
+		};
+		// Backspace right after a picked @name takes the whole of it away (as WeChat's), and the mention with it.
+		const unpick = (el) => {
+			if (el.selectionStart !== el.selectionEnd) return false;
+			const before = text.slice(0, el.selectionStart);
+			const picks = S.ats[t.name] || [];
+			for (let k = picks.length - 1; k >= 0; k--) {
+				const chunk = before.endsWith(picks[k].label + " ") ? picks[k].label + " " : before.endsWith(picks[k].label) ? picks[k].label : "";
+				if (!chunk) continue;
+				picks.splice(k, 1);
+				const pos = before.length - chunk.length;
+				set(text.slice(0, pos) + text.slice(before.length));
+				caretTo(pos);
+				return true;
+			}
+			return false;
+		};
 		const send = () => {
 			if (!text.trim() && !pend.length) return;
 			sendPending(t.name);
@@ -860,7 +937,18 @@
 			bump();
 		};
 		const onKey = (e) => {
-			if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); }
+			const composing = e.isComposing || e.keyCode === 229;
+			if (at && people.length && !composing) {
+				if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+					e.preventDefault();
+					setAt(Object.assign({}, at, { i: (atI + (e.key === "ArrowDown" ? 1 : people.length - 1)) % people.length }));
+					return;
+				}
+				if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); choose(people[atI]); return; }
+			}
+			if (at && e.key === "Escape") { e.preventDefault(); setAt(null); return; }
+			if (e.key === "Backspace" && !composing && unpick(e.target)) { e.preventDefault(); return; }
+			if (e.key === "Enter" && !e.shiftKey && !composing) { e.preventDefault(); send(); }
 		};
 		const onPaste = (e) => {
 			const list = e.clipboardData && e.clipboardData.files;
@@ -879,6 +967,10 @@
 					? [h("b", { key: "a" }, "Control + Shift + Command + 4"), " 截图，再按 ", h("b", { key: "b" }, "Command + V")]
 					: [h("b", { key: "a" }, "Win + Shift + S"), " 截图，再按 ", h("b", { key: "b" }, "Ctrl + V")], h("br"),
 				"（更新 TDH 后，点这个按钮就直接截图）") : null,
+			at && people.length ? h("div", { className: "atpick" }, h("div", { className: "hd" }, "选择提醒的人"),
+				people.map((p, i) => h("button", { key: p.uid, ref: i === atI ? atRow : null, className: i === atI ? "on" : "",
+					onMouseDown: (e) => { e.preventDefault(); choose(p); }, onMouseEnter: () => { if (i !== atI) setAt(Object.assign({}, at, { i })); } },
+				h(Avatar, { uid: p.uid, name: p.name, pub: (t.userDesc(p.uid) || {}).public, size: "s28" }), h("span", null, p.name)))) : null,
 			h("div", { className: "tools" },
 				h("button", { className: "icon-btn", title: "表情", onClick: () => setPanel(panel === "emoji" ? null : "emoji") }, ICON.smile()),
 				h("button", { className: "icon-btn", title: "发送文件", onClick: () => files.current && files.current.click() }, ICON.folder()),
@@ -893,7 +985,9 @@
 				p.url ? h("img", { src: p.url, alt: p.file.name }) : h(React.Fragment, null, h("div", { className: "ftype " + ftype(p.file.name, p.file.type)[0] }, ftype(p.file.name, p.file.type)[1]), h("span", null, p.file.name)),
 				h("button", { className: "x", title: "不发了", onClick: () => dropPending(t.name, i) }, ICON.close())))) : null,
 			S.reply ? h("div", { className: "reply" }, h("span", null, "引用 " + S.reply.label), h("button", { className: "icon-btn", title: "不引用了", onClick: () => { S.reply = null; bump(); } }, ICON.close())) : null,
-			h("textarea", { ref: ta, value: text, placeholder: "输入消息", onChange: (e) => set(e.target.value), onKeyDown: onKey, onPaste }),
+			h("textarea", { ref: ta, value: text, placeholder: t.isGroupType() ? "输入消息，@ 提醒群成员" : "输入消息", onKeyDown: onKey, onPaste,
+				onChange: (e) => { set(e.target.value); setAt(findAt(e.target.value, e.target.selectionStart)); },
+				onBlur: () => setAt(null) }),
 			h("div", { className: "foot" },
 				h("div", { className: "hint" }, "Enter 发送，Shift + Enter 换行"),
 				h("button", { className: "send", disabled: !text.trim() && !pend.length, onClick: send }, "发送")));
