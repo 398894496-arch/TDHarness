@@ -1601,5 +1601,21 @@ def main() -> None:
     httpd.serve_forever()
 
 
+def _crash_log(kind, value, tb):
+    """company-crash-log-v1: an error that ends the service leaves why in logs\\people-api-crash.log;
+    the watchdog (server\\watchdog.ps1) starts it again."""
+    try:
+        import traceback
+        logs = os.path.join(os.environ.get("TDH_ROOT") or "D:\\dsh", "logs")
+        os.makedirs(logs, exist_ok=True)
+        with open(os.path.join(logs, "people-api-crash.log"), "a", encoding="utf-8") as f:
+            f.write("%s %s pid %d\n%s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), kind.__name__, os.getpid(),
+                                           "".join(traceback.format_exception(kind, value, tb))[-4000:]))
+    except Exception:
+        pass
+    sys.__excepthook__(kind, value, tb)
+
+
 if __name__ == "__main__":
+    sys.excepthook = _crash_log
     main()

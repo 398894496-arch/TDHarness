@@ -1,5 +1,6 @@
 'use strict';
 
+require('./crash-log.js').install('gw-lite');   // company-crash-log-v1: why it died, in logs\gw-lite-crash.log
 const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');

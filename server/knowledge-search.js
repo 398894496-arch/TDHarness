@@ -28,6 +28,7 @@
 //
 // Ranking, passages and office files: kb-index.js.
 
+require('./crash-log.js').install('knowledge-search');   // company-crash-log-v1
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
