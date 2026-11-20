@@ -98,7 +98,7 @@ def summarize(cfg: dict, token: str, name: str, sessions: list[dict], timeout: f
     try:
         with _OPEN.open(req, timeout=timeout) as r:
             j = json.loads(r.read().decode("utf-8", "replace"))
-        return str(j["choices"][0]["message"]["content"]).strip()[:400]
+        return re.sub(r"\s*\n+\s*", " ", str(j["choices"][0]["message"]["content"]).strip())[:400]   # one line in the chat
     except Exception:  # noqa: BLE001 - the page goes out with the plain list instead
         return ""
 
