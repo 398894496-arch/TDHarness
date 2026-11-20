@@ -838,6 +838,76 @@ def run_lease(login: str, device_id: str, action: str) -> tuple[int, dict]:
         return status, body
 
 
+# company-chat-tinode-v1: Tinode (the company chat, on this server) asks here who may log in (its REST
+# authenticator, auth_config.rest in tinode.conf). The secret is "login:password", or "login:<the desk's
+# login token>" for a desk that is already signed in, so nobody types a second password. A first login creates
+# the Tinode account under the roster name; a person who is not active cannot log in. Only Tinode on this
+# machine may ask (loopback, not through Caddy).
+TINODE_LINKS = ROOT / "runtime" / "tinode-links.json"
+_TINODE_MU = threading.Lock()
+
+
+def _tinode_links() -> dict:
+    try:
+        data = json.loads(TINODE_LINKS.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _tinode_secret(payload: dict) -> tuple[str, str]:
+    import base64
+    try:
+        raw = base64.b64decode(str(payload.get("secret") or ""), validate=False).decode("utf-8", "replace")
+    except (ValueError, TypeError):
+        return "", ""
+    login, _, pw = raw.partition(":")
+    return login.strip().lower(), pw
+
+
+def tinode_auth(payload: dict) -> dict:
+    endpoint = str(payload.get("endpoint") or "")
+    if endpoint == "checkunique":
+        return {"boolval": True}
+    if endpoint == "rtagns":
+        return {"strarr": ["tdh"]}
+    if endpoint == "link":
+        login, _pw = _tinode_secret(payload)
+        uid = str(((payload.get("rec") or {}).get("uid")) or "")
+        if not login or not uid or person(login) is None:
+            return {"err": "malformed"}
+        with _TINODE_MU:
+            links = _tinode_links()
+            links[login] = uid
+            TINODE_LINKS.parent.mkdir(parents=True, exist_ok=True)
+            tmp = TINODE_LINKS.with_suffix(".tmp")
+            tmp.write_text(json.dumps(links, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, TINODE_LINKS)
+        return {"rec": {"uid": uid, "authlvl": "auth"}}
+    if endpoint != "auth":
+        return {"err": "unsupported"}
+    login, pw = _tinode_secret(payload)
+    src = "tinode:" + str(payload.get("addr") or "")
+    if not login or not pw:
+        return {"err": "malformed"}
+    if login_blocked(login, src):
+        return {"err": "policy"}
+    row = person(login)
+    ok = row is not None and row.get("status", "active") == "active" and (
+        (pw.startswith("dsh_") and login_from_token(pw) == login) or (not pw.startswith("dsh_") and check_login(login, pw) is not None))
+    if not ok:
+        login_failed(login, src)
+        return {"err": "failed"}
+    login_succeeded(login, "")
+    rec = {"authlvl": "auth", "state": "ok", "tags": ["tdh:" + login]}
+    uid = _tinode_links().get(login)
+    if uid:
+        rec["uid"] = uid
+        return {"rec": rec}
+    name = str(row.get("name") or "").strip() or login
+    return {"rec": rec, "newacc": {"auth": "JRWPS", "anon": "N", "public": {"fn": name}, "trusted": {"staff": True}}}
+
+
 def json_bytes(obj: dict, status: int = 200) -> tuple[int, bytes]:
     # AppHost CheckLogin looks for the exact substring "ok": true
     return status, json.dumps(obj, ensure_ascii=False, separators=(", ", ": ")).encode("utf-8")
@@ -1178,6 +1248,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/company/mailbox":
             self._mailbox(payload)
+            return
+        if path.rstrip("/") == "/tinode-auth":
+            # company-chat-tinode-v1: Tinode on this machine only; anything through Caddy carries X-Forwarded-For.
+            if self.client_address[0] not in ("127.0.0.1", "::1") or self.headers.get("X-Forwarded-For"):
+                self._send(*json_bytes({"err": "denied"}, 403))
+                return
+            self._send(*json_bytes(tinode_auth(payload)))
             return
         if path == "/company/login":
             name = str(payload.get("username") or payload.get("login") or "").strip().lower()
