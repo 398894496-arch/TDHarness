@@ -13,7 +13,11 @@ match the sample exactly once (a newer release that moved one stops here instead
   - no email validation and no clean-up of unvalidated accounts (TDH makes the accounts; they have no email);
   - uploads under --uploads, files up to 200 MB.
 The web page's React, fonts and icons come from CDNs (jsDelivr, Google Fonts), which desks in China often cannot
-reach: index.html loads them from static/vendor instead. Prints TINODE_SETUP_OK=1.
+reach: index.html loads them from static/vendor instead.
+The page's script loads its language and view chunks from "/umd/" (webpack's public path, written for a page at the
+site's root); this page is at /chat/, so the chunks 404 and the page stays blank (11-20). umd/index.prod.js gets the
+relative "umd/" instead, and index.html asks for the scripts under a new URL so a browser that kept the old copy
+fetches them again. Prints TINODE_SETUP_OK=1.
 """
 from __future__ import annotations
 
@@ -99,6 +103,29 @@ def page(html: str) -> str:
     return html.replace("<head>", "<head>\n<!-- company-chat-tinode-v1: libraries and fonts served from static/vendor -->", 1)
 
 
+# company-chat-tinode-v2: bump when the scripts change, so browsers do not keep an old copy.
+SCRIPT_REV = "tdh2"
+
+
+def bundle(js: str) -> str:
+    """umd/index.prod.js: chunks from umd/ next to the page, not /umd/ at the site's root."""
+    n = len(re.findall(r'\.p="/umd/"', js))
+    if n == 1:
+        return js.replace('.p="/umd/"', '.p="umd/"', 1)
+    if n == 0 and len(re.findall(r'\.p="umd/"', js)) == 1:
+        return js
+    raise SystemExit("TINODE_SETUP_FAIL anchor-public-path count=%d" % n)
+
+
+def bust(html: str) -> str:
+    """index.html: the two scripts under URLs of this revision."""
+    for name in ("umd/tinode.prod.js", "umd/index.prod.js"):
+        html, n = re.subn(r'src="' + re.escape(name) + r'(\?v=[A-Za-z0-9]+)?"', 'src="%s?v=%s"' % (name, SCRIPT_REV), html)
+        if n != 1:
+            raise SystemExit("TINODE_SETUP_FAIL anchor-script %s count=%d" % (name, n))
+    return html
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tinode", required=True)
@@ -122,7 +149,9 @@ def main() -> int:
     static = tin / "static"
     shutil.copytree(a.vendor, static / "vendor", dirs_exist_ok=True)
     idx = static / "index.html"
-    idx.write_text(page(idx.read_text(encoding="utf-8")), encoding="utf-8")
+    idx.write_text(bust(page(idx.read_text(encoding="utf-8"))), encoding="utf-8")
+    js = static / "umd" / "index.prod.js"
+    js.write_text(bundle(js.read_text(encoding="utf-8")), encoding="utf-8")
     print("TINODE_SETUP_OK=1")
     return 0
 
