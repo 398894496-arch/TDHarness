@@ -27,7 +27,8 @@ function find(dir, depth) {
   let es = [];
   try { es = fs.readdirSync(dir, { withFileTypes: true }); } catch { return ''; }
   for (const e of es) {
-    if (!e.isDirectory() || e.name === 'lib' || e.name === 'src' || e.name === 'dist') continue;
+    // lib/ at the prefix itself is npm's lib/node_modules (where CI's pinned kernel sits); below, lib/ is a package's code.
+    if (!e.isDirectory() || (depth > 0 && e.name === 'lib') || e.name === 'src' || e.name === 'dist') continue;
     const hit = find(path.join(dir, e.name), depth + 1);
     if (hit) return hit;
   }

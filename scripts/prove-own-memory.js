@@ -87,7 +87,8 @@ function ask(port, token, body, route) {
     assert.ok(/company\/emp-amy\/_memory\/02-methods\/样品快递\.md/.test(paths(amy)), 'an employee in emp-<login> (no content/) finds her own: ' + paths(amy));
 
     // The desk side: a hit's path as this desk opens it, and back.
-    const desk = await import(path.join(ROOT, 'desk', 'plugins', 'company-shell', 'lib', 'index.js'));
+    // A file URL: on Windows an absolute path (d:\\...) is not something import() takes.
+    const desk = await import(require('url').pathToFileURL(path.join(ROOT, 'desk', 'plugins', 'company-shell', 'lib', 'index.js')).href);
     const win = '//tdharness.local/dsh-company';
     const mac = '/Users/pan/company';
     const hit = 'company/emp-pan/_memory/05-logs/会话摘录/2026-11-20｜塞尔维亚客户报价单 (aa11bb22).md';
