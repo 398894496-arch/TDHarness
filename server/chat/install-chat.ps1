@@ -83,13 +83,13 @@ try {
     if ($LASTEXITCODE -eq 0) { break }
     Start-Sleep 1
   }
+  # Tinode's init-db makes its database itself (CREATE DATABASE when its tables are not there), so the role may
+  # create databases and the database is not made here.
   if ((Psql "SELECT count(*) FROM pg_roles WHERE rolname = 'tinode';" @{}) -eq '0') {
-    Psql "CREATE ROLE tinode LOGIN PASSWORD :'pw';" @{ pw = $dbpw } | Out-Null
+    Psql "CREATE ROLE tinode LOGIN CREATEDB PASSWORD :'pw';" @{ pw = $dbpw } | Out-Null
     Write-Output 'PG_ROLE=created'
-  }
-  if ((Psql "SELECT count(*) FROM pg_database WHERE datname = 'tinode';" @{}) -eq '0') {
-    Psql "CREATE DATABASE tinode OWNER tinode ENCODING 'UTF8' TEMPLATE template0;" @{} | Out-Null
-    Write-Output 'PG_DB=created'
+  } else {
+    Psql "ALTER ROLE tinode CREATEDB;" @{} | Out-Null
   }
 } finally { Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue }
 Write-Output ('PG_SERVICE=' + (Get-Service -Name 'TDH-PostgreSQL').Status)
