@@ -1039,6 +1039,17 @@ def chat_provision_all() -> dict:
             (made if r and int(r.get("code") or 500) < 300 else failed).append(login)
         except Exception:
             failed.append(login)
+    # A directory step that failed (11-20: 郭迎's ran while her new account was still settling) is otherwise only
+    # tried again at that person's next login, which may never come: try it here for anyone not done.
+    links = _tinode_links()
+    done = _chat_directory()
+    for row in public_people():
+        login = str(row.get("login") or "")
+        if login not in links or row.get("status", "active") != "active" or login in made:
+            continue
+        have = set(done.get(login) or [])
+        if any(u not in have for w, u in links.items() if w != login and (person(w) or {}).get("status", "active") == "active"):
+            chat_directory_later(login, 1.0)
     return {"ok": not failed, "made": made, "failed": failed}
 
 
