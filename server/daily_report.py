@@ -11,7 +11,8 @@ The people service runs it at the configured time (it can sign in to the chat as
 ticket) and sends a short message in the chat; the whole page goes into each recipient's own folder, 日报/.
 runtime/daily-report.json (no file, or no "to": nothing is made or sent):
   {"to": ["<login>"], "from": "tdh", "at": "07:30", "skip": ["tdh"],
-   "packs": [{"title": "资金", "url": "http://127.0.0.1:4190/daily"}],
+   "packs": [{"title": "资金", "url": "http://127.0.0.1:4190/daily"},
+             {"title": "行情", "url": "http://127.0.0.1:4190/daily-market", "weekdays": [0]}],   # weekdays: Monday = 0
    "gateway": "http://127.0.0.1:8450", "model": "gpt-6.2-sol"}
 Nothing here writes to the brain, the board or the packs; only the recipients' 日报/ folder and the state file.
 """
@@ -124,12 +125,16 @@ def people_work(brain: Path, people: dict, day: date, skip: list, depts: dict, c
 
 # -- the packs' sections ---------------------------------------------------------------------------------------
 
-def pack_sections(cfg: dict, token: str, day: date, timeout: float = 120) -> list[dict]:
+def pack_sections(cfg: dict, token: str, day: date, timeout: float = 120, today: date | None = None) -> list[dict]:
+    """Each pack's lines; a pack with "weekdays" (0 = Monday) only on those days (the weekly 行情 on Mondays)."""
     out = []
+    today = today or (day + timedelta(days=1))
     for p in cfg.get("packs") or []:
         url = str(p.get("url") or "")
         if not url.startswith("http://127.0.0.1:"):
             continue                                   # this machine only
+        if p.get("weekdays") is not None and today.weekday() not in [int(x) for x in p.get("weekdays") or []]:
+            continue
         req = urllib.request.Request(url, data=json.dumps({"day": day.isoformat()}).encode(), method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", "Bearer " + token)
@@ -201,7 +206,7 @@ def run(cfg: dict, people: dict, depts: dict, brain: Path, cards_text: str, toke
     """Everything but sending: yesterday's page (or the given day's)."""
     now = now or datetime.now()
     day = day or (now.date() - timedelta(days=1))
-    sections = pack_sections(cfg, token, day)
+    sections = pack_sections(cfg, token, day, today=now.date())
     worked, idle = people_work(brain, people, day, list(cfg.get("skip") or []), depts, cfg, token)
     out = build(day, sections, cards_text, worked, idle)
     out["day"] = day.isoformat()
