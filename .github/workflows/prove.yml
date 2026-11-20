@@ -158,6 +158,8 @@ jobs:
         run: node scripts/prove-chat-relay.mjs
       - name: Prove 聊天 in the desk (left column, right-sidebar tab, the relay's page)
         run: node scripts/prove-chat-desk.js
+      - name: Crash log and watchdog (company-crash-log-v1, company-watchdog-v1)
+        run: node scripts/prove-crash-log.js
       - name: Prove task-card reminders (due soon, overdue, the admins' page, WeCom against a fake)
         run: python scripts/prove-task-notify.py
       - name: Prove task cards (share reach, no self-approval, damaged board, body limits)
