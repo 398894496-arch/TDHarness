@@ -53,6 +53,9 @@ def conf(sample: str, sec: dict, db_pw: str, uploads: str) -> str:
     t = once(t, r'"use_adapter":\s*""', '"use_adapter": "postgres"', "adapter")
     t = once(t, r'"User":\s*"postgres",\s*"Passwd":\s*"postgres",\s*"Host":\s*"localhost",',
              '"User": "tinode",\n\t\t\t\t"Passwd": "%s",\n\t\t\t\t"Host": "127.0.0.1",' % db_pw, "postgres")
+    # Its own database, made by init-db. Before making it, init-db connects without a database name, which PostgreSQL
+    # takes as the role's name ("tinode", kept as an empty database for that); the two must differ.
+    t = once(t, r'"Port":\s*"5432",\s*"DBName":\s*"tinode",', '"Port": "5432",\n\t\t\t\t"DBName": "tdhchat",', "dbname")
     t = once(t, r'"upload_dir":\s*"uploads"', '"upload_dir": "%s"' % uploads.replace("\\", "/"), "uploads")
     # Email validation: the first "required" list, inside acc_validation.email.
     head, _, tail = t.partition('"acc_validation": {')
