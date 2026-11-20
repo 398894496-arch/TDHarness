@@ -97,7 +97,9 @@ function personOf(token) {
   const dept = String(who.dept || '');
   // The brain files admins (and anyone without a department) under "boss" (homes-from-share.js).
   const bdept = role === 'admin' || !dept || dept === '*' || dept === 'company' ? 'boss' : dept;
-  return { login, role, dept, bdept };
+  // company-own-memory-v1: the person's own folder on the share (the roster's `personal`), where their memory is.
+  const home = String(who.personal || who.workspace || '');
+  return { login, role, dept, bdept, home };
 }
 
 function audit(login, route, hits) {
@@ -118,7 +120,13 @@ function ownDirs(layer, login) {
   return depts.map((d) => B(layer, d, login));
 }
 
+// company-own-memory-v1: a person's own memory is the _memory in their own folder (the roster's `personal`, where
+// KRouter's nightly writes their session excerpts), an admin's too. Before, every admin got _office/_memory, the
+// seed admin's (tdh's) own folder: a second admin (小潘, 2026-11-20) was handed tdh's session excerpts by
+// prior_work, and never found his own. Without a folder in the roster: the old rule.
 function personalMemory(person) {
+  const home = person.home ? path.resolve(person.home) : '';
+  if (home && under(COMPANY, home) && home.toLowerCase() !== path.resolve(COMPANY).toLowerCase()) return path.join(home, '_memory');
   return person.role === 'admin' ? C('_office', '_memory') : C('content', 'emp-' + safe(person.login), '_memory');
 }
 
