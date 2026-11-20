@@ -1887,8 +1887,28 @@ internal sealed class ShellForm : Form
             Application.DoEvents();
             LoginHit hit;
             try { hit = AppHost.CheckLogin(user, pass); }
-            catch (WebException)
+            catch (WebException wex)
             {
+                // company-login-reason-v1: HttpWebRequest throws on 401 and 429 too. Those are the server's answer,
+                // not a broken network: saying 连不上公司网 for a wrong password kept people retrying into the
+                // 15-minute lock (2026-11-20, 梁风禾).
+                var answered = wex.Response as HttpWebResponse;
+                var code = answered != null ? (int)answered.StatusCode : 0;
+                if (code == 401 || code == 403)
+                {
+                    _err.Text = "账号或密码不对";
+                    return;
+                }
+                if (code == 429)
+                {
+                    _err.Text = "登录失败次数太多，请 15 分钟后再试；忘了密码请找管理员重置";
+                    return;
+                }
+                if (code >= 400)
+                {
+                    _err.Text = "服务器没有正常回应（" + code + "），请稍后再试；一直这样请找管理员";
+                    return;
+                }
                 var netHint = AppHost.CompanyNetHint();
                 _err.Text = netHint.Length > 0 ? netHint : "连不上公司网，请稍后再试";
                 return;
