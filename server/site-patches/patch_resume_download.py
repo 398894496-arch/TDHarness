@@ -25,6 +25,11 @@ SH_NEW = """  # 断点续传 + 重试。@@resume-download
   fetch_zip &
 """
 
+# company-mac-offlan-resolve-v1: tree-restore.sh downloads through site_curl (curl --resolve with the address the
+# desk's own lookup found, so it works away from the office); the resumed download goes through it too.
+SH_OLD_SITE = SH_OLD.replace("  curl -fsSk", "  site_curl -fsSk")
+SH_NEW_SITE = SH_NEW.replace("      if curl -fsSk", "      if site_curl -fsSk")
+
 PS1_OLD = """  $req = [Net.HttpWebRequest]::Create($ZipUrl)
   $req.Method = 'GET'
   $req.Timeout = 600000
@@ -106,6 +111,8 @@ def patch(name, t):
     if MARK in t:
         return t, "already"
     if name == "tree-restore.sh":
+        if t.count(SH_OLD_SITE) == 1:
+            return t.replace(SH_OLD_SITE, SH_NEW_SITE, 1), "patched"
         if t.count(SH_OLD) != 1:
             raise SystemExit("anchor-resume-sh count=%d" % t.count(SH_OLD))
         return t.replace(SH_OLD, SH_NEW, 1), "patched"
