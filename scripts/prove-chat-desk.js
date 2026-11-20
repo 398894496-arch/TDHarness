@@ -176,7 +176,7 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 	tree = rerender(main.Comp);
 	const frame = find(tree, "iframe");
 	assert.ok(frame, "the chat in an iframe");
-	assert.equal(frame.props.src, "http://127.0.0.1:17811/chat/?k=abc");
+	assert.match(frame.props.src, /^http:\/\/127\.0\.0\.1:17811\/chat\/\?k=abc&theme=(light|dark)$/, "the chat page, in the desk's light or dark");
 	assert.match(frame.props.allow, /microphone/, "voice messages can record");
 
 	// The address is asked once: the right-sidebar tab shows the same chat at once.
@@ -185,7 +185,7 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 	effects.forEach((fn) => fn());
 	await new Promise((r) => setImmediate(r));
 	tree = rerender(body.Comp);
-	assert.equal(find(tree, "iframe").props.src, "http://127.0.0.1:17811/chat/?k=abc");
+	assert.match(find(tree, "iframe").props.src, /^http:\/\/127\.0\.0\.1:17811\/chat\/\?k=abc&theme=/);
 
 	// Another start of the desk, whose host has no relay: it says so and offers 重试.
 	const fresh = load();

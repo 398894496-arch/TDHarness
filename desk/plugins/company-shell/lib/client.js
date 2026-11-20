@@ -7082,8 +7082,26 @@ window.__ModuleLoader__.load({
 			if (el) chatBoxes.add(el);
 			chatBoxes.forEach(function (b) { if (!b.isConnected) chatBoxes.delete(b); });
 		}
+		// company-chat-theme-v1: the chat page wears the desk's light or dark (body[data-ds-dark-theme], as the
+		// artifact frame reads it): in its address when it opens, and as a message whenever the desk changes.
+		function deskTheme() {
+			try { return document.body && document.body.hasAttribute("data-ds-dark-theme") ? "dark" : "light"; } catch (err) { return "light"; }
+		}
+		function themed(u) { return u ? u + (u.indexOf("?") < 0 ? "?" : "&") + "theme=" + deskTheme() : u; }
 		function ChatFrame() {
 			const [url, setUrl] = React.useState("");
+			const frame = React.useRef(null);
+			React.useEffect(function () {
+				if (!url || typeof MutationObserver === "undefined" || !document.body) return undefined;
+				let origin = "*";
+				try { origin = new URL(url).origin; } catch (err) {}
+				const tell = function () {
+					try { if (frame.current && frame.current.contentWindow) frame.current.contentWindow.postMessage({ type: "tdh-theme", theme: deskTheme() }, origin); } catch (err) {}
+				};
+				const mo = new MutationObserver(tell);
+				mo.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+				return function () { mo.disconnect(); };
+			}, [url]);
 			const [failed, setFailed] = React.useState(false);
 			const [round, setRound] = React.useState(0);
 			React.useEffect(function () {
@@ -7110,7 +7128,8 @@ window.__ModuleLoader__.load({
 			if (url) {
 				return React.createElement("div", { style: box, "data-company-chat": "1", ref: chatBoxRef },
 					React.createElement("iframe", {
-						src: url,
+						ref: frame,
+						src: themed(url),
 						title: "聊天",
 						style: { flex: 1, width: "100%", minHeight: 0, border: 0, display: "block" },
 						allow: "clipboard-read; clipboard-write; microphone; camera; autoplay; fullscreen"

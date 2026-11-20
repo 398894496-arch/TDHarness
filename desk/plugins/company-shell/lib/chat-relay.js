@@ -349,7 +349,43 @@ export function systemNotify(title, body) {
 	return false;
 }
 
-function bootScript(login, tok, files) {
+// company-chat-shot-v1: 截图 in the chat takes a screenshot with the system's own tool on this computer, as the
+// keyboard shortcut would: the Mac's region selection (screencapture -i), Windows' snipping overlay (ms-screenclip:,
+// then the picture it leaves on the clipboard). The picture goes back to the page, which holds it in the input box.
+function captureOnMac(out) {
+	return new Promise((resolve) => {
+		execFile("screencapture", ["-i", "-x", out], { timeout: 5 * 60 * 1000 }, () => {
+			try { resolve(statSync(out).size > 0); } catch { resolve(false); }
+		});
+	});
+}
+const WIN_SHOT = [
+	"Add-Type -AssemblyName System.Windows.Forms, System.Drawing",
+	"Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class TdhClip { [DllImport(\"user32.dll\")] public static extern uint GetClipboardSequenceNumber(); }'",
+	"$seq = [TdhClip]::GetClipboardSequenceNumber()",
+	"Start-Process 'ms-screenclip:'",
+	"$t0 = Get-Date",
+	"while (((Get-Date) - $t0).TotalSeconds -lt 120) {",
+	"  Start-Sleep -Milliseconds 300",
+	"  if ([TdhClip]::GetClipboardSequenceNumber() -ne $seq) {",
+	"    Start-Sleep -Milliseconds 300",
+	"    if ([System.Windows.Forms.Clipboard]::ContainsImage()) { [System.Windows.Forms.Clipboard]::GetImage().Save($env:TDH_SHOT_OUT, [System.Drawing.Imaging.ImageFormat]::Png); exit 0 }",
+	"    $seq = [TdhClip]::GetClipboardSequenceNumber()",
+	"  }",
+	"  if (((Get-Date) - $t0).TotalSeconds -gt 3 -and -not (Get-Process ScreenClippingHost, SnippingTool -ErrorAction SilentlyContinue)) { exit 2 }",
+	"}",
+	"exit 1",
+].join("\n");
+function captureOnWindows(out) {
+	return new Promise((resolve) => {
+		execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-Command", WIN_SHOT],
+			{ windowsHide: true, timeout: 3 * 60 * 1000, env: Object.assign({}, process.env, { TDH_SHOT_OUT: out }) }, () => {
+				try { resolve(statSync(out).size > 0); } catch { resolve(false); }
+			});
+	});
+}
+
+function bootScript(login, tok, files, shot) {
 	// Runs before the chat page's own scripts: the person's chat token in the page's storage (it logs in by itself
 	// from there), the relay as its server. A different person than last time: empty storage first.
 	// The values are data: "<" escaped inside them, so nothing in them can end the script element.
@@ -361,6 +397,7 @@ function bootScript(login, tok, files) {
 		"var c={};try{c=JSON.parse(s.getItem('settings')||'{}')||{}}catch(e){}" +
 		"c.serverAddress=location.host;c.secureConnection=false;s.setItem('settings',JSON.stringify(c))" +
 		"}catch(e){}})();" +
+		(shot ? "window.TDH_SHOT=1;" : "") +
 		(files ? "try{(" + BRIDGE + ")()}catch(e){}" : "");
 	return "<script>" + js + "</script>";
 }
@@ -385,6 +422,12 @@ export function startChatRelay(opts) {
 		downloads: fb.downloads || path.join(os.homedir(), "Downloads"),
 		reveal: fb.reveal || ((p) => { execFile("open", ["-R", p], () => {}); }),
 	};
+	// Screenshots (see captureOnMac): on by default on a Mac and on Windows; tests hand in their own capturer.
+	const sh = opts.shot === undefined
+		? (process.platform === "darwin" ? { capture: captureOnMac } : process.platform === "win32" ? { capture: captureOnWindows } : null)
+		: opts.shot;
+	const shot = sh && { capture: sh.capture || captureOnMac };
+	let shooting = false;
 	const picked = new Map();
 	let port = 0;
 	let cache = { who: "", tok: null };
@@ -539,7 +582,7 @@ export function startChatRelay(opts) {
 			return;
 		}
 		let html = r.body.toString("utf8");
-		const boot = bootScript(t.login, t.tok, !!files);
+		const boot = bootScript(t.login, t.tok, !!files, !!shot);
 		html = html.indexOf("<head>") >= 0 ? html.replace("<head>", "<head>\n" + boot) : boot + html;
 		res.writeHead(200, {
 			"content-type": "text/html; charset=utf-8",
@@ -584,8 +627,39 @@ export function startChatRelay(opts) {
 		res.end(JSON.stringify(obj));
 	}
 
+	function dropOld() {
+		for (const [id, v] of picked) {
+			if (Date.now() - v.at > 10 * 60 * 1000) {
+				picked.delete(id);
+				if (v.temp) { try { unlinkSync(v.path); } catch { /* gone */ } }
+			}
+		}
+	}
+
 	async function fileRoute(req, res, u) {
 		const p = u.pathname;
+		if (p === "/tdh/shot" && req.method === "POST" && shot) {
+			if (shooting) { json(res, 200, { ok: false, error: "正在截图" }); return; }
+			shooting = true;
+			const out = path.join(os.tmpdir(), "tdh-shot-" + randomBytes(8).toString("hex") + ".png");
+			let ok = false;
+			try { ok = await shot.capture(out); } catch { ok = false; } finally { shooting = false; }
+			dropOld();
+			if (!ok) {
+				try { unlinkSync(out); } catch { /* none made */ }
+				json(res, 200, { ok: false, cancelled: true });
+				return;
+			}
+			const st = statSync(out);
+			const id = randomBytes(12).toString("base64url");
+			picked.set(id, { path: out, at: Date.now(), temp: true });
+			const d = new Date();
+			const two = (n) => (n < 10 ? "0" : "") + n;
+			const name = "截图 " + d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) + "-" + two(d.getHours()) + two(d.getMinutes()) + two(d.getSeconds()) + ".png";
+			json(res, 200, { ok: true, files: [{ id, name, size: st.size, type: "image/png" }] });
+			return;
+		}
+		if (!files && p !== "/tdh/picked") { plain(res, 404, "not found"); return; }
 		if (p === "/tdh/pick" && req.method === "POST") {
 			const paths = await files.choose(u.searchParams.get("multiple") === "1");
 			const out = [];
@@ -599,7 +673,7 @@ export function startChatRelay(opts) {
 				picked.set(id, { path: fp, at: Date.now() });
 				out.push({ id, name: path.basename(fp), size: st.size, type: TYPES[path.extname(fp).toLowerCase()] || "" });
 			}
-			for (const [id, v] of picked) if (Date.now() - v.at > 10 * 60 * 1000) picked.delete(id);
+			dropOld();
 			if (!out.length) {
 				json(res, 200, { ok: false, error: tooBig.length ? "文件太大（单个最多 200 MB）：" + tooBig.join("、") : "" });
 				return;
@@ -612,7 +686,11 @@ export function startChatRelay(opts) {
 			if (!v) { plain(res, 404, "not found"); return; }
 			picked.delete(u.searchParams.get("id"));
 			res.writeHead(200, { "content-type": TYPES[path.extname(v.path).toLowerCase()] || "application/octet-stream", "cache-control": "no-store" });
-			createReadStream(v.path).on("error", () => res.destroy()).pipe(res);
+			const rs = createReadStream(v.path);
+			rs.on("error", () => res.destroy());
+			// A screenshot is ours, made for this one hand-over: gone once it is handed over.
+			if (v.temp) rs.on("close", () => { try { unlinkSync(v.path); } catch { /* gone */ } });
+			rs.pipe(res);
 			return;
 		}
 		if (p === "/tdh/save" && req.method === "POST") {
@@ -669,7 +747,7 @@ export function startChatRelay(opts) {
 			return;
 		}
 		if (p.indexOf("/tdh/") === 0) {
-			if (!files || u.searchParams.get("k") !== pageKey) {
+			if (!(files || shot) || u.searchParams.get("k") !== pageKey) {
 				plain(res, 403, "forbidden");
 				return;
 			}

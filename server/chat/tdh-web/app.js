@@ -18,7 +18,7 @@
 	setTheme(new URLSearchParams(location.search).get("theme"));
 	window.addEventListener("message", (e) => {
 		const d = e.data;
-		if (d && d.type === "tdh-theme") setTheme(d.theme);
+		if (e.source === window.parent && d && d.type === "tdh-theme") setTheme(d.theme); // only the desk page around us
 	});
 
 	// ---- A tiny store: one version, bumped on any change, everything re-renders from Tinode's own caches. --------
@@ -51,6 +51,8 @@
 		members: {}, // group -> [uid]
 		tried: {}, // topic -> seq last fetched for the list (a chat whose messages are all gone is not asked again)
 		drafts: {}, // topic -> text
+		pending: {}, // topic -> [{ file, url }]: pictures and files waiting in the input box (a screenshot, a paste)
+		shooting: false,
 		reply: null, // { seq, content, label }
 		dialog: null, // { kind, ... }
 		menu: null, // { x, y, items }
@@ -403,6 +405,47 @@
 		S.reply = null;
 		t.publishDraft(pub).catch(() => {});
 		bump();
+	}
+	// Waiting in the input box until 发送 (as WeChat holds a screenshot or a pasted picture).
+	function addPending(name, list) {
+		const cur = S.pending[name] || [];
+		Array.from(list || []).forEach((file) => {
+			if (!file) return;
+			cur.push({ file, url: /^image\//.test(file.type) ? URL.createObjectURL(file) : "" });
+		});
+		S.pending[name] = cur;
+		bump();
+		focusInput();
+	}
+	function dropPending(name, i) {
+		const cur = S.pending[name] || [];
+		const gone = cur.splice(i, 1)[0];
+		if (gone && gone.url) URL.revokeObjectURL(gone.url);
+		bump();
+	}
+	function sendPending(name) {
+		const cur = S.pending[name] || [];
+		if (!cur.length) return;
+		S.pending[name] = [];
+		sendFiles(cur.map((p) => p.file));
+		cur.forEach((p) => { if (p.url) URL.revokeObjectURL(p.url); });
+	}
+	// 截图: the system's own screenshot on this computer, through the desk's relay (it says so with TDH_SHOT); the
+	// picture comes back here and waits in the input box. Without the relay's help, the keyboard shortcut tip.
+	const PAGE_KEY = new URLSearchParams(location.search).get("k") || "";
+	function canShoot() { return !!window.TDH_SHOT && !!PAGE_KEY; }
+	function shoot(name) {
+		if (S.shooting) return;
+		S.shooting = true;
+		bump();
+		const q = (p) => p + (p.indexOf("?") < 0 ? "?" : "&") + "k=" + encodeURIComponent(PAGE_KEY);
+		fetch(q("/tdh/shot"), { method: "POST" }).then((r) => r.json()).then((j) => {
+			if (!j || !j.ok) { if (j && j.error) toast(j.error); return null; }
+			const f = j.files[0];
+			return fetch(q("/tdh/picked?id=" + encodeURIComponent(f.id))).then((r) => r.blob()).then((b) => new File([b], f.name, { type: "image/png" }));
+		}).then((file) => { if (file) addPending(name, [file]); })
+			.catch(() => toast("截图没成功"))
+			.finally(() => { S.shooting = false; bump(); });
 	}
 	function maxUpload() { return client.getServerParam("maxFileUploadSize", 200 * 1048576); }
 	function sendFiles(files) {
@@ -808,9 +851,11 @@
 			bump();
 			if (Date.now() - keyAt.current > 3000 && t.isSubscribed()) { keyAt.current = Date.now(); try { t.noteKeyPress(); } catch (e) { /* not now */ } }
 		};
+		const pend = S.pending[t.name] || [];
 		const send = () => {
-			if (!text.trim()) return;
-			sendText(text);
+			if (!text.trim() && !pend.length) return;
+			sendPending(t.name);
+			if (text.trim()) sendText(text);
 			S.drafts[t.name] = "";
 			bump();
 		};
@@ -819,34 +864,39 @@
 		};
 		const onPaste = (e) => {
 			const list = e.clipboardData && e.clipboardData.files;
-			if (list && list.length) { e.preventDefault(); sendFiles(list); }
+			if (list && list.length) { e.preventDefault(); addPending(t.name, list); }
 		};
 		const dropProps = {
 			onDragOver: (e) => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) { e.preventDefault(); setDrop(true); } },
 			onDragLeave: () => setDrop(false),
-			onDrop: (e) => { e.preventDefault(); setDrop(false); sendFiles(e.dataTransfer.files); },
+			onDrop: (e) => { e.preventDefault(); setDrop(false); addPending(t.name, e.dataTransfer.files); },
 		};
-		return h("div", Object.assign({ className: "composer" + (drop ? " drop" : "") }, dropProps),
+		return h("div", Object.assign({ className: "composer" + (drop ? " drop" : "") + (pend.length ? " has-pend" : "") }, dropProps),
 			panel === "emoji" ? h("div", { className: "emoji", onMouseLeave: () => setPanel(null) }, EMOJI.map((em) => h("button", { key: em, onClick: () => { set(text + em); setPanel(null); focusInput(); } }, em))) : null,
 			panel === "cut" ? h("div", { className: "tip", onClick: () => setPanel(null) },
-				"截图后直接粘贴进来就能发：", h("br"),
-				h("b", null, "Mac"), "：Control + Shift + Command + 4", h("br"),
-				h("b", null, "Windows"), "：Win + Shift + S", h("br"),
-				"截好后在输入框里按 ", h("b", null, navigator.platform.indexOf("Mac") >= 0 ? "Command + V" : "Ctrl + V")) : null,
+				"截图后粘贴进来：", h("br"),
+				navigator.platform.indexOf("Mac") >= 0
+					? [h("b", { key: "a" }, "Control + Shift + Command + 4"), " 截图，再按 ", h("b", { key: "b" }, "Command + V")]
+					: [h("b", { key: "a" }, "Win + Shift + S"), " 截图，再按 ", h("b", { key: "b" }, "Ctrl + V")], h("br"),
+				"（更新 TDH 后，点这个按钮就直接截图）") : null,
 			h("div", { className: "tools" },
 				h("button", { className: "icon-btn", title: "表情", onClick: () => setPanel(panel === "emoji" ? null : "emoji") }, ICON.smile()),
 				h("button", { className: "icon-btn", title: "发送文件", onClick: () => files.current && files.current.click() }, ICON.folder()),
-				h("button", { className: "icon-btn", title: "截图", onClick: () => setPanel(panel === "cut" ? null : "cut") }, ICON.cut()),
+				h("button", { className: "icon-btn" + (S.shooting ? " busy" : ""), title: canShoot() ? (S.shooting ? "正在截图…" : "截图") : "截图",
+					onClick: () => { if (canShoot()) { setPanel(null); shoot(t.name); } else setPanel(panel === "cut" ? null : "cut"); } }, ICON.cut()),
 				h("button", { className: "icon-btn", title: "发送图片", onClick: () => images.current && images.current.click() }, ICON.image()),
 				h("div", { className: "sp" }),
 				h("button", { className: "icon-btn", title: "语音通话（下一期）", disabled: true }, ICON.phone())),
 			h("input", { ref: files, type: "file", multiple: true, hidden: true, onChange: (e) => { sendFiles(e.target.files); e.target.value = ""; } }),
 			h("input", { ref: images, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: (e) => { sendFiles(e.target.files); e.target.value = ""; } }),
+			pend.length ? h("div", { className: "pending" }, pend.map((p, i) => h("div", { key: i, className: "pend" + (p.url ? "" : " file") },
+				p.url ? h("img", { src: p.url, alt: p.file.name }) : h(React.Fragment, null, h("div", { className: "ftype " + ftype(p.file.name, p.file.type)[0] }, ftype(p.file.name, p.file.type)[1]), h("span", null, p.file.name)),
+				h("button", { className: "x", title: "不发了", onClick: () => dropPending(t.name, i) }, ICON.close())))) : null,
 			S.reply ? h("div", { className: "reply" }, h("span", null, "引用 " + S.reply.label), h("button", { className: "icon-btn", title: "不引用了", onClick: () => { S.reply = null; bump(); } }, ICON.close())) : null,
 			h("textarea", { ref: ta, value: text, placeholder: "输入消息", onChange: (e) => set(e.target.value), onKeyDown: onKey, onPaste }),
 			h("div", { className: "foot" },
 				h("div", { className: "hint" }, "Enter 发送，Shift + Enter 换行"),
-				h("button", { className: "send", disabled: !text.trim(), onClick: send }, "发送")));
+				h("button", { className: "send", disabled: !text.trim() && !pend.length, onClick: send }, "发送")));
 	}
 
 	function ChatPane(props) {
