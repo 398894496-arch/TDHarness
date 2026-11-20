@@ -34,6 +34,14 @@ function Lock([string]$dir, [string[]]$more) {
   & icacls.exe $dir /inheritance:r /grant:r @g | Out-Null
   if ($LASTEXITCODE -ne 0) { throw ('icacls-failed ' + $dir) }
 }
+# A native program's log lines on stderr are not failures; only its exit code is (with Stop, Windows PowerShell 5.1
+# turns the first stderr line into a terminating error).
+function Native([string]$exe, [string[]]$argv) {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { $out = & $exe @argv 2>&1 | ForEach-Object { [string]$_ } } finally { $ErrorActionPreference = $old }
+  return @{ code = $LASTEXITCODE; out = $out }
+}
 function Psql([string]$sql, [hashtable]$vars) {
   $args2 = @('-h', '127.0.0.1', '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', '-tA')
   foreach ($k in $vars.Keys) { $args2 += @('-v', ($k + '=' + $vars[$k])) }
@@ -57,15 +65,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $Data 'PG_VERSION'))) {
   $pwf = Join-Path $Rt ('pg-init-' + [guid]::NewGuid().ToString('N') + '.tmp')
   [IO.File]::WriteAllText($pwf, $su)
   try {
-    & (Join-Path $Pg 'bin\initdb.exe') -D $Data -U postgres -A scram-sha-256 ('--pwfile=' + $pwf) -E UTF8 --no-locale | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'initdb-failed' }
+    $r = Native (Join-Path $Pg 'bin\initdb.exe') @('-D', $Data, '-U', 'postgres', '-A', 'scram-sha-256', ('--pwfile=' + $pwf), '-E', 'UTF8', '--no-locale')
+    if ($r.code -ne 0) { throw ('initdb-failed ' + (($r.out | Select-Object -Last 3) -join ' | ')) }
   } finally { Remove-Item -LiteralPath $pwf -Force -ErrorAction SilentlyContinue }
   Add-Content -LiteralPath (Join-Path $Data 'postgresql.conf') -Value "`r`n# company-chat-tinode-v1`r`nlisten_addresses = '127.0.0.1'`r`nport = 5432`r`n"
   Write-Output 'PG_INITDB=1'
 }
 if (-not (Get-Service -Name 'TDH-PostgreSQL' -ErrorAction SilentlyContinue)) {
-  & (Join-Path $Pg 'bin\pg_ctl.exe') register -N 'TDH-PostgreSQL' -D $Data -S auto -w | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'pg-register-failed' }
+  $r = Native (Join-Path $Pg 'bin\pg_ctl.exe') @('register', '-N', 'TDH-PostgreSQL', '-D', $Data, '-S', 'auto', '-w')
+  if ($r.code -ne 0) { throw ('pg-register-failed ' + (($r.out | Select-Object -Last 3) -join ' | ')) }
 }
 if ((Get-Service -Name 'TDH-PostgreSQL').Status -ne 'Running') { Start-Service -Name 'TDH-PostgreSQL' }
 $env:PGPASSWORD = $su
@@ -97,9 +105,9 @@ Lock $Up @()
 if ($LASTEXITCODE -ne 0) { throw 'tinode-setup-failed' }
 Push-Location $Tin
 try {
-  $initOut = & (Join-Path $Tin 'init-db.exe') -config (Join-Path $Tin 'tinode.conf') 2>&1
-  if ($LASTEXITCODE -ne 0) { throw ('init-db-failed ' + (($initOut | Select-Object -Last 3) -join ' | ')) }
-  Write-Output ('INIT_DB=' + (($initOut | Select-Object -Last 1) -join ''))
+  $r = Native (Join-Path $Tin 'init-db.exe') @('-config', (Join-Path $Tin 'tinode.conf'))
+  if ($r.code -ne 0) { throw ('init-db-failed ' + (($r.out | Select-Object -Last 3) -join ' | ')) }
+  Write-Output ('INIT_DB=' + (($r.out | Select-Object -Last 1) -join ''))
 } finally { Pop-Location }
 $a = New-ScheduledTaskAction -Execute (Join-Path $Tin 'tinode.exe') -Argument ('-config "' + (Join-Path $Tin 'tinode.conf') + '" -static_data "' + (Join-Path $Tin 'static') + '"') -WorkingDirectory $Tin
 $tr = New-ScheduledTaskTrigger -AtStartup
@@ -118,7 +126,7 @@ Write-Output 'TINODE=listening 127.0.0.1:6060'
 # ---- 3. Caddy ----
 $ext = Join-Path $Rt 'caddy\ext\chat.caddy'
 Copy-Item -LiteralPath (Join-Path $Chat 'chat.caddy') -Destination $ext -Force
-& (Join-Path $Rt 'caddy\caddy.exe') reload --config (Join-Path $Rt 'caddy\Caddyfile') --adapter caddyfile 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'caddy-reload-failed' }
+$r = Native (Join-Path $Rt 'caddy\caddy.exe') @('reload', '--config', (Join-Path $Rt 'caddy\Caddyfile'), '--adapter', 'caddyfile')
+if ($r.code -ne 0) { throw ('caddy-reload-failed ' + (($r.out | Select-Object -Last 3) -join ' | ')) }
 Write-Output 'CADDY=reloaded'
 Write-Output 'CHAT_INSTALL_OK=1'
