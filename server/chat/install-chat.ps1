@@ -129,7 +129,31 @@ Write-Output 'TINODE=listening 127.0.0.1:6060'
 # ---- 3. Caddy ----
 $ext = Join-Path $Rt 'caddy\ext\chat.caddy'
 Copy-Item -LiteralPath (Join-Path $Chat 'chat.caddy') -Destination $ext -Force
-$r = Native (Join-Path $Rt 'caddy\caddy.exe') @('reload', '--config', (Join-Path $Rt 'caddy\Caddyfile'), '--adapter', 'caddyfile')
-if ($r.code -ne 0) { throw ('caddy-reload-failed ' + (($r.out | Select-Object -Last 3) -join ' | ')) }
-Write-Output 'CADDY=reloaded'
+$caddy = Join-Path $Rt 'caddy\caddy.exe'
+$cfile = Join-Path $Rt 'caddy\Caddyfile'
+$r = Native $caddy @('validate', '--config', $cfile, '--adapter', 'caddyfile')
+if ($r.code -ne 0) { throw ('caddy-validate-failed ' + (($r.out | Select-Object -Last 3) -join ' | ')) }
+if (Select-String -LiteralPath $cfile -Pattern '^\s*admin\s+off' -Quiet) {
+  # No admin endpoint, so no live reload: restart it, once no model reply is streaming through it (3 minutes at most).
+  $pids = @(Get-Process -Name caddy -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+  for ($i = 0; $i -lt 90; $i++) {
+    $busy = @(Get-NetTCPConnection -RemotePort 8450 -State Established -ErrorAction SilentlyContinue | Where-Object { $pids -contains $_.OwningProcess }).Count
+    if ($busy -eq 0) { break }
+    Start-Sleep 2
+  }
+  Write-Output ('CADDY_WAITED_S=' + ($i * 2))
+  Stop-ScheduledTask -TaskName 'Autostart-Caddy-8443'
+  Start-Sleep 1
+  Start-ScheduledTask -TaskName 'Autostart-Caddy-8443'
+  for ($i = 0; $i -lt 30; $i++) {
+    if (Get-NetTCPConnection -LocalPort 8443 -State Listen -ErrorAction SilentlyContinue) { break }
+    Start-Sleep 1
+  }
+  if (-not (Get-NetTCPConnection -LocalPort 8443 -State Listen -ErrorAction SilentlyContinue)) { throw 'caddy-not-listening' }
+  Write-Output 'CADDY=restarted'
+} else {
+  $r = Native $caddy @('reload', '--config', $cfile, '--adapter', 'caddyfile')
+  if ($r.code -ne 0) { throw ('caddy-reload-failed ' + (($r.out | Select-Object -Last 3) -join ' | ')) }
+  Write-Output 'CADDY=reloaded'
+}
 Write-Output 'CHAT_INSTALL_OK=1'
