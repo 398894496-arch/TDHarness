@@ -4,6 +4,26 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.20.3
+
+**公司聊天：私聊、群聊、传文件**（`company-chat-tinode-v1`、`company-chat-desk-v1`、`company-chat-directory-v1`、`company-chat-mac-files-v1`）
+- 服务器上装了开源聊天系统 Tinode（服务端 GPL-3.0，网页端 Apache-2.0）和它用的 PostgreSQL，两个都只听本机。网页端挂在 `https://<服务器>:8443/chat/`，跟 TDH 用同一个地址，公司里外都能用。CDN 上的 React、字体和图标都换成了服务器自己的文件，国内不翻墙也能打开。
+- 登录用 TDH 的账号：账号密码能登，电脑端已登录时直接用它的登录令牌，不用再输密码。第一次登录自动建号，名字取花名册里的；停用的人登不上；连续输错和 TDH 登录一样会被锁。
+- 电脑端（Win、Mac）：左栏「插件 / 定时任务」那一组多了「聊天」，点开在主区域；右侧栏开始页也有「聊天」，可以边干活边聊，切到别的页再回来不断线。打开就已登录。
+  - 聊天页由本机转发服务器的聊天，用的是单独的本机端口，跟 TDH 主界面互不相通：聊天消息就算带了恶意代码，也碰不到 TDH 的工具。电脑端的登录令牌留在本机，聊天页只拿到聊天自己的登录凭证。只有 TDH 自己的页面拿得到打开地址，别的网页、这台电脑上的其他账号都打不开。
+  - 电脑一启动就在后台先登好聊天，点开时不用再等；同一台电脑换人登录，聊天从空白开始，看不到上一个人的记录。
+- 通讯录：一个人第一次登录聊天，就自动出现在所有已有同事的联系人里，同事也出现在他的联系人里。建群时直接勾成员，不用先知道对方的登录名；也能按登录名或花名册里的名字搜到人。
+- 群聊、私聊、发图片、发文件都能用，单个文件最多 200 MB（Tinode 默认 8 MB）。
+- Mac 的窗口（WKWebView）本身不会弹选文件框，也不会保存下载。所以在 Mac 上：点回形针弹 macOS 自己的选文件框；点附件或图片的「下载」，文件存进「下载」文件夹，并在访达里选中。Windows 的窗口自带这两样。
+- 证明：`scripts/prove-chat-auth.py`（登录各种情况、锁定、只认本机、按名字搜、通讯录每人只建一次）；`scripts/prove-chat-relay.mjs`（打开地址要带钥匙、只认本机地址、只给聊天凭证、换人清空、静态文件、长轮询、websocket、文件接口）；`scripts/prove-chat-desk.js`（左栏、主区域、右侧栏的注册和页面）；`scripts/prove-chat-mac-files.mjs`（Mac 上本地跑：真 WebKit 里下载、手点下载、选文件）。11-20 在真服务器上实测：建群、拉人、发消息、传 300 KB 文件，另一个账号都收到了。
+- 还没有：不打开聊天页时没有新消息提醒；Mac 上录语音消息要麦克风授权，Mac 外壳还没接。
+
+**CI 修好四处**
+- `prove-desk-source.py` 把 Tailscale 的 DNS 地址 `100.100.100.100` 当成了某个站点的加密网地址；这个地址每个 tailnet 都一样，现在放过。
+- 更新说明里两处写了电脑端登录资料目录的真名，被指纹扫描拦下，改成描述。
+- `prove-own-memory.js` 在 Windows 上用绝对路径 `import()` 失败，改用文件 URL。
+- `prove-model-menu-blur.js` 在 npm 安装的内核目录里找不到文件（跳过了 `lib/`），现在找得到。
+
 ## 2026.11.20.2
 
 **推理档位又能选了**（`company-model-menu-blur-v1`、`company-key-efforts-v1`）
@@ -127,7 +147,7 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 - 没有 GitHub 令牌时 GitHub 接口每小时 60 次、搜索每分钟 10 次，自检连搜几次 Agent Reach 的 GitHub 专线和网关的接口都被限流，最后落到 Bing。现在 GitHub 问题先走 Agent Reach 网页搜索限定 `site:github.com`（实测「cpython github」第一条就是 `python/cpython`，不占 GitHub 额度），再走 GitHub 专线和接口，最后才是 Bing；被限流的渠道歇 10 分钟。查询里「github / 仓库」这类词不再原样传给 GitHub（以前会搜出名字里带 github 的杂仓库）。
 
 **登录框记住这台电脑上次登录的账号**（`company-remember-login-v1`）
-- Mac 的账号对话框原来默认写死 `tdh`（初始管理员），Windows 的账号框是空的。现在两端都默认填这台电脑上次登录成功的账号（存在 `~/.dsh-company-rc8/last.login`，只有账号名，不存密码，退出登录也留着）。
+- Mac 的账号对话框原来默认写死 `tdh`（初始管理员），Windows 的账号框是空的。现在两端都默认填这台电脑上次登录成功的账号（存在电脑端登录资料目录里的 `last.login`，只有账号名，不存密码，退出登录也留着）。
 - 同一账号在另一台电脑登录，先登录的那台被挤下线（「这个账号已在其他设备登录，本机已退出」）：这是原有的设计，保持不变。
 
 **员工端说明写清楚系统工具，命令行里直接有 node 和 opencli**（`company-shell-path-v1`）
@@ -144,7 +164,7 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 - App 里面和 zip 版的一样：同一个外壳（编译时自带的签名），同一份程序包。第一次打开时同样要到「系统设置 → 隐私与安全性」点一次「仍要打开」。
 
 **装好就入公司加密网络（Tailscale），Mac 和 Windows 一样**
-- Mac（`company-mac-tailnet-join-v1`）：第一次打开时，`desk/pack/mac/mac-join-off-lan.sh`（`start.command` 在登录前调用）说一句为什么，请员工输一次这台 Mac 的开机密码，装好 Tailscale 官方安装包（装之前用 `pkgutil` 核对是 Tailscale Inc. 签名并经 Apple 公证），再用站点的员工入网密钥加入公司 tailnet。已经能看到服务器的 Mac 什么都不问；登录着别的 tailnet 的 Mac 用 `tailscale login` 把公司网络加成第二个账号，不会顶掉原来的。在公司里点「以后再说」7 天内不再问，不在公司每次都问。日志在 `~/.dsh-company-rc8/ts-join.log`。
+- Mac（`company-mac-tailnet-join-v1`）：第一次打开时，`desk/pack/mac/mac-join-off-lan.sh`（`start.command` 在登录前调用）说一句为什么，请员工输一次这台 Mac 的开机密码，装好 Tailscale 官方安装包（装之前用 `pkgutil` 核对是 Tailscale Inc. 签名并经 Apple 公证），再用站点的员工入网密钥加入公司 tailnet。已经能看到服务器的 Mac 什么都不问；登录着别的 tailnet 的 Mac 用 `tailscale login` 把公司网络加成第二个账号，不会顶掉原来的。在公司里点「以后再说」7 天内不再问，不在公司每次都问。日志在电脑端登录资料目录里的 `ts-join.log`。
 - 服务器（`server/tailnet-site.ps1`、发布 2b 步）：多准备一份 `vendor-mac\`（入网密钥、服务器 tailnet 地址、Tailscale 官方 Mac 安装包），放进 Mac 包的 `vendor/`。DMG 里的 app 带着这份包，在家第一次装也能入网。
 - Windows（`company-setup-tailnet-always-v1`）：下载页的 Windows 按钮改给带着入网文件的安装包（`TDHarness-Setup-remote.exe`，下载下来仍叫 `TDHarness-Setup.exe`）。以前它在公司里能连上服务器就跳过入网，现在在公司里也先入网（Windows 问「是否允许更改」时点「是」），入网没成也照样装完，`TDHarness.exe` 启动时会再问；已在公司 tailnet 里的电脑不弹任何东西。
 - **修了一个让已装电脑永远入不了网的问题**（`company-tailnet-vendor-v1`）：`vendor/`（入网文件所在目录）不在客户端更新的范围里，已经装好的电脑更新时从来拿不到它，所以启动时的入网检查一直跳过（服务器上的 tailnet 里一台员工电脑都没有）。现在 `vendor/` 在 Windows 和 Mac 的更新范围里，`pack-update-check.js` 发现本机缺 `vendor/` 时也会补一次完整更新（增量包不带没变过的文件）。
