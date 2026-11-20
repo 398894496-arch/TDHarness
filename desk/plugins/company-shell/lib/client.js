@@ -6919,6 +6919,96 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		// company-chat-desk-v1 ------------------------------------------------------------
+		const CHAT_PANEL = "company-chat";
+		const CHAT_TAB = "company-chat";
+		let chatWhere = null;
+		function chatUrl() {
+			if (!chatWhere) {
+				chatWhere = fetch("/company/chat/where", {
+					credentials: "same-origin",
+					headers: { "Accept": "application/json" }
+				}).then(function (res) {
+					return res.json().then(function (j) {
+						if (res.ok && j && j.ok && j.url) return String(j.url);
+						throw new Error("relay");
+					});
+				}).catch(function (err) {
+					chatWhere = null;
+					throw err;
+				});
+			}
+			return chatWhere;
+		}
+		function ChatIcon(props) {
+			const size = (props && props.size) || 16;
+			return React.createElement("svg", {
+				width: size,
+				height: size,
+				viewBox: "0 0 16 16",
+				fill: "none",
+				stroke: "currentColor",
+				strokeWidth: 1.3,
+				strokeLinejoin: "round",
+				strokeLinecap: "round",
+				"aria-hidden": true
+			},
+				React.createElement("path", { d: "M2.5 3.5h7a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H6l-2.5 2v-2h-1a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z" }),
+				React.createElement("path", { d: "M10.5 6h3a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-1v2l-2.5-2H8a1 1 0 0 1-1-1v-.5" })
+			);
+		}
+		function ChatFrame() {
+			const [url, setUrl] = React.useState("");
+			const [failed, setFailed] = React.useState(false);
+			const [round, setRound] = React.useState(0);
+			React.useEffect(function () {
+				let live = true;
+				setFailed(false);
+				chatUrl().then(function (u) {
+					if (live) setUrl(u);
+				}, function () {
+					if (live) setFailed(true);
+				});
+				return function () { live = false; };
+			}, [round]);
+			const box = {
+				width: "100%",
+				height: "100%",
+				minWidth: 0,
+				minHeight: 0,
+				display: "flex",
+				flexDirection: "column",
+				overflow: "hidden",
+				background: T.base,
+				fontFamily: FONT
+			};
+			if (url) {
+				return React.createElement("div", { style: box, "data-company-chat": "1" },
+					React.createElement("iframe", {
+						src: url,
+						title: "聊天",
+						style: { flex: 1, width: "100%", minHeight: 0, border: 0, display: "block" },
+						allow: "clipboard-read; clipboard-write; microphone; camera; autoplay; fullscreen"
+					})
+				);
+			}
+			return React.createElement("div", { style: Object.assign({}, box, { alignItems: "center", justifyContent: "center", gap: 10, color: T.label2, fontSize: 13 }) },
+				React.createElement("div", null, failed ? "聊天没打开：本机的聊天转发没起来。" : "正在打开聊天…"),
+				failed ? React.createElement(P.Button, {
+					variant: "outline",
+					size: "sm",
+					type: "button",
+					onClick: function () { setRound(round + 1); }
+				}, "重试") : null
+			);
+		}
+		function ChatPage() {
+			return React.createElement(ChatFrame);
+		}
+		function ChatTab() {
+			return React.createElement(ChatFrame);
+		}
+
 		function apply(ctx) {
 			shellRole = readDeskRole();
 			fetchLoginRole();
@@ -7004,10 +7094,54 @@ window.__ModuleLoader__.load({
 				ctx.workspaces.list.subscribe(function () { pulse(); });
 			}
 
+			// company-chat-desk-v1: 聊天, the company chat (Tinode on the site), as a panel in the left column and
+			// as a right-sidebar tab. Both show the chat page this desk's host relays (chat-relay.js), on a port of
+			// its own: a separate origin from this page, already logged in as the person at this desk.
+			ctx.slots.inject("main", function () {
+				return ctx.slots.register({
+					name: "main",
+					key: CHAT_PANEL
+				}, ChatPage);
+			});
+			ctx.slots.inject("sidebar.panellist", function () {
+				return ctx.slots.register({
+					name: "sidebar.panellist",
+					id: CHAT_PANEL,
+					order: 30,
+					label: function () { return "聊天"; }
+				}, ChatIcon);
+			});
+			if (typeof ctx.inject === "function") {
+				ctx.inject(["slots", "sidebarRightTabs"], function (rctx) {
+					rctx.effect(function () {
+						return rctx.sidebarRightTabs.register({
+							id: CHAT_TAB,
+							kind: CHAT_TAB,
+							priority: "extension",
+							keepMounted: true,
+							title: function () { return "聊天"; },
+							guide: [{
+								id: CHAT_TAB,
+								order: 40,
+								title: function () { return "聊天"; },
+								description: function () { return "和同事私聊、群聊、传文件"; },
+								icon: ChatIcon
+							}]
+						});
+					}, "company-shell: chat tab type");
+					rctx.slots.inject("sidebar.right.pane.tab", function () {
+						return rctx.slots.register({
+							name: "sidebar.right.pane.tab",
+							key: CHAT_TAB
+						}, ChatTab);
+					});
+				});
+			}
+
 			// Global panels (the official plugin manager registers "plugins" here).
 			// The shipped sidebar row used to list them; ours does now, above the
 			// workspaces, the same way.
-			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务" };
+			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务", "company-chat": "聊天" };
 			const panelSubs = new Set();
 			let panelRows = [];
 			function syncPanels() {

@@ -11,7 +11,7 @@ match the sample exactly once (a newer release that moved one stops here instead
   - its own token key and uid key, made once and kept in runtime/tinode-secrets.json (a new uid key would
     scramble every stored id), and the PostgreSQL password from runtime/tinode-db.secret;
   - no email validation and no clean-up of unvalidated accounts (TDH makes the accounts; they have no email);
-  - uploads under --uploads.
+  - uploads under --uploads, files up to 200 MB.
 The web page's React, fonts and icons come from CDNs (jsDelivr, Google Fonts), which desks in China often cannot
 reach: index.html loads them from static/vendor instead. Prints TINODE_SETUP_OK=1.
 """
@@ -57,6 +57,8 @@ def conf(sample: str, sec: dict, db_pw: str, uploads: str) -> str:
     # takes as the role's name ("tinode", kept as an empty database for that); the two must differ.
     t = once(t, r'"Port":\s*"5432",\s*"DBName":\s*"tinode",', '"Port": "5432",\n\t\t\t\t"DBName": "tdhchat",', "dbname")
     t = once(t, r'"upload_dir":\s*"uploads"', '"upload_dir": "%s"' % uploads.replace("\\", "/"), "uploads")
+    # Files up to 200 MB (the sample's 8 MB stops most design files and videos).
+    t = once(t, r'"max_size":\s*8388608', '"max_size": 209715200', "media-max-size")
     # Email validation: the first "required" list, inside acc_validation.email.
     head, _, tail = t.partition('"acc_validation": {')
     if not tail:

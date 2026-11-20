@@ -7,6 +7,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import { watchVideo } from "./video-watch.js";
 import { kernelWatchCutover, kernelWatchPlug, kernelWatchPublish, kernelWatchSnapshot, kernelWatchUpgrade } from "./kernel-watch.js";
+import { startChatRelay } from "./chat-relay.js";
 
 const OPENCLI_STORE =
 	"https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk";
@@ -2429,6 +2430,31 @@ export function apply(ctx) {
 	addOpencliSection(ctx);
 	const web = typeof ctx.get === "function" ? ctx.get("webServer") : null;
 	if (web == null || typeof web.register !== "function") return;
+	// company-chat-desk-v1: 聊天 (the company chat on the site) through this desk's own relay, see chat-relay.js.
+	let chat = null;
+	ctx.effect(() => {
+		chat = startChatRelay({ site: siteBase, deskToken: gwToken, login: loginNameFile });
+		const mine = chat;
+		return () => {
+			if (chat === mine) chat = null;
+			mine.close().catch(() => {});
+		};
+	});
+	ctx.effect(() =>
+		web.register({
+			kind: "exact",
+			path: "/company/chat/where",
+			handler: async (req, res) => {
+				const port = chat ? await chat.ready : 0;
+				const url = port > 0 && chat ? chat.url() : "";
+				res.writeHead(url ? 200 : 503, {
+					"content-type": "application/json; charset=utf-8",
+					"cache-control": "no-store",
+				});
+				res.end(JSON.stringify(url ? { ok: true, url } : { ok: false, error: "relay" }));
+			},
+		}),
+	);
 	ctx.effect(() =>
 		web.register({
 			kind: "exact",

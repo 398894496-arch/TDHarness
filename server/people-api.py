@@ -865,6 +865,174 @@ def _tinode_secret(payload: dict) -> tuple[str, str]:
     return login.strip().lower(), pw
 
 
+# company-chat-directory-v1: everyone is in everyone's chat contacts, so nobody has to know a login to start a chat
+# or pick the members of a group. When a person's chat account is made (and on later logins, for whoever joined
+# since), this server opens their one-to-one chat with every other person who has a chat account: Tinode makes the
+# chat on both sides, so it shows in both contact lists. It logs in as that person with their own desk login token
+# (Tinode asks this same service, which knows it); a person without one is added by the next person who joins.
+# What is done is kept in runtime/tinode-directory.json.
+TINODE_URL = os.environ.get("TDH_TINODE_URL") or "http://127.0.0.1:6060"
+TINODE_STATIC = Path(os.environ.get("TDH_TINODE_STATIC") or str(ROOT / "tinode" / "static"))
+TINODE_DIRECTORY = ROOT / "runtime" / "tinode-directory.json"
+_DIR_MU = threading.Lock()
+_DIR_BUSY: set = set()
+_TAG_OK = re.compile(r"^[-_+.!?#@\w]{2,96}$")
+
+
+def _chat_tag(name: str) -> str:
+    t = re.sub(r"\s+", "", str(name or "")).lower()
+    return t if _TAG_OK.match(t) else ""
+
+
+def _chat_directory() -> dict:
+    try:
+        data = json.loads(TINODE_DIRECTORY.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _chat_api_key() -> str:
+    try:
+        m = re.search(r'"(AQ[A-Za-z0-9_-]{30})"', (TINODE_STATIC / "umd" / "index.prod.js").read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return ""
+    return m.group(1) if m else ""
+
+
+def _person_token(login: str) -> str:
+    row = person(login)
+    pid = str((row or {}).get("pid") or "")
+    if not pid:
+        return ""
+    for t in load_tokens().get("tokens") or []:
+        if t and str(t.get("pid") or "") == pid and not t.get("revoked_at") and str(t.get("token") or "").startswith("dsh_"):
+            return str(t["token"])
+    return ""
+
+
+class _ChatLP:
+    """One Tinode session over long polling, enough to log in and open chats."""
+
+    def __init__(self, key: str):
+        import urllib.request
+        self._req = urllib.request
+        self._open = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # this machine, never a proxy
+        self.base = TINODE_URL.rstrip("/") + "/v0/channels/lp?apikey=" + key
+        self.sid = ""
+        self.n = 0
+        for m in self._get():
+            sid = ((m.get("ctrl") or {}).get("params") or {}).get("sid")
+            if sid:
+                self.sid = sid
+
+    def _url(self) -> str:
+        return self.base + ("&sid=" + self.sid if self.sid else "")
+
+    @staticmethod
+    def _lines(raw: str) -> list:
+        out = []
+        for line in raw.split("\n"):
+            if line.strip():
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    pass
+        return out
+
+    def _get(self) -> list:
+        with self._open.open(self._req.Request(self._url()), timeout=20) as r:
+            return self._lines(r.read().decode("utf-8", "replace"))
+
+    def send(self, msg: dict) -> dict | None:
+        self.n += 1
+        mid = str(self.n)
+        key = next(iter(msg))
+        msg[key]["id"] = mid
+        # text/plain: Tinode reads a form-typed POST as a form and calls the message malformed.
+        req = self._req.Request(self._url(), data=json.dumps(msg).encode("utf-8"), method="POST", headers={"Content-Type": "text/plain"})
+        with self._open.open(req, timeout=20) as r:
+            got = self._lines(r.read().decode("utf-8", "replace"))
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            for m in got:
+                c = m.get("ctrl")
+                if c and c.get("id") == mid:
+                    return c
+            got = self._get()
+        return None
+
+
+def chat_directory_join(login: str) -> dict:
+    """Open `login`'s chats with everyone else who has a chat account. Returns what it did."""
+    links = _tinode_links()
+    me = links.get(login)
+    if not me:
+        return {"ok": False, "why": "no-account"}
+    others = {}
+    for who, uid in links.items():
+        row = person(who)
+        if who != login and uid and row is not None and row.get("status", "active") == "active":
+            others[who] = uid
+    done = set((_chat_directory().get(login) or []))
+    todo = {w: u for w, u in others.items() if u not in done}
+    if not todo:
+        return {"ok": True, "added": 0}
+    token = _person_token(login)
+    key = _chat_api_key()
+    if not token or not key:
+        return {"ok": False, "why": "no-token" if not token else "no-key"}
+    lp = _ChatLP(key)
+    if not lp.sid:
+        return {"ok": False, "why": "no-session"}
+    hi = lp.send({"hi": {"ver": "0.25", "ua": "TDH-directory/1.0"}})
+    secret = base64.b64encode((login + ":" + token).encode("utf-8")).decode("ascii")
+    r = lp.send({"login": {"scheme": "basic", "secret": secret}}) if hi and int(hi.get("code") or 500) < 300 else None
+    if not r or int(r.get("code") or 500) >= 300:
+        return {"ok": False, "why": "login", "code": (r or {}).get("code")}
+    added = []
+    for who, uid in todo.items():
+        c = lp.send({"sub": {"topic": "usr" + uid}})
+        if c and int(c.get("code") or 500) < 300:
+            added.append(uid)
+            lp.send({"leave": {"topic": "usr" + uid}})
+    with _DIR_MU:
+        data = _chat_directory()
+        data[login] = sorted(set(data.get(login) or []) | set(added))
+        TINODE_DIRECTORY.parent.mkdir(parents=True, exist_ok=True)
+        tmp = TINODE_DIRECTORY.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, TINODE_DIRECTORY)
+    return {"ok": len(added) == len(todo), "added": len(added), "of": len(todo)}
+
+
+def chat_directory_later(login: str, delay: float) -> None:
+    """Run chat_directory_join in the background once Tinode has finished this login; one at a time per person."""
+    links = _tinode_links()
+    if not links.get(login):
+        return
+    done = set((_chat_directory().get(login) or []))
+    if all(u in done for w, u in links.items() if w != login):
+        return
+    with _DIR_MU:
+        if login in _DIR_BUSY:
+            return
+        _DIR_BUSY.add(login)
+
+    def run() -> None:
+        try:
+            time.sleep(float(os.environ.get("TDH_CHAT_DIR_DELAY") or delay))
+            res = chat_directory_join(login)
+            sys.stderr.write("people-api chat-directory %s %s\n" % (login, json.dumps(res)))
+        except Exception as exc:  # the chat itself works without it; try again on the next login
+            sys.stderr.write("people-api chat-directory %s failed %s\n" % (login, exc))
+        finally:
+            with _DIR_MU:
+                _DIR_BUSY.discard(login)
+
+    threading.Thread(target=run, name="chat-directory-" + login, daemon=True).start()
+
+
 def tinode_auth(payload: dict) -> dict:
     endpoint = str(payload.get("endpoint") or "")
     if endpoint == "checkunique":
@@ -883,6 +1051,8 @@ def tinode_auth(payload: dict) -> dict:
             tmp = TINODE_LINKS.with_suffix(".tmp")
             tmp.write_text(json.dumps(links, ensure_ascii=False), encoding="utf-8")
             os.replace(tmp, TINODE_LINKS)
+        # The new account is made but not yet logged in: join the directory a little later.
+        chat_directory_later(login, 4.0)
         return {"rec": {"uid": uid, "authlvl": "auth"}}
     if endpoint != "auth":
         return {"err": "unsupported"}
@@ -899,12 +1069,16 @@ def tinode_auth(payload: dict) -> dict:
         login_failed(login, src)
         return {"err": "failed"}
     login_succeeded(login, "")
-    rec = {"authlvl": "auth", "state": "ok", "tags": ["tdh:" + login]}
+    name = str(row.get("name") or "").strip() or login
+    # Found by the login and by the roster name (company-chat-directory-v1); Tinode takes these when it makes the
+    # account. "tdh:" is the server's own namespace: nobody can give it to themselves.
+    tags = ["tdh:" + login] + [t for t in dict.fromkeys([login, _chat_tag(name)]) if t]
+    rec = {"authlvl": "auth", "state": "ok", "tags": tags}
     uid = _tinode_links().get(login)
     if uid:
         rec["uid"] = uid
+        chat_directory_later(login, 6.0)
         return {"rec": rec}
-    name = str(row.get("name") or "").strip() or login
     return {"rec": rec, "newacc": {"auth": "JRWPS", "anon": "N", "public": {"fn": name}, "trusted": {"staff": True}}}
 
 

@@ -149,9 +149,13 @@ jobs:
       - name: Prove people management, including removing an account for good
         if: runner.os == 'Linux'
         run: python3 scripts/prove-people.py
-      - name: Prove the company chat (Tinode) logs in with TDH accounts only
+      - name: Prove the company chat (Tinode) logs in with TDH accounts only, and everyone is in everyone's contacts
         if: runner.os == 'Linux'
         run: python3 scripts/prove-chat-auth.py
+      - name: Prove the desk's chat relay (its own origin, the person's chat token only, websocket for its page only)
+        run: node scripts/prove-chat-relay.mjs
+      - name: Prove 聊天 in the desk (left column, right-sidebar tab, the relay's page)
+        run: node scripts/prove-chat-desk.js
       - name: Prove task-card reminders (due soon, overdue, the admins' page, WeCom against a fake)
         run: python scripts/prove-task-notify.py
       - name: Prove task cards (share reach, no self-approval, damaged board, body limits)
