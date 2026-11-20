@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.20.2
+
+**推理档位又能选了**（`company-model-menu-blur-v1`、`company-key-efforts-v1`）
+- 内核的模型与推理等级菜单：点「推理等级」时，那一行被换成档位列表、从页面上移除，焦点丢失，菜单以为人点到了外面，在 90 毫秒内整个关掉，档位一个也点不上。新对话有时来得及，老对话总是先关；所有电脑都这样，表现为「点了就变成 Default」（11-20）。内核补丁：焦点丢失但没有去到别的地方时，先等这一轮渲染完再判断；焦点已经回到菜单里，或者失焦的是被移除的那一行，就不关，焦点交给选中的档位；点到外面、切走窗口照常关。证明：`scripts/prove-model-menu-blur.js`（用真实内核文件打补丁，再模拟五种失焦情况）。
+- 网关：DeepSeek 这类按 key 接入的厂商，在 `/models` 里报了自己的档位（DeepSeek 是 low、high、max），原来被丢掉了。于是「公司模型」这一组凑不齐默认档位，换模型以后就显示 Default。现在带下来，每个模型都有档位，这一组有默认档位 High。证明：`scripts/prove-gw-key-models.js` 加了一条检查。
+
+**Windows 登录框说清为什么没登上**（`company-login-reason-v1`）
+- 服务器回「密码不对」（401）或「失败太多次」（429）时，Windows 的请求组件会抛异常，登录框原来都显示成「连不上公司网」，人就一直重试，结果被锁 15 分钟（11-20 梁风禾）。现在分别提示「账号或密码不对」「登录失败次数太多，请 15 分钟后再试；忘了密码请找管理员重置」，以及「服务器没有正常回应」。
+
 ## 2026.11.20
 
 **Mac 离开公司也能连上服务器，登录框说清为什么没登上**（`company-mac-offlan-resolve-v1`）

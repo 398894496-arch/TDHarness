@@ -8,7 +8,7 @@
 [![release](https://img.shields.io/github/v/release/398894496-arch/TDHarness?label=release)](https://github.com/398894496-arch/TDHarness/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**当前版本 / Version: 2026.11.20**
+**当前版本 / Version: 2026.11.20.2**
 
 ![AI 读了工作区里的销售表，按地区汇总并写出复盘文件，用时 28 秒](docs/screenshots/00-agent-at-work.jpg)
 
