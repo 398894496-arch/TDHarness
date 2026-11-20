@@ -4,6 +4,17 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.20
+
+**任务做到一半被登出修好；桌面控制不再报「Unknown method」**
+- **任务中途被登出**（`company-desk-self-open-v1`）：
+  - 现象：Agent 正在干活，界面突然退回登录页，所有没跑完的工具调用都显示「The tool call was interrupted…」。不是闲置超时：座位守护记的是 `WATCH_STOP=desk-down`，也就是本机桌面进程（`127.0.0.1:17803`）没了，守护按规则清掉登录。
+  - 线索：一台 Mac 上 11-20 两次（03:03、08:31）都发生在 Agent 用 `opencli browser open` / `sidebar_open` 打开 TDH 自己这个地址的同一秒。
+  - 修法：Agent 用 `sidebar_open`、`opencli` 工具或 bash 里的 `opencli browser open` / `open` 打开本机 17803 时直接拒绝，并告诉它改用 curl 读状态或请用户看当前窗口。curl、其他本机端口和公网页面照常。`node scripts/prove-desk-self-open.mjs` → `DESK_SELF_OPEN_PROVE_OK=1`，进 CI。
+  - 还没定论的是进程为什么会被带崩：启动时会清空 `web-runtime.err`，崩溃原因被冲掉了。
+- **保留崩溃现场**（`company-desk-err-keep-v1`）：Mac 和 Windows 员工端启动时先把上一次非空的 `web-runtime.err` 存成 `web-runtime.err.prev`，再清空。下次再挂能看到原因。
+- **桌面控制的红字报错**（`company-mcp-one-templates-v1`）：cua-driver 不支持 `resources/templates/list`，Agent 一问就显示 `Error: Unknown method`。`mcp-one.cjs` 把这种回答换成空列表。`prove-mcp-one.js` 加了这一条。
+
 ## 2026.11.19.9
 
 **YouTube 搜索修好；OpenCLI 升到 2.0.3；内核：工具参数被截断时不再执行**
