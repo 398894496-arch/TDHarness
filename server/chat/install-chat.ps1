@@ -50,7 +50,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $Pg 'bin\postgres.exe'))) {
 $su = Secret 'pg-superuser.secret'
 $dbpw = Secret 'tinode-db.secret'
 if (-not (Test-Path -LiteralPath (Join-Path $Data 'PG_VERSION'))) {
-  Lock $Data @('*S-1-5-20:(OI)(CI)M')
+  # initdb drops the Administrators group from its own token (PostgreSQL's restricted token), so the user running
+  # this needs a grant of its own, besides NETWORK SERVICE (the service account) and the usual two.
+  $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+  Lock $Data @('*S-1-5-20:(OI)(CI)M', ('*' + $me + ':(OI)(CI)F'))
   $pwf = Join-Path $Rt ('pg-init-' + [guid]::NewGuid().ToString('N') + '.tmp')
   [IO.File]::WriteAllText($pwf, $su)
   try {
