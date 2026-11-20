@@ -21,7 +21,8 @@ const fail = (w) => { console.error('GW_KEY_MODELS_PROVE_FAIL ' + w); process.ex
     req.resume();
     req.on('end', () => {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ data: ids.map((id) => ({ id })) }));
+      // DeepSeek lists each model's own reasoning levels (effort.supported_levels); the embedding model none.
+      res.end(JSON.stringify({ data: ids.map((id) => (/embedding/.test(id) ? { id } : { id, effort: { supported_levels: ['low', 'high', 'max'], default_level: 'high' } })) }));
     });
   });
   await new Promise((r) => vendor.listen(0, '127.0.0.1', r));
@@ -82,6 +83,9 @@ const fail = (w) => { console.error('GW_KEY_MODELS_PROVE_FAIL ' + w); process.ex
   if (r.status !== 200 || r.j.all !== true) fail('clearing the pick: ' + JSON.stringify(r.j));
   got = await listed();
   if (got.join(',') !== 'deepseek-flash,deepseek-v4-pro,deepseek-v5') fail('with no pick the new model should show by itself: ' + got);
+  // company-key-efforts-v1: the vendor's own levels reach the desks (their 公司模型 group then has a default level).
+  const rows = ((await call('GET', '/v1/company-models')).j.models || []).filter((m) => m.vendor === 'deepseek');
+  if (!rows.length || !rows.every((m) => Array.isArray(m.efforts) && m.efforts.join(',') === 'low,high,max')) fail('the vendor\'s reasoning levels should reach the desks: ' + JSON.stringify(rows));
   gw.kill(); vendor.close();
   console.log('GW_KEY_MODELS_PROVE_OK=1');
 })().catch((e) => fail(String(e && e.message || e)));
