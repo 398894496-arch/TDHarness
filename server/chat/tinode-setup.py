@@ -145,7 +145,8 @@ def look(html: str) -> str:
 def bust(html: str) -> str:
     """index.html: the two scripts under URLs of this revision."""
     for name in ("umd/tinode.prod.js", "umd/index.prod.js"):
-        html, n = re.subn(r'src="' + re.escape(name) + r'(\?v=[A-Za-z0-9]+)?"', 'src="%s?v=%s"' % (name, SCRIPT_REV), html)
+        # Any earlier revision: content_rev's ("tdh-" and hex) as well as the old fixed ones ("tdh4").
+        html, n = re.subn(r'src="' + re.escape(name) + r'(\?v=[^"]*)?"', 'src="%s?v=%s"' % (name, SCRIPT_REV), html)
         if n != 1:
             raise SystemExit("TINODE_SETUP_FAIL anchor-script %s count=%d" % (name, n))
     return html

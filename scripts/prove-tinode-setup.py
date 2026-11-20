@@ -38,10 +38,20 @@ def check(cond, what):
         raise SystemExit("TINODE_SETUP_PROVE_FAIL " + what)
 
 
+# The revision as main() sets it ("tdh-" and hex, 11-20: a second run under it found no script before this check).
+ts.SCRIPT_REV = ts.content_rev(HERE.parent / "server" / "chat")
+check(ts.SCRIPT_REV.startswith("tdh-"), "a content revision: " + ts.SCRIPT_REV)
 h = ts.look(ts.bust(ts.page(HTML)))
 check("cdn.jsdelivr" not in h and "fonts.googleapis" not in h and "polyfill" not in h, "no CDN left: " + h)
 check('src="umd/index.prod.js?v=%s"' % ts.SCRIPT_REV in h and 'src="umd/tinode.prod.js?v=%s"' % ts.SCRIPT_REV in h, "scripts under this revision's URL")
 check(ts.look(ts.bust(ts.page(h))) == h, "index.html: a second run changes nothing")
+# A page left by an earlier revision (the old fixed one, or another content one) takes the new one.
+for old in ("tdh4", "tdh-0123456789"):
+    keep = ts.SCRIPT_REV
+    ts.SCRIPT_REV = old
+    prev = ts.look(ts.bust(ts.page(HTML)))
+    ts.SCRIPT_REV = keep
+    check(ts.look(ts.bust(ts.page(prev))) == h, "index.html from revision %s takes this one" % old)
 check(h.count('href="tdh-chat.css?v=%s"' % ts.SCRIPT_REV) == 1 and h.index("css/base.min.css") < h.index("tdh-chat.css"), "TDH's sheet once, after Tinode's own")
 check((Path(__file__).resolve().parent.parent / "server" / "chat" / "tdh-chat.css").read_text(encoding="utf-8").count("company-chat-look-v1") == 1, "the sheet is in the repository")
 j = ts.bundle(JS)
