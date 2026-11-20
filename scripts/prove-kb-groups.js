@@ -86,6 +86,30 @@ async function serve(root, zones) {
     assert.deepStrictEqual(await sees('fay'), { shared: true, floor: true, customer: true, finance: true }, 'finance: all three zones');
     assert.deepStrictEqual(await sees('olly'), { shared: true, floor: false, customer: false, finance: false }, 'another department: the shared knowledge only');
     assert.deepStrictEqual(await sees('boss'), { shared: true, floor: true, customer: true, finance: true }, 'an admin: everything');
+    // Remembering a customer or a floor price: zone=customers, for sales and finance only (and admins).
+    const W = (who, body) => new Promise((resolve, reject) => {
+      const raw = Buffer.from(JSON.stringify(body));
+      const req = http.request({ hostname: '127.0.0.1', port: srv.port, path: '/v1/memory-write', method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': raw.length, authorization: 'Bearer ' + T[who] } }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+      });
+      req.on('error', reject);
+      req.end(raw);
+    });
+    let w = await W('sam', { zone: 'customers', layer: '02-methods', name: 'ivan-terms', content: '塞尔维亚客户 Ivan 付款条件：预付三成，见提单付七成。' });
+    assert.ok(w.ok && w.zone === 'group:_sales-finance' && /^company\/_handbook\/_sales-finance\/_memory\/02-methods\/ivan-terms\.md$/.test(w.path), 'sales remembers a customer in the sales-and-finance zone: ' + JSON.stringify(w));
+    w = await W('olly', { zone: 'customers', layer: '02-methods', name: 'x', content: '客户电话。' });
+    assert.ok(!w.ok && w.status === 'not-in-zone', 'another department cannot: ' + JSON.stringify(w));
+    assert.ok(!fs.existsSync(path.join(company, '_shared', '_memory', '02-methods', 'x.md')), 'and nothing went into the company memory instead');
+    w = await W('fay', { zone: 'customers', layer: '02-methods', name: 'cost-2026', content: '2026 年聚氨酯原料成本每吨一万二。' });
+    assert.ok(w.ok && w.zone === 'group:_sales-finance', 'finance too: ' + JSON.stringify(w));
+    w = await W('sam', { layer: '02-methods', name: 'quote-steps', content: '报价前先确认规格和数量。' });
+    assert.ok(w.ok && w.zone === 'shared', 'without the zone: the company memory as before: ' + JSON.stringify(w));
+    const found = async (who, q, re) => ((await ask(srv.port, T[who], q)).hits || []).some((h) => re.test(h.path));
+    assert.ok(await found('fay', '塞尔维亚客户 Ivan 付款条件', /_sales-finance\/_memory\/02-methods\/ivan-terms\.md$/), 'finance finds what sales remembered');
+    assert.ok(!(await found('olly', '塞尔维亚客户 Ivan 付款条件', /ivan-terms/)), 'another department does not');
     srv.stop();
     // A _ folder no groups entry names is not everyone's.
     srv = await serve(root, { private: ['d-fin'] });
