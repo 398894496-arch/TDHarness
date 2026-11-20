@@ -152,6 +152,8 @@ jobs:
       - name: Prove the company chat (Tinode) logs in with TDH accounts only, and everyone is in everyone's contacts
         if: runner.os == 'Linux'
         run: python3 scripts/prove-chat-auth.py
+      - name: Prove the chat page's setup (no CDNs, chunks beside the page, scripts fetched again after a fix)
+        run: python3 scripts/prove-tinode-setup.py
       - name: Prove the desk's chat relay (its own origin, the person's chat token only, websocket for its page only)
         run: node scripts/prove-chat-relay.mjs
       - name: Prove 聊天 in the desk (left column, right-sidebar tab, the relay's page)
