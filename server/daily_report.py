@@ -25,8 +25,8 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-DEFAULTS = {"from": "tdh", "at": "07:30", "skip": ["tdh"], "packs": [], "gateway": "http://127.0.0.1:8450",
-            "model": "gpt-6.2-sol"}
+DEFAULTS = {"from": "tdh", "at": "07:30", "window_hours": 4, "skip": ["tdh"], "packs": [],
+            "gateway": "http://127.0.0.1:8450", "model": "gpt-6.2-sol"}
 _OPEN = urllib.request.build_opener(urllib.request.ProxyHandler({}))      # this machine only, never a proxy
 
 
@@ -41,14 +41,17 @@ def load_config(runtime: Path) -> dict:
 
 
 def due(now: datetime, cfg: dict, state: dict) -> bool:
-    """Time for today's page: past the hour and minute, and not sent today."""
+    """Time for today's page: within window_hours from the hour and minute, and not sent today. A service started
+    late in the evening does not send then (2026-11-20: a restart at 23:10 sent at once); the next morning does."""
     if not cfg:
         return False
     try:
         hh, mm = (int(x) for x in str(cfg.get("at") or "07:30").split(":", 1))
     except ValueError:
         hh, mm = 7, 30
-    return (now.hour, now.minute) >= (hh, mm) and state.get("day") != now.strftime("%Y-%m-%d")
+    start = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    hours = float(cfg.get("window_hours") or DEFAULTS["window_hours"])
+    return start <= now < start + timedelta(hours=hours) and state.get("day") != now.strftime("%Y-%m-%d")
 
 
 # -- what people did -------------------------------------------------------------------------------------------
