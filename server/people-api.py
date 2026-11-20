@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import desk_lease  # noqa: E402
 import tickets as ticket_board  # noqa: E402
+import daily_report  # noqa: E402
 import notify  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
@@ -1521,6 +1522,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/company/people":
             self._people(payload)
             return
+        if path == "/company/daily-report":
+            # company-daily-report-v1: an admin makes today's page now (dry: without sending), or another day's.
+            row = person(login_from_token(self._token()))
+            if not row or row.get("role") != "admin":
+                self._send(*json_bytes({"ok": False, "error": "admin-only"}, 403))
+                return
+            day = str(payload.get("day") or "")
+            if day and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+                self._send(*json_bytes({"ok": False, "error": "bad-day"}, 400))
+                return
+            self._send(*json_bytes(daily_report_once(force=True, dry=bool(payload.get("dry")), day=day or None)))
+            return
         self._send(*json_bytes({"ok": False, "error": "not-found"}, 404))
 
 
@@ -1568,6 +1581,108 @@ def notify_once(now_ms: int | None = None) -> list:
     return done
 
 
+def chat_send(sender: str, to: str, text: str) -> dict:
+    """One chat message from `sender` to `to` (company-daily-report-v1): signs in as the sender with a one-time
+    ticket, opens their one-to-one chat, posts, leaves."""
+    links = _tinode_links()
+    if not links.get(sender) or not links.get(to):
+        return {"ok": False, "why": "no-account"}
+    key = _chat_api_key()
+    if not key:
+        return {"ok": False, "why": "no-key"}
+    lp = _ChatLP(key)
+    if not lp.sid:
+        return {"ok": False, "why": "no-session"}
+    hi = lp.send({"hi": {"ver": "0.25", "ua": "TDH-daily/1.0"}})
+    secret = base64.b64encode((sender + ":" + _chat_ticket(sender)).encode("utf-8")).decode("ascii")
+    r = lp.send({"login": {"scheme": "basic", "secret": secret}}) if hi and int(hi.get("code") or 500) < 300 else None
+    if not r or int(r.get("code") or 500) >= 300:
+        return {"ok": False, "why": "login"}
+    topic = "usr" + links[to]
+    s = lp.send({"sub": {"topic": topic}})
+    if not s or int(s.get("code") or 500) >= 300:
+        return {"ok": False, "why": "sub", "code": (s or {}).get("code")}
+    p = lp.send({"pub": {"topic": topic, "noecho": True, "content": text}})
+    lp.send({"leave": {"topic": topic}})
+    return {"ok": bool(p) and int(p.get("code") or 500) < 300, "code": (p or {}).get("code")}
+
+
+DAILY_MU = threading.Lock()
+
+
+def daily_report_once(force: bool = False, dry: bool = False, day: str | None = None) -> dict:
+    """company-daily-report-v1 (server/daily_report.py): at the configured time, yesterday's page into each
+    recipient's 日报/ folder and a short chat message to them. force: now; dry: make the page, send nothing;
+    day: that day's page instead of yesterday's (sent or not, it does not count as today's)."""
+    runtime = TOKEN_STORE.parent
+    cfg = daily_report.load_config(runtime)
+    if not cfg:
+        return {"ok": False, "why": "not-configured"}
+    state_file = runtime / "daily-report-state.json"
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    now = daily_report.now_local()
+    if not force and not daily_report.due(now, cfg, state):
+        return {"ok": True, "skipped": "not-due"}
+    with DAILY_MU:
+        people = people_by_login()
+        depts = {d.get("id"): d.get("name") for d in (load_roster().get("depts") or []) if isinstance(d, dict)}
+        try:
+            with BOARD_MU:
+                cards = ticket_board.digest(BOARD, people)
+        except ticket_board.Refused:
+            cards = ""
+        try:
+            token = (runtime / "gw-service.token").read_text(encoding="utf-8").strip()
+        except OSError:
+            token = ""
+        from datetime import date as _date
+        out = daily_report.run(cfg, people, depts, ROOT / "brain", cards, token, now,
+                               _date.fromisoformat(day) if day else None)
+        files, sent = [], []
+        for login in cfg["to"]:
+            row = people.get(login)
+            if not row:
+                sent.append({"to": login, "ok": False, "why": "not-in-roster"})
+                continue
+            f = daily_report.write_page(row.get("personal") or "", out["day"], out["html"])
+            rel = ""
+            if f is not None:
+                try:
+                    rel = f.resolve().relative_to((ROOT / "company").resolve()).as_posix()
+                except ValueError:
+                    rel = f.name
+                files.append(rel)
+            if not dry:
+                r = chat_send(cfg["from"], login, out["text"] + ("\n完整日报：个人文件夹 › 日报 › %s.html" % out["day"]))
+                sent.append({"to": login, "ok": bool(r.get("ok")), "why": r.get("why", "")})
+        if not dry and not day:
+            state = {"day": now.strftime("%Y-%m-%d"), "sent": sent, "at": now.isoformat(timespec="seconds")}
+            try:
+                state_file.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                pass
+        try:
+            (ROOT / "logs").mkdir(parents=True, exist_ok=True)
+            with (ROOT / "logs" / "daily-report.log").open("a", encoding="utf-8") as fh:
+                fh.write("%s day=%s dry=%s sent=%s\n" % (now.isoformat(timespec="seconds"), out["day"], dry,
+                                                         ",".join("%s:%s" % (x["to"], "ok" if x["ok"] else x["why"]) for x in sent)))
+        except OSError:
+            pass
+    return {"ok": True, "day": out["day"], "text": out["text"], "files": files, "sent": sent}
+
+
+def daily_report_loop() -> None:
+    while True:
+        time.sleep(60)
+        try:
+            daily_report_once()
+        except Exception:  # noqa: BLE001 - the page must never take the people service down
+            pass
+
+
 def notify_loop() -> None:
     while True:
         time.sleep(NOTIFY_EVERY)
@@ -1595,6 +1710,8 @@ def main() -> None:
         threading.Thread(target=notify_loop, name="notify", daemon=True).start()
     if os.environ.get("TDH_CHAT_PROVISION", "1") != "0":
         threading.Thread(target=chat_provision_loop, name="chat-provision", daemon=True).start()
+    if os.environ.get("TDH_DAILY_REPORT", "1") != "0":
+        threading.Thread(target=daily_report_loop, name="daily-report", daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     sys.stdout.write("LISTEN=%s:%s\n" % (HOST, PORT))
     sys.stdout.flush()
