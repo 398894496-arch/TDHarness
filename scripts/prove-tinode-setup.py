@@ -7,6 +7,7 @@
 - umd/index.prod.js: the chunks (language, views) load from "umd/" beside the page, not "/umd/" at the site's root,
   where under /chat/ they 404 and the page stays blank (11-20); a second run changes nothing; a release that moved
   the public path stops setup instead of passing silently.
+- TDH's own chat page (company-chat-client-v1) into static/tdh/ with the web key read from Tinode's page.
 Prints TINODE_SETUP_PROVE_OK=1.
 """
 import importlib.util
@@ -50,4 +51,20 @@ try:
     check(False, "a moved public path stops setup")
 except SystemExit as e:
     check("anchor-public-path" in str(e), "a moved public path stops setup: " + str(e))
+# TDH's chat page (company-chat-client-v1) into static/tdh/: this revision's URLs, the key Tinode's own page carries.
+import tempfile
+box = Path(tempfile.mkdtemp(prefix="tdh-web-"))
+(box / "umd").mkdir()
+(box / "umd" / "index.prod.js").write_text('s.d(t,["Lq",0,"AQ' + "k" * 30 + '"]);', encoding="utf-8")
+ts.web(box, HERE.parent / "server" / "chat" / "tdh-web")
+idx = (box / "tdh" / "index.html").read_text(encoding="utf-8")
+check("__REV__" not in idx and ("app.js?v=%s" % ts.SCRIPT_REV) in idx and "../umd/tinode.prod.js" in idx, "the page under this revision's URLs, beside Tinode's SDK")
+check((box / "tdh" / "config.js").read_text(encoding="utf-8") == 'window.TDH_CHAT_KEY = "AQ%s";\n' % ("k" * 30), "the key from Tinode's own page")
+check(all((box / "tdh" / n).is_file() for n in ("app.js", "app.css")), "the app and its sheet")
+try:
+    (box / "umd" / "index.prod.js").write_text("no key here", encoding="utf-8")
+    ts.web(box, HERE.parent / "server" / "chat" / "tdh-web")
+    check(False, "no key: setup stops")
+except SystemExit as e:
+    check("no-api-key" in str(e), "no key: setup stops: " + str(e))
 print("TINODE_SETUP_PROVE_OK=1")

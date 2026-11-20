@@ -19,6 +19,8 @@ site's root); this page is at /chat/, so the chunks 404 and the page stays blank
 relative "umd/" instead, and index.html asks for the scripts under a new URL so a browser that kept the old copy
 fetches them again.
 The page wears TDH's look (company-chat-look-v1): tdh-chat.css, beside the page, loaded after Tinode's own sheet.
+TDH's own chat page (company-chat-client-v1, server/chat/tdh-web) goes in static/tdh/, with config.js holding the
+web API key read from Tinode's own page (the public key its page carries; not kept in the repository).
 Prints TINODE_SETUP_OK=1.
 """
 from __future__ import annotations
@@ -138,6 +140,23 @@ def bust(html: str) -> str:
     return html
 
 
+def web(static: Path, src: Path) -> None:
+    """TDH's chat page into static/tdh/: its files under this revision's URLs, and the API key Tinode's page uses."""
+    m = re.search(r'"(AQ[A-Za-z0-9_-]{30})"', (static / "umd" / "index.prod.js").read_text(encoding="utf-8"))
+    if not m:
+        raise SystemExit("TINODE_SETUP_FAIL no-api-key")
+    out = static / "tdh"
+    out.mkdir(exist_ok=True)
+    for name in ("index.html", "app.css", "app.js"):
+        text = (src / name).read_text(encoding="utf-8")
+        if name == "index.html":
+            if text.count("__REV__") < 1:
+                raise SystemExit("TINODE_SETUP_FAIL anchor-web-rev")
+            text = text.replace("__REV__", SCRIPT_REV)
+        (out / name).write_text(text, encoding="utf-8")
+    (out / "config.js").write_text("window.TDH_CHAT_KEY = %s;\n" % json.dumps(m.group(1)), encoding="utf-8")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tinode", required=True)
@@ -165,6 +184,7 @@ def main() -> int:
     idx.write_text(look(bust(page(idx.read_text(encoding="utf-8")))), encoding="utf-8")
     js = static / "umd" / "index.prod.js"
     js.write_text(bundle(js.read_text(encoding="utf-8")), encoding="utf-8")
+    web(static, Path(__file__).resolve().parent / "tdh-web")
     print("TINODE_SETUP_OK=1")
     return 0
 
