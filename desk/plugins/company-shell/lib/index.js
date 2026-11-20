@@ -1190,9 +1190,9 @@ function registerKnowledgeTool(ctx) {
 				route,
 				query,
 				evidence: !!args.evidence,
-				path: String(args.path || args.evidence_path || ""),
+				path: serverHitPath(String(args.path || args.evidence_path || "")),
 			});
-			return out.json && typeof out.json === "object" ? out.json : { ok: false, status: "bad-json", hits: [] };
+			return out.json && typeof out.json === "object" ? localizeHits(out.json) : { ok: false, status: "bad-json", hits: [] };
 		},
 	}));
 }
@@ -1241,7 +1241,7 @@ function registerPriorWorkTool(ctx) {
 				return { ok: false, status: "no-login", hits: [] };
 			}
 			const out = await proxyKnowledge({ query: String(args.query || "") }, "/company/knowledge/v1/prior-work");
-			return out.json && typeof out.json === "object" ? out.json : { ok: false, status: "bad-json", hits: [] };
+			return out.json && typeof out.json === "object" ? localizeHits(out.json) : { ok: false, status: "bad-json", hits: [] };
 		},
 	});
 }
@@ -1943,6 +1943,33 @@ export function deskPath(serverPath, root) {
 	const base = root == null ? deskCompanyRoot() : root;
 	if (!base || rel === String(serverPath || "").replace(/\\/g, "/")) return String(serverPath || "");
 	return rel ? base + "/" + rel : base;
+}
+
+// company-own-memory-v1: the knowledge service names a company file `company/<path>`; the agent opens it on this
+// desk's share (\\server\dsh-company on Windows, ~/company on a Mac). It took `company/_office/...` for a folder
+// inside its own workspace and read nothing (2026-11-20). A path it hands back goes to the server the server's way.
+export function deskHitPath(p, root) {
+	const s = String(p || "");
+	const fwd = s.replace(/\\/g, "/");
+	const base = root == null ? deskCompanyRoot() : root;
+	if (!base) return s;
+	if (/^company\//i.test(fwd)) return base + "/" + fwd.slice("company/".length);
+	return deskPath(s, base);
+}
+
+export function serverHitPath(p) {
+	const s = String(p || "").trim();
+	const fwd = s.replace(/\\/g, "/");
+	if (!s || /^company\//i.test(fwd)) return s;
+	const rel = companyRel(fwd);
+	return rel !== fwd ? "company/" + rel : s;
+}
+
+function localizeHits(out, root) {
+	if (out && Array.isArray(out.hits)) {
+		for (const h of out.hits) if (h && typeof h.path === "string" && h.path) h.path = deskHitPath(h.path, root);
+	}
+	return out;
 }
 
 // The server names task folders by its own path; the card shows (and copies) the
