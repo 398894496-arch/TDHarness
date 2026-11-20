@@ -161,7 +161,13 @@ jobs:
       - name: Crash log and watchdog (company-crash-log-v1, company-watchdog-v1)
         run: node scripts/prove-crash-log.js
       - name: Daily report (company-daily-report-v1)
+        if: runner.os == 'Linux'
         run: python3 scripts/prove-daily-report.py
+      - name: Chat page logic (company-chat-client-v1; tinode-sdk 0.25.3, as the server runs)
+        if: runner.os == 'Linux'
+        run: |
+          npm install --no-save --no-fund --no-audit --prefix "$RUNNER_TEMP/tinode" tinode-sdk@0.25.3
+          TINODE_SDK="$RUNNER_TEMP/tinode/node_modules/tinode-sdk" node scripts/prove-chat-client.js
       - name: Prove task-card reminders (due soon, overdue, the admins' page, WeCom against a fake)
         run: python scripts/prove-task-notify.py
       - name: Prove task cards (share reach, no self-approval, damaged board, body limits)
