@@ -23,6 +23,16 @@ company_knowledge  route=search  query=<窄词>
 
 权限划分见 `company-access`。怎么写入见 `company-memory`。写入走 `company_memory_write`，不要官方 `write` 打 `_shared`。
 
+## 公司知识库在哪（company-kb-groups-v1）
+
+公司盘 `_handbook/` 下分区，每个文件夹里的 `说明.md` 写着这里放什么、不放什么：
+
+- `_handbook/_company/`：全公司共享知识，所有人能看、能放、能改。
+- `_handbook/_<名字>/`：几个部门共用的区，例如「销售与行政财务」（客户信息、底价、成本），只有这些部门和管理员打得开、搜得到。
+- `_handbook/<部门>/`：单独分区的部门（行政财务）自己的私密知识，只有本部门和管理员。
+
+用户问「这个文件放哪」，按对应的 `说明.md` 告诉他放进哪个文件夹：Windows 是 `\\{{TDH_HOST}}\dsh-company\_handbook\...`，Mac 是 `~/company/_handbook/...`。客户信息、底价、成本不要放进 `_company`。
+
 ## 规则
 
 1. 别人的 `$personal/_memory` 搜不到，是权限，不是空。

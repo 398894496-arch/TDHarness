@@ -323,10 +323,17 @@ function memoryHome(person) {
   if (dept && privateDepts().has(dept)) return { zone: 'dept', dir: C('_handbook', dept, '_memory') };
   return { zone: 'shared', dir: C('_shared', '_memory') };
 }
+// company-kb-groups-v1: a zone some departments share keeps its own memory too (customers, floor prices, costs that
+// sales or finance asked to remember), _handbook/<group dir>/_memory: only those departments and admins read it.
+function groupsOf(person) {
+  const d = safe(person.dept || '');
+  return kbGroups().filter((g) => person.role === 'admin' || (d && g.depts.has(d)));
+}
 function memoryBanks(person) {
   const home = memoryHome(person);
   const banks = [{ name: 'company', dir: C('_shared', '_memory') }];
   if (home.zone === 'dept') banks.push({ name: 'dept', dir: home.dir });
+  for (const g of groupsOf(person)) banks.push({ name: 'group', dir: C('_handbook', g.dir, '_memory') });
   banks.push({ name: 'personal', dir: personalMemory(person) });
   return banks;
 }
@@ -347,7 +354,13 @@ function memoryWrite(person, body) {
   if (!content.trim()) return { ok: false, status: 'empty' };
   if (Buffer.byteLength(content, 'utf8') > MEM_MAX) return { ok: false, status: 'too-large' };
   const mode = body.mode === 'append' ? 'append' : 'replace';
-  const home = memoryHome(person);
+  let home = memoryHome(person);
+  // zone=customers: customers, floor prices, costs go to the zone sales and finance share, not the company memory.
+  if (body.zone === 'customers') {
+    const g = groupsOf(person)[0];
+    if (!g) return { ok: false, status: 'not-in-zone', hint: '客户信息、底价和成本只有销售和行政财务能记；你不在这两个部门。' };
+    home = { zone: 'group:' + g.dir, dir: C('_handbook', g.dir, '_memory') };
+  }
   const file = path.join(home.dir, layer, slug + '.md');
   if (!under(home.dir, file)) return { ok: false, status: 'bad-name' };
   const day = new Date().toISOString().slice(0, 10);

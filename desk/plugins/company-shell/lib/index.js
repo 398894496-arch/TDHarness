@@ -1258,8 +1258,8 @@ function registerMemoryWriteTool(ctx) {
 			properties: {
 				zone: {
 					type: "string",
-					enum: ["personal", "shared"],
-					description: "Ignored: every write goes to the shared company memory (or the department's own, for 行政财务). Kept so older calls still work.",
+					enum: ["personal", "shared", "customers"],
+					description: "customers: customer information, floor prices and costs (销售 and 行政财务 only): written into the zone sales and finance share, which only they and admins search. Never put those into the shared company memory. Anything else: the shared company memory (or the department's own, for 行政财务).",
 				},
 				layer: {
 					type: "string",
@@ -1305,6 +1305,7 @@ function registerMemoryWriteTool(ctx) {
 				content: args.content,
 				title: args.title,
 				mode: args.mode || "replace",
+				zone: args.zone === "customers" ? "customers" : undefined,
 			}, "/company/knowledge/v1/memory-write");
 			return out && out.json && typeof out.json === "object" ? out.json : { ok: false, status: "no-answer" };
 		},
