@@ -12,6 +12,8 @@
 //   - company-chat-notify-v1: the relay watches the person's chats ("me", with the chat token): the unread count
 //     from the contact list, a new message from someone else counts and is named (a new chat's name is fetched),
 //     one's own message does not count, reading elsewhere takes it off.
+//   - company-chat-shot-v1: 截图 runs the system's own screenshot here and hands the picture to the page once (the
+//     page is told it can, with the page's key only); a cancelled selection hands nothing.
 // Prints CHAT_RELAY_PROVE_OK=1.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -124,7 +126,7 @@ const SITE = "http://127.0.0.1:" + site.address().port;
 // --- the relay ----------------------------------------------------------------------------------------------
 let who = "lfh";
 let deskToken = DESK_TOKEN;
-const relay = startChatRelay({ site: () => SITE, deskToken: () => deskToken, login: () => who, files: null });
+const relay = startChatRelay({ site: () => SITE, deskToken: () => deskToken, login: () => who, files: null, shot: null });
 const port = await relay.ready;
 assert.ok(port > 0, "the relay listens");
 const pageUrl = new URL(relay.url());
@@ -220,7 +222,7 @@ const chosen = path.join(box, "报价单.pdf");
 fs.writeFileSync(chosen, "%PDF-1.4 test");
 const revealed = [];
 const mac = startChatRelay({ site: () => SITE, deskToken: () => DESK_TOKEN, login: () => "lfh",
-	files: { choose: async (multiple) => (multiple ? [chosen, box] : [chosen]), downloads, reveal: (p) => revealed.push(p) } });
+	files: { choose: async (multiple) => (multiple ? [chosen, box] : [chosen]), downloads, reveal: (p) => revealed.push(p) }, shot: null });
 const mport = await mac.ready;
 const mk = new URL(mac.url()).searchParams.get("k");
 function mreq(method, p, body) {
@@ -262,7 +264,7 @@ await mac.close();
 fs.rmSync(box, { recursive: true, force: true });
 
 // --- the unread watcher ---------------------------------------------------------------------------------------
-const w = startChatRelay({ site: () => SITE, deskToken: () => DESK_TOKEN, login: () => "lfh", files: null, warmMs: 10 });
+const w = startChatRelay({ site: () => SITE, deskToken: () => DESK_TOKEN, login: () => "lfh", files: null, shot: null, warmMs: 10 });
 await w.ready;
 const until = async (what, cond) => {
 	for (let i = 0; i < 100 && !cond(); i++) await new Promise((r) => setTimeout(r, 50));
@@ -292,8 +294,43 @@ assert.deepEqual(w.unread(seq).events, [], "nothing new after the last one seen"
 assert.equal(w.unread(seq - 1).events.length, 1);
 await w.close();
 
+// --- 截图 (company-chat-shot-v1) ---------------------------------------------------------------------------------
+const PNG = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000", "hex");
+let shots = 0;
+let cancel = false;
+const sr = startChatRelay({ site: () => SITE, deskToken: () => DESK_TOKEN, login: () => "lfh", files: null, watch: false,
+	shot: { capture: async (out) => { shots++; if (cancel) return false; fs.writeFileSync(out, PNG); return true; } } });
+const sport = await sr.ready;
+const sk = new URL(sr.url()).searchParams.get("k");
+const sreq = (method, p) => new Promise((resolve) => {
+	const q = http.request({ host: "127.0.0.1", port: sport, path: p, method, agent: false, headers: { host: "127.0.0.1:" + sport } }, (r) => {
+		const c = []; r.on("data", (d) => c.push(d)); r.on("end", () => resolve({ status: r.statusCode, body: Buffer.concat(c) }));
+	});
+	q.end();
+});
+const spage = (await sreq("GET", "/chat/?k=" + sk)).body.toString();
+assert.ok(spage.includes("window.TDH_SHOT=1"), "the page is told it can take screenshots");
+assert.ok(!spage.includes("/tdh/save"), "and the file bridge stays off when it is off");
+assert.ok(!page.body.includes("TDH_SHOT"), "a relay without screenshots does not say it has them");
+assert.equal((await sreq("POST", "/tdh/shot")).status, 403, "no key: refused");
+let sj = JSON.parse((await sreq("POST", "/tdh/shot?k=" + sk)).body.toString());
+assert.equal(sj.ok, true);
+assert.match(sj.files[0].name, /^截图 \d{8}-\d{6}\.png$/);
+assert.equal(sj.files[0].type, "image/png");
+const shotFile = (await sreq("GET", "/tdh/picked?id=" + encodeURIComponent(sj.files[0].id) + "&k=" + sk)).body;
+assert.ok(shotFile.equals(PNG), "the picture comes back to the page");
+await new Promise((r) => setTimeout(r, 100));
+assert.equal(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("tdh-shot-")).length, 0, "and is gone from this computer once handed over");
+assert.equal((await sreq("GET", "/tdh/picked?id=" + encodeURIComponent(sj.files[0].id) + "&k=" + sk)).status, 404, "once");
+cancel = true;
+sj = JSON.parse((await sreq("POST", "/tdh/shot?k=" + sk)).body.toString());
+assert.deepEqual(sj, { ok: false, cancelled: true }, "Esc in the selection: nothing");
+assert.equal(shots, 2);
+assert.equal((await sreq("POST", "/tdh/pick?k=" + sk)).status, 404, "the Mac's chooser is not there when the file bridge is off");
+await sr.close();
+
 // Values in the boot script cannot end it.
-const odd = startChatRelay({ site: () => SITE, deskToken: () => "", login: () => "a</script><b>", files: null });
+const odd = startChatRelay({ site: () => SITE, deskToken: () => "", login: () => "a</script><b>", files: null, shot: null });
 const oport = await odd.ready;
 const ok = new URL(odd.url()).searchParams.get("k");
 const oddPage = await new Promise((resolve) => http.get({ host: "127.0.0.1", port: oport, path: "/chat/?k=" + ok, agent: false, headers: { host: "127.0.0.1:" + oport } }, (r) => {

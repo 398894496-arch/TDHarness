@@ -139,6 +139,16 @@ svg { display: block; flex: none; }
 .composer.drop { outline: 2px dashed var(--accent); outline-offset: -6px; }
 .tools { display: flex; gap: 4px; color: var(--text-2); align-items: center; }
 .tools .sp { flex: 1; }
+.pending { display: flex; gap: 8px; flex-wrap: wrap; padding: 6px 2px 0; }
+.pend { position: relative; width: 72px; height: 72px; border-radius: 6px; overflow: hidden; background: var(--field); box-shadow: 0 0 0 1px var(--line); }
+.pend img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pend.file { width: auto; max-width: 220px; height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 30px 0 8px; font-size: 12px; }
+.pend.file .ftype { width: 24px; height: 28px; font-size: 7px; padding-bottom: 3px; }
+.pend.file span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pend .x { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 10px; background: rgba(15, 17, 21, 0.6); color: #fff; display: grid; place-items: center; }
+.composer.has-pend { height: auto; }
+.composer.has-pend textarea { flex: none; height: 56px; }
+.icon-btn.busy { color: var(--accent); background: var(--hover); }
 .reply { display: flex; align-items: center; gap: 8px; margin: 4px 0 0; padding: 4px 8px; border-radius: 4px; background: light-dark(rgba(0, 0, 0, 0.045), rgba(255, 255, 255, 0.06)); font-size: 12px; color: var(--text-2); }
 .reply span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; padding: 6px 2px; font-size: 14px; line-height: 1.55; min-height: 0; }
