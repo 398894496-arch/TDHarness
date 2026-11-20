@@ -283,6 +283,72 @@ function freePath(dir, name) {
 	return p;
 }
 
+// company-chat-notify-v1 -----------------------------------------------------------------------------------------
+// A long-polling session to the site that hands every message that is not the answer it waits for to `onOther`.
+function lpSession(base, key) {
+	const lp = "/v0/channels/lp?apikey=" + encodeURIComponent(key);
+	let at = "";
+	let n = 0;
+	const s = {
+		async open() {
+			const r = await fetchSite(base, lp, "GET", null, null, 15000);
+			for (const m of lines(r.body)) if (m.ctrl && m.ctrl.params && m.ctrl.params.sid) at = lp + "&sid=" + encodeURIComponent(m.ctrl.params.sid);
+			return !!at;
+		},
+		// Waits until the site has something to say (Tinode holds the request); a failed or refused poll throws.
+		async poll(ms) {
+			const r = await fetchSite(base, at, "GET", null, null, ms || 120000);
+			if (r.status >= 300) throw new Error("lp " + r.status);
+			return lines(r.body);
+		},
+		async send(msg, onOther) {
+			const id = String(++n);
+			msg[Object.keys(msg)[0]].id = id;
+			const first = await fetchSite(base, at, "POST", Buffer.from(JSON.stringify(msg), "utf8"), { "Content-Type": "text/plain" }, 15000);
+			if (first.status >= 300) throw new Error("lp " + first.status);
+			let got = lines(first.body);
+			const deadline = Date.now() + 15000;
+			while (Date.now() < deadline) {
+				let hit = null;
+				for (const m of got) {
+					if (m.ctrl && m.ctrl.id === id) hit = m.ctrl;
+					else onOther(m);
+				}
+				if (hit) return hit;
+				got = await s.poll(15000);
+			}
+			return null;
+		},
+	};
+	return s;
+}
+
+// The system's own notification (TDH's window is in the background). Mac: osascript; Windows: a toast through
+// Windows PowerShell's registered app id (no app id of TDH's own yet). At most one every 3 seconds.
+let lastNotify = 0;
+export function systemNotify(title, body) {
+	const now = Date.now();
+	if (now - lastNotify < 3000) return false;
+	lastNotify = now;
+	const t = String(title || "").slice(0, 80);
+	const b = String(body || "").slice(0, 200);
+	if (process.platform === "darwin") {
+		execFile("osascript", ["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run", t, b], () => {});
+		return true;
+	}
+	if (process.platform === "win32") {
+		const ps = "[void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime];" +
+			"[void][Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime];" +
+			"$e=[Security.SecurityElement];$x=New-Object Windows.Data.Xml.Dom.XmlDocument;" +
+			"$x.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>'+$e::Escape($env:TDH_NT)+'</text><text>'+$e::Escape($env:TDH_NB)+'</text></binding></visual></toast>');" +
+			"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($x))";
+		execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps],
+			{ windowsHide: true, env: Object.assign({}, process.env, { TDH_NT: t, TDH_NB: b }) }, () => {});
+		return true;
+	}
+	return false;
+}
+
 function bootScript(login, tok, files) {
 	// Runs before the chat page's own scripts: the person's chat token in the page's storage (it logs in by itself
 	// from there), the relay as its server. A different person than last time: empty storage first.
@@ -324,6 +390,118 @@ export function startChatRelay(opts) {
 	let cache = { who: "", tok: null };
 	const sockets = new Set();
 	let warm = null;
+
+	// company-chat-notify-v1: the person's unread count and new messages, watched from this desk's host so the desk
+	// can show them while the chat page is closed. A session of its own (long polling, the chat token) on "me":
+	// Tinode tells it about every new message in a chat it is not attached to ("msg", with who sent it; one's own
+	// messages carry no sender and are read already) and about reading done elsewhere ("read").
+	const watchOn = opts.watch !== false;
+	const log = typeof opts.log === "function" ? opts.log : () => {};
+	const unread = { me: "", topics: new Map(), count: 0, seq: 0, events: [], live: false };
+	let stopped = false;
+	let watching = false;
+	let watchTimer = null;
+	function recount() {
+		let c = 0;
+		for (const tp of unread.topics.values()) c += Math.max(0, (tp.seq || 0) - (tp.read || 0));
+		unread.count = c;
+	}
+	function onWatch(m, st) {
+		if (m.meta && m.meta.topic === "me" && Array.isArray(m.meta.sub)) {
+			for (const s of m.meta.sub) {
+				if (!s || !s.topic || s.deleted) continue;
+				const old = unread.topics.get(s.topic) || {};
+				unread.topics.set(s.topic, {
+					name: (s.public && s.public.fn) || old.name || "",
+					seq: Math.max(s.seq || 0, old.seq || 0),
+					read: Math.max(s.read || 0, old.read || 0),
+				});
+			}
+			recount();
+			return;
+		}
+		const p = m.pres;
+		if (!p || p.topic !== "me" || !p.src) return;
+		let tp = unread.topics.get(p.src);
+		if (p.what === "msg") {
+			if (!tp) {
+				tp = { name: "", seq: 0, read: 0 };
+				unread.topics.set(p.src, tp);
+				st.refresh = true;
+			}
+			tp.seq = Math.max(tp.seq, p.seq || 0);
+			// One's own message (no sender named): Tinode marks it read for the sender without saying so.
+			if (!p.act) tp.read = Math.max(tp.read, p.seq || 0);
+			if (p.act) {
+				unread.seq += 1;
+				unread.events.push({ id: unread.seq, topic: p.src, from: tp.name, group: p.src.indexOf("grp") === 0, at: Date.now() });
+				if (unread.events.length > 20) unread.events.shift();
+				st.named.push(unread.events[unread.events.length - 1]);
+			}
+		} else if (p.what === "read" && tp) {
+			tp.read = Math.max(tp.read, p.seq || 0);
+		} else if (p.what === "gone") {
+			unread.topics.delete(p.src);
+		} else if (p.what === "acs" || p.what === "upd") {
+			st.refresh = true;
+		}
+		recount();
+	}
+	async function watchOnce() {
+		const t = await tokenFor();
+		if (!t.tok) { log("watch: no chat token"); return 60000; }
+		const who = createHash("sha256").update(t.login + "\n" + deskToken()).digest("hex");
+		const key = await apiKey(site());
+		if (!key) { log("watch: no api key"); return 60000; }
+		const s = lpSession(site(), key);
+		if (!(await s.open())) { log("watch: no session"); return 30000; }
+		const st = { refresh: false, named: [] };
+		const on = (m) => onWatch(m, st);
+		const hi = await s.send({ hi: { ver: "0.25", ua: "TDH-desk-notify/1.0" } }, on);
+		if (!hi || hi.code >= 300) { log("watch: hi " + (hi && hi.code)); return 30000; }
+		const lg = await s.send({ login: { scheme: "token", secret: t.tok.token } }, on);
+		if (!lg || lg.code >= 300) {
+			log("watch: login " + (lg && lg.code));
+			if (lg && lg.code === 401) cache = { who: "", tok: null }; // an expired chat token: log in afresh
+			return 10000;
+		}
+		unread.me = (lg.params && lg.params.user) || "";
+		unread.topics.clear();
+		const sub = await s.send({ sub: { topic: "me", get: { what: "sub" } } }, on);
+		if (!sub || sub.code >= 300) { log("watch: sub me " + (sub && sub.code)); return 30000; }
+		unread.live = true;
+		log("watch: live, unread " + unread.count);
+		try {
+			while (!stopped) {
+				if (st.refresh) {
+					st.refresh = false;
+					await s.send({ get: { topic: "me", what: "sub" } }, on);
+				}
+				// New topics get their names from the refresh: name the events that came without one.
+				for (const ev of st.named.splice(0)) if (!ev.from && unread.topics.get(ev.topic)) ev.from = unread.topics.get(ev.topic).name;
+				for (const m of await s.poll(120000)) on(m);
+				const now = createHash("sha256").update(loginName() + "\n" + deskToken()).digest("hex");
+				if (now !== who) break; // another person logged in at this desk
+			}
+		} finally {
+			unread.live = false;
+		}
+		return 2000;
+	}
+	async function watchLoop() {
+		if (watching || !watchOn) return;
+		watching = true;
+		while (!stopped) {
+			let wait = 10000;
+			try { wait = await watchOnce(); } catch (err) { log("watch: " + (err && err.message)); wait = 10000; }
+			if (stopped) break;
+			await new Promise((r) => {
+				watchTimer = setTimeout(r, wait);
+				if (watchTimer.unref) watchTimer.unref();
+			});
+		}
+		watching = false;
+	}
 
 	async function tokenFor() {
 		const login = loginName();
@@ -572,7 +750,7 @@ export function startChatRelay(opts) {
 				port = server.address().port;
 				// Log in ahead, so opening 聊天 does not wait for it (and the person is in the chat's directory
 				// from their first start, not their first chat).
-				warm = setTimeout(() => { tokenFor().catch(() => {}); }, 15000);
+				warm = setTimeout(() => { tokenFor().catch(() => {}).then(() => { watchLoop(); }); }, opts.warmMs == null ? 15000 : opts.warmMs);
 				if (warm.unref) warm.unref();
 				return port;
 			}
@@ -586,7 +764,14 @@ export function startChatRelay(opts) {
 		url() {
 			return port > 0 ? "http://127.0.0.1:" + port + "/chat/?k=" + pageKey : "";
 		},
+		// What the desk shows: the unread count and the new messages after `since` (ids only grow).
+		unread(since) {
+			const s = Number(since) || 0;
+			return { ok: true, live: unread.live, count: unread.count, seq: unread.seq, events: unread.events.filter((e) => e.id > s) };
+		},
 		close() {
+			stopped = true;
+			if (watchTimer) clearTimeout(watchTimer);
 			return new Promise((resolve) => {
 				if (warm) clearTimeout(warm);
 				for (const s of sockets) s.destroy();
