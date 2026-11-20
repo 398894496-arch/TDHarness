@@ -458,6 +458,72 @@ async function search(person, body) {
   return { ok: true, status: hits.length ? 'ok' : 'not-found', ...who, layer: 'lookup', hits };
 }
 
+// company-kb-save-v1: an agent saves a file into the company knowledge base for the person it works for. The
+// server writes it (a desk's own share account may not reach the folder, and the desk's sandbox writes only inside
+// its workspace), into one of a zone's category folders, by that zone's rule:
+//   company    _handbook/_company: everyone (2026-11-20: 所有员工都能放)
+//   customers  the zone the person's department shares (kb-zones.json groups: customers, floor prices, costs)
+//   private    the person's own department kept apart (行政财务); an admin, when there is only one such department
+// Never over an existing file unless overwrite=true; the old one is kept in runtime/kb-history first. Never a 说明.md.
+const KB_MAX = 25 * 1024 * 1024;
+const KB_EXT = new Set(['.md', '.txt', '.csv', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.wps', '.et', '.dps']);
+const KB_HISTORY = process.env.TDH_KB_HISTORY || path.join(ROOT, 'runtime', 'kb-history');
+function kbZone(person, zone) {
+  if (zone === 'company') return { zone: 'company', dir: C('_handbook', '_company') };
+  if (zone === 'customers') {
+    const g = groupsOf(person)[0];
+    return g ? { zone: 'group:' + g.dir, dir: C('_handbook', g.dir) } : null;
+  }
+  if (zone === 'private') {
+    const apart = privateDepts();
+    const d = safe(person.dept || '');
+    if (d && apart.has(d)) return { zone: 'dept:' + d, dir: C('_handbook', d) };
+    if (person.role === 'admin' && apart.size === 1) { const only = [...apart][0]; return { zone: 'dept:' + only, dir: C('_handbook', only) }; }
+  }
+  return null;
+}
+function kbFolders(dir) {
+  try { return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && !/^[_.]/.test(d.name)).map((d) => d.name).sort(); } catch (e) { return []; }
+}
+function kbName(raw) {
+  const n = String(raw || '').normalize('NFC').trim();
+  if (!n || n.length > 120 || /[\\/:*?"<>|\u0000-\u001f]/.test(n) || /^[.\s]|[.\s]$/.test(n) || n === '说明.md') return '';
+  return KB_EXT.has(path.extname(n).toLowerCase()) ? n : '';
+}
+function kbWrite(person, body) {
+  const z = kbZone(person, String(body.zone || ''));
+  if (!z) return { ok: false, status: 'not-in-zone', hint: '这个区你放不进去：客户与价格只有销售和行政财务能放，私密区只有本部门能放。' };
+  const folders = kbFolders(z.dir);
+  const folder = String(body.folder || '').trim();
+  if (folders.indexOf(folder) < 0) return { ok: false, status: 'bad-folder', zone: z.zone, folders };
+  const name = kbName(body.name);
+  if (!name) return { ok: false, status: 'bad-name', hint: '文件名不能带路径或特殊字符，要有扩展名：' + [...KB_EXT].join(' ') };
+  let buf = null;
+  if (typeof body.data === 'string' && body.data) buf = Buffer.from(body.data, 'base64');
+  else if (typeof body.content === 'string' && body.content.trim()) {
+    if (!/\.(md|txt|csv)$/i.test(name)) return { ok: false, status: 'bad-name', hint: '写文字内容时文件名用 .md、.txt 或 .csv。' };
+    buf = Buffer.from(body.content.replace(/^﻿/, ''), 'utf8');
+  }
+  if (!buf || !buf.length) return { ok: false, status: 'empty' };
+  if (buf.length > KB_MAX) return { ok: false, status: 'too-large', max: KB_MAX };
+  const into = path.join(z.dir, folder);
+  const file = path.join(into, name);
+  if (!under(into, file) || path.dirname(file) !== into) return { ok: false, status: 'bad-name' };
+  let replaced = false;
+  if (fs.existsSync(file)) {
+    if (body.overwrite !== true) return { ok: false, status: 'exists', zone: z.zone, path: relName(file) };
+    const stamp = new Date(Date.now() + 8 * 3600e3).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+    const keep = path.join(KB_HISTORY, stamp + '-' + safe(person.login), path.relative(COMPANY, file));
+    fs.mkdirSync(path.dirname(keep), { recursive: true });
+    fs.copyFileSync(file, keep);
+    replaced = true;
+  }
+  const tmp = file + '.' + process.pid + '.tmp';
+  fs.writeFileSync(tmp, buf);
+  fs.renameSync(tmp, file);
+  return { ok: true, status: 'written', zone: z.zone, path: relName(file), bytes: buf.length, replaced };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1');
   const json = (code, obj) => {
@@ -483,6 +549,25 @@ const server = http.createServer(async (req, res) => {
     }
     let out;
     try { out = memoryWrite(person, body || {}); } catch (e) {
+      out = { ok: false, status: 'write-failed', error: String(e && e.code || e && e.message || e).slice(0, 80) };
+    }
+    audit(person.login, url.pathname, out.ok ? 1 : 0);
+    json(out.ok ? 200 : 400, { ...out, login: person.login });
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/v1/kb-write') {
+    const person = personOf(tokenOf(req));
+    if (!person) {
+      json(401, { ok: false, status: 'login-required' });
+      return;
+    }
+    let body = {};
+    try { body = JSON.parse((await readBody(req)) || '{}'); } catch (e) {
+      json(400, { ok: false, status: 'bad-request' });
+      return;
+    }
+    let out;
+    try { out = kbWrite(person, body || {}); } catch (e) {
       out = { ok: false, status: 'write-failed', error: String(e && e.code || e && e.message || e).slice(0, 80) };
     }
     audit(person.login, url.pathname, out.ok ? 1 : 0);

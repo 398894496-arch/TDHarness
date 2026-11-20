@@ -66,6 +66,8 @@ jobs:
         run: node scripts/prove-own-memory.js
       - name: Prove the knowledge base zones (shared, sales and finance, finance's own)
         run: node scripts/prove-kb-groups.js
+      - name: Prove an agent saves into the knowledge base by each zone's rule
+        run: node scripts/prove-kb-save.js
       - name: Prove KRouter's nightly runs on the company memory, conversations stay private
         if: runner.os == 'Linux'
         run: node scripts/prove-krouter-nightly.js
