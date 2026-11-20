@@ -118,6 +118,7 @@ svg { display: block; flex: none; }
 .b a.file, .b a.file:hover { color: var(--text); text-decoration: none; }
 .b code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; background: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.08)); padding: 1px 4px; border-radius: 3px; }
 .b .mention { color: var(--accent); }
+.b .mention.me { font-weight: 600; }
 .b .fwd { font-size: 12px; color: var(--text-3); display: block; margin-bottom: 2px; }
 .b.failed { opacity: 0.6; }
 .status { font-size: 11px; color: var(--text-3); margin-top: 3px; }
@@ -168,6 +169,12 @@ svg { display: block; flex: none; }
 	background: var(--panel); border-radius: 8px; box-shadow: var(--shadow); border: 1px solid var(--line); }
 .emoji button { font-size: 20px; height: 30px; border-radius: 5px; }
 .emoji button:hover { background: var(--hover); }
+.atpick { position: absolute; z-index: 40; bottom: 150px; left: 10px; width: 220px; max-height: 268px; overflow-y: auto; padding: 4px;
+	background: var(--panel); border-radius: 8px; box-shadow: var(--shadow); border: 1px solid var(--line); }
+.atpick .hd { font-size: 11px; color: var(--text-3); padding: 4px 8px 3px; }
+.atpick button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 5px; font-size: 13px; color: var(--text); text-align: left; }
+.atpick button.on { background: var(--hover); }
+.atpick button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tip { position: absolute; z-index: 40; bottom: 150px; left: 70px; width: 260px; padding: 12px 14px; background: var(--panel); border-radius: 8px; box-shadow: var(--shadow); border: 1px solid var(--line); font-size: 12px; line-height: 1.8; color: var(--text-2); }
 .tip b { color: var(--text); font-weight: 600; }
 .veil { position: fixed; inset: 0; z-index: 60; background: light-dark(rgba(15, 17, 21, 0.32), rgba(0, 0, 0, 0.55)); display: grid; place-items: center; }
@@ -207,7 +214,7 @@ svg { display: block; flex: none; }
 .narrow .list.away, .narrow .chat.away { display: none; }
 .narrow .back { display: grid; }
 .narrow .composer { height: 128px; }
-.narrow .emoji, .narrow .tip { bottom: 118px; }
+.narrow .emoji, .narrow .tip, .narrow .atpick { bottom: 118px; }
 .narrow .m .col { max-width: calc(100% - 56px); }
 .narrow .img { max-width: 180px; max-height: 180px; }
 .narrow .file { width: 200px; }
