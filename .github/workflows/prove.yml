@@ -137,6 +137,9 @@ jobs:
       - name: Prove the Mac mount script keeps what was written while the share was down
         if: runner.os != 'Windows'
         run: bash scripts/prove-mac-mount-aside.sh
+      - name: Prove a Mac desk finds the server away from the office, and the login says why it failed
+        if: runner.os != 'Windows'
+        run: node scripts/prove-mac-offlan-resolve.js
       - name: Prove people management, including removing an account for good
         if: runner.os == 'Linux'
         run: python3 scripts/prove-people.py
