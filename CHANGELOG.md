@@ -4,7 +4,27 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
-## 2026.11.19.15
+## 2026.11.19.17
+
+（.16 是只修 Mac 登录的补丁版。这一版包含 .16，加上下面全部。）
+
+**工件的底色跟着桌面的浅色/深色走**（`company-artifact-theme-v1`）
+- 原来工件页面里「按系统深浅色」的写法，在 Mac（WKWebView）和 Windows（WebView2）的外壳里拿到的是电脑系统的外观，不是桌面里选的。系统是深色，桌面选浅色，工件照样黑底。
+- 内核补丁（工件预览框）：工件放进预览框前，`prefers-color-scheme` 的样式按桌面的选择改写；页面脚本用 `matchMedia` 问深浅色，也按桌面的选择回答；桌面切换外观时工件重新显示。交互页和静态页都管。
+- Agent 写工件时，颜色写成 CSS 变量，默认浅色，再给一套深色，不把底色写死成黑色（`company-artifact-theme` 提示和 `writing-artifacts` 技能）。
+- 证明：`scripts/prove-artifact-theme.js`（用真内核文件打补丁两次、改写规则、脚本插入位置、`matchMedia` 回答）。
+
+**新对话开场：带上 KRouter 自己的经验摘要和下意识索引**（`company-krouter-hooks-v1`）
+- 原来开场塞进去的是下意识页的空模板（别名表还空着），里面还写着本机工具和服务器路径；夜里蒸馏出的经验卡反而没带上。现在用 KRouter 自己的 `session_hook`：经验摘要加下意识索引，没有内容就什么都不加；使用说明改成在员工端用 `company_knowledge` 打开原页；本人库里那份经验卡不重复列。
+
+**别名表自己维护，不用人打勾**（`company-krouter-auto-alias-v1`）
+- KRouter 原本的别名要人工勾选才生效。TDH 改成夜间作业每天自己做：对还没有别名的现行页，请模型给几个短名词，再经 KRouter 自己的复核（页面还在、名词没被占用、不会锁到别的页）写进别名表。
+- 人工打勾时会删掉的，按规则删：经验卡不给别名（它们是去掉具体事的做法，开场的经验摘要已经列了）；只用模型给的名词，不用标题切出来的半句话；泛词（经验、规则、流程、客户……）和别的页标题里也有的词不用。
+- 没通过复核的行留在 `90 系统文件/自动化/别名候选.md`，第二天重新生成。
+- 证明：`scripts/prove-krouter-auto-alias.js`（假的模型接口：给名、不给经验卡、泛词和重名不进、第二晚不重复加、开场索引列出新名字）。
+
+**验证脚本失败时也会关掉测试网关**
+- 三个网关证明在断言失败退出时，没关它起的网关，留下的进程一直监听着。现在退出时一定关掉。
 
 **修 Mac 打开后一直停在「正在打开本机 Agent」**（`company-mac-login-fix-v1`）
 - .14 的「记住上次登录的账号」在 Mac 的 `start.command` 里读 `last.login`；脚本开着 `set -euo pipefail`，这台 Mac 第一次用新版时还没有这个文件，读它的那条命令失败，整个启动脚本在弹账号框之前就退出了，窗口一直等。现在文件不存在时当作空。同样的写法在 `tree-restore.sh`（磁盘检查）和 `mac-mount-company.sh`（取 IPv4）里也加了保护。
