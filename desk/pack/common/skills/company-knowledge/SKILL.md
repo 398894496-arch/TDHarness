@@ -33,6 +33,17 @@ company_knowledge  route=search  query=<窄词>
 
 用户问「这个文件放哪」，按对应的 `说明.md` 告诉他放进哪个文件夹：Windows 是 `\\{{TDH_HOST}}\dsh-company\_handbook\...`，Mac 是 `~/company/_handbook/...`。客户信息、底价、成本不要放进 `_company`。
 
+用户要你把文件或一段内容**存进知识库**，用 **`company_kb_save`**（company-kb-save-v1，服务器写入，不要用 `write` 往 `_handbook` 写）：
+
+```
+company_kb_save  zone=company|customers|private  folder=<分类文件夹，如 03 销售流程与政策>  path=<本机文件的绝对路径>  （或 content=<文字> name=<文件名.md>）
+```
+
+- 先按内容判断区：客户信息、底价、成本 → `customers`；财务制度、合同、人事薪酬、账户税务、行政证照 → `private`；其他公司通用的 → `company`。拿不准就问用户。
+- `folder` 写错会返回可选的文件夹列表，照列表选一个再存。
+- 同名文件默认不覆盖（返回 `exists`）；先问用户，同意了再加 `overwrite=true`（旧版会留在服务器上）。
+- 存好后告诉用户放在哪个区、哪个文件夹。
+
 ## 规则
 
 1. 别人的 `$personal/_memory` 搜不到，是权限，不是空。

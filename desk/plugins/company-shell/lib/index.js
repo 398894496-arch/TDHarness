@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import https from "node:https";
 import http from "node:http";
 import os from "node:os";
@@ -1246,6 +1246,85 @@ function registerPriorWorkTool(ctx) {
 	});
 }
 
+// company-kb-save-v1: save a file into the company knowledge base. The desk reads the file and hands it to the
+// knowledge service, which writes it by the zone's rule (the desk's sandbox writes only inside its workspace).
+export const KB_SAVE_MAX = 25 * 1024 * 1024;
+export function kbSaveBody(args) {
+	const a = args || {};
+	const body = { zone: String(a.zone || ""), folder: String(a.folder || ""), overwrite: a.overwrite === true };
+	const src = String(a.path || "").trim();
+	if (src) {
+		if (!path.isAbsolute(src)) return { error: "path must be an absolute path of a file on this computer" };
+		let st;
+		try { st = statSync(src); } catch { return { error: "no such file: " + src }; }
+		if (!st.isFile()) return { error: "not a file: " + src };
+		if (st.size > KB_SAVE_MAX) return { error: "too large (over 25 MB): " + src };
+		body.data = readFileSync(src).toString("base64");
+		body.name = String(a.name || path.basename(src));
+	} else if (typeof a.content === "string" && a.content.trim()) {
+		body.content = a.content;
+		body.name = String(a.name || "");
+	} else {
+		return { error: "give path (a file) or content (text)" };
+	}
+	return { body };
+}
+
+function registerKbSaveTool(ctx) {
+	const tools = typeof ctx.get === "function" ? ctx.get("tools") : ctx.tools;
+	if (tools == null || typeof tools.register !== "function") return;
+	tools.register({
+		name: "company_kb_save",
+		description:
+			"Save a file into the company knowledge base (公司知识库) when the user asks to put it there (存进知识库 / 放到共享知识). " +
+			"zone: company = 全公司共享知识 (everyone reads and changes it); customers = 销售与行政财务 (customer information, " +
+			"floor prices, costs; only sales, finance and admins); private = the department's own private knowledge (行政财务). " +
+			"Customer information, floor prices and costs never go to company. folder: one of the zone's category folders, as its " +
+			"说明.md names them (e.g. 03 销售流程与政策); a wrong one returns the list. Give path (absolute path of a file on this " +
+			"computer) or content (Markdown text, with a name ending .md). An existing file is not replaced unless overwrite=true: " +
+			"ask the user first. Say back where it went.",
+		parameters: {
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				zone: { type: "string", enum: ["company", "customers", "private"] },
+				folder: { type: "string", description: "Category folder inside the zone, exactly as listed, e.g. 02 产品与技术." },
+				path: { type: "string", description: "Absolute path of the file to save. Its name is kept unless name is given." },
+				content: { type: "string", description: "Text to save instead of a file (Markdown)." },
+				name: { type: "string", description: "File name with extension, e.g. 2026 价目表.xlsx. Default: the file's own name." },
+				overwrite: { type: "boolean", description: "true only after the user agreed to replace a file of the same name." },
+			},
+			required: ["zone", "folder"],
+		},
+		timeoutMs: 120000,
+		output: {
+			schema: { type: "object", additionalProperties: true, properties: { ok: { type: "boolean" }, status: { type: "string" }, path: { type: "string" } } },
+			render(_args, value) {
+				const v = value || {};
+				const line = [
+					"status=" + (v.status || (v.ok ? "ok" : "failed")),
+					v.zone ? "zone=" + v.zone : "",
+					v.path ? "path=" + v.path : "",
+					v.replaced ? "replaced=true (the old file is kept on the server)" : "",
+					Array.isArray(v.folders) && v.folders.length ? "folders=" + v.folders.join(" | ") : "",
+					v.hint || v.error || "",
+				].filter(Boolean);
+				return [{ type: "text", text: line.join("\n") }];
+			},
+		},
+		async execute(args) {
+			const tok = gwToken();
+			if (!tok || tok === "company-gateway") return { ok: false, status: "no-login" };
+			const made = kbSaveBody(args);
+			if (made.error) return { ok: false, status: "bad-request", error: made.error };
+			const out = await proxyKnowledge(made.body, "/company/knowledge/v1/kb-write");
+			const j = out && out.json && typeof out.json === "object" ? out.json : { ok: false, status: "no-answer" };
+			if (typeof j.path === "string" && j.path) j.path = deskHitPath(j.path);
+			return j;
+		},
+	});
+}
+
 function registerMemoryWriteTool(ctx) {
 	const tools = typeof ctx.get === "function" ? ctx.get("tools") : ctx.tools;
 	if (tools == null || typeof tools.register !== "function") return;
@@ -2337,6 +2416,7 @@ export function apply(ctx) {
 	registerKnowledgeTool(ctx);
 	registerPriorWorkTool(ctx);
 	registerMemoryWriteTool(ctx);
+	registerKbSaveTool(ctx);
 	registerOpencliTool(ctx);
 	// watch_video (Grok only) and the shop tools (shop_recipe, shop_write) are not registered
 	// (2026-11-18): every tool is sent with every request, and these were dead weight.
