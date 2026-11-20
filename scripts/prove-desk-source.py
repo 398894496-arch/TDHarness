@@ -39,7 +39,8 @@ FORBIDDEN = {
     **ONE_COMPANY,
     "a site's city": r"珠海",
     "a LAN address": r"\b192\.168\.\d+\.\d+\b",
-    "a Tailscale address": r"\b100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+\b",
+    # 100.100.100.100 is Tailscale's DNS resolver, the same on every tailnet: not a site's address.
+    "a Tailscale address": r"\b100\.(?!100\.100\.100\b)(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+\b",
     "a maintainer path": r"dsh-saas|/Users/(?!x/)[A-Za-z0-9._-]+/|Users-(?!x-)[A-Za-z0-9]+-",
     "a site login": r"\b(bosshome|zhangzhang\d*|xiaoman|laoyang\d*|hengge|quan|fe1)\b",
     "a site's server name": r"desktop-269841[8]",
