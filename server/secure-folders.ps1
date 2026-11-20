@@ -5,11 +5,18 @@
 #
 # Company share (D:\dsh\company), from the roster, one Windows account per person (smb-<login>):
 #   root, _skills, _control, content    everyone reads, admins change
-#   _handbook (and _handbook\_company)  everyone reads, admins change
-#   _handbook\<dept>                    the shared knowledge base: everyone reads, its director
+#   _handbook                           everyone reads, admins change
+#   _handbook\_company                  the company's shared knowledge: everyone reads and changes it
+#                                       with their own account (2026-11-20; company-kb-groups-v1)
+#   _handbook\<dept>                    a department's own knowledge: everyone reads, its director
 #                                       and admins change (company-kb-zones-v1). A department kept
 #                                       apart (runtime\kb-zones.json "private", default: a name with
-#                                       the two characters for finance in it): only it reads.
+#                                       the two characters for finance in it): only its people read
+#                                       and change it, with their own accounts (never dshshare)
+#   _handbook\<group dir>               a zone some departments share (kb-zones.json "groups":
+#                                       [{dir, depts}], e.g. customers, floor prices and costs for
+#                                       sales and finance): only their people (own accounts) and
+#                                       admins open and change it (company-kb-groups-v1)
 #   _shared (company memory)            everyone reads, admins and directors change
 #   _office                             admins
 #   each person's folder (personal) and content\emp-<login>: the person changes, the
@@ -86,12 +93,18 @@ if (-not $ServerOnly) {
     foreach ($s in $staff) { Grant $d $s 'R' }
     foreach ($s in $admins) { Grant $d $s 'M' }
   }
+  # company-kb-groups-v1: the shared knowledge, everyone changes it (own accounts; dshshare only reads).
+  $kbShared = Join-Path $Company '_handbook\_company'
+  foreach ($s in $staff) { Grant $kbShared $s 'R' }
+  foreach ($p in $people) { Grant $kbShared $own[[string]$p.login] 'M' }
+  foreach ($s in $admins) { Grant $kbShared $s 'M' }
   $shared = Join-Path $Company '_shared'
   foreach ($s in $staff) { Grant $shared $s 'R' }
   foreach ($s in @($admins + $directors)) { Grant $shared $s 'M' }
   foreach ($s in $admins) { Grant (Join-Path $Company '_office') $s 'M' }
   # Departments kept apart (the same list the knowledge search uses).
   $apart = @{}
+  $z = $null
   $zonesFile = Join-Path $Runtime 'kb-zones.json'
   if (Test-Path -LiteralPath $zonesFile) {
     $z = Get-Content -LiteralPath $zonesFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -104,12 +117,26 @@ if (-not $ServerOnly) {
   foreach ($d in $depts) {
     $hb = Join-Path $Company ('_handbook\' + $d)
     if ($apart.ContainsKey($d)) {
-      foreach ($p in ($people | Where-Object { $_.dept -eq $d })) { Grant $hb $seat[[string]$p.login] 'R' }
+      # Its own people with their own accounts only: never dshshare, a password every desk may hold, standing in
+      # for someone not signed in yet (they open it after their first sign-in, which runs -Apply). They add to it too.
+      foreach ($p in ($people | Where-Object { $_.dept -eq $d })) { Grant $hb $own[[string]$p.login] 'M' }
     } else {
       foreach ($s in $staff) { Grant $hb $s 'R' }
     }
     foreach ($p in ($people | Where-Object { $_.dept -eq $d -and $_.role -eq 'director' })) { Grant $hb $own[[string]$p.login] 'M' }
     foreach ($s in $admins) { Grant $hb $s 'M' }
+  }
+  # Zones some departments share (company-kb-groups-v1), the same list the knowledge search uses.
+  $groups = @()
+  if ($z -and $z.groups) { $groups = @($z.groups) }
+  foreach ($g in $groups) {
+    $gd = [string]$g.dir
+    if ($gd -notmatch '^_[A-Za-z0-9._-]+$' -or $gd -eq '_company') { Write-Output ('KB_GROUP_SKIPPED=' + $gd); continue }
+    $gdepts = @(@($g.depts) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    $gp = Join-Path $Company ('_handbook\' + $gd)
+    foreach ($p in ($people | Where-Object { $gdepts -contains [string]$_.dept })) { Grant $gp $own[[string]$p.login] 'M' }
+    foreach ($s in $admins) { Grant $gp $s 'M' }
+    Write-Output ('KB_GROUP=' + $gd + ':' + ($gdepts -join ','))
   }
   $companyFull = [IO.Path]::GetFullPath($Company).TrimEnd('\')
   foreach ($p in $people) {
