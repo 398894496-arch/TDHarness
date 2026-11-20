@@ -107,11 +107,15 @@ people = {"tdh": {"login": "tdh", "role": "admin", "status": "active"},
 depts = {"d-1": "销售", "d-2": "生产设计"}
 cards = "任务卡日报 11-21：进行中 2 张\n超期 1 张：\n- alice「报价」截止 11-20 18:00\n按人：alice 2"
 cfg = dict(dr.DEFAULTS, to=["tdh"], gateway=FAKE, packs=[{"title": "资金", "url": FAKE + "/daily"},
-                                                          {"title": "外面的", "url": "http://example.com/daily"}])
+                                                          {"title": "外面的", "url": "http://example.com/daily"},
+                                                          {"title": "行情", "url": FAKE + "/daily-market", "weekdays": [0]}])
 out = dr.run(cfg, people, depts, root / "brain", cards, "svc_token", now=datetime(2026, 11, 21, 7, 31))
 t = out["text"]
 check(out["day"] == "2026-11-20" and t.startswith("TDH 日报 11-20（周五）"), "yesterday's page, weekday: " + t[:30])
 check("【资金】" in t and "壹通达 余额：人民币 1,000.00" in t and "外面的" not in t, "the loopback pack's lines, nothing from elsewhere")
+check("【行情】" not in t, "a Monday-only pack is left out on a Saturday")
+t_mon = dr.run(cfg, people, depts, root / "brain", cards, "svc_token", now=datetime(2026, 11, 23, 7, 31))["text"]
+check("【行情】" in t_mon, "and is there on Monday")
 check("【任务卡】进行中 2 张" in t and "alice「报价」" in t, "the cards' page")
 check("【员工】1 人用了 TDH，1 人没用" in t and "王小丽：整理了甲公司的报价单并核了料重。 注意：报价还没发给客户。" in t and "没用 TDH：李大海" in t, "people, one line each: " + t)
 check("离职的" not in t and "tdh：" not in t, "disabled and skipped logins left out")
