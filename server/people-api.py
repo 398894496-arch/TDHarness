@@ -868,8 +868,8 @@ def _tinode_secret(payload: dict) -> tuple[str, str]:
 # company-chat-directory-v1: everyone is in everyone's chat contacts, so nobody has to know a login to start a chat
 # or pick the members of a group. When a person's chat account is made (and on later logins, for whoever joined
 # since), this server opens their one-to-one chat with every other person who has a chat account: Tinode makes the
-# chat on both sides, so it shows in both contact lists. It logs in as that person with their own desk login token
-# (Tinode asks this same service, which knows it); a person without one is added by the next person who joins.
+# chat on both sides, so it shows in both contact lists. It logs in as that person with a one-time ticket (see
+# _chat_ticket).
 # What is done is kept in runtime/tinode-directory.json.
 TINODE_URL = os.environ.get("TDH_TINODE_URL") or "http://127.0.0.1:6060"
 TINODE_STATIC = Path(os.environ.get("TDH_TINODE_STATIC") or str(ROOT / "tinode" / "static"))
@@ -900,15 +900,28 @@ def _chat_api_key() -> str:
     return m.group(1) if m else ""
 
 
-def _person_token(login: str) -> str:
-    row = person(login)
-    pid = str((row or {}).get("pid") or "")
-    if not pid:
-        return ""
-    for t in load_tokens().get("tokens") or []:
-        if t and str(t.get("pid") or "") == pid and not t.get("revoked_at") and str(t.get("token") or "").startswith("dsh_"):
-            return str(t["token"])
-    return ""
+# company-chat-provision-v1: the server's own logins as a person (making their chat account, opening their chats)
+# use a one-time ticket: random, kept only in this process, good once and for 60 seconds. It never leaves this
+# machine (people service -> Tinode on 127.0.0.1 -> back here), so nobody needs a desk login for it, and a person who
+# never opened TDH can still be in the chat.
+_TICKETS: dict = {}
+_TICKET_MU = threading.Lock()
+
+
+def _chat_ticket(login: str) -> str:
+    tkt = "tkt_" + secrets.token_hex(20)
+    now = time.time()
+    with _TICKET_MU:
+        for k in [k for k, v in _TICKETS.items() if v[1] < now]:
+            del _TICKETS[k]
+        _TICKETS[tkt] = (login, now + 60)
+    return tkt
+
+
+def _take_ticket(login: str, tkt: str) -> bool:
+    with _TICKET_MU:
+        v = _TICKETS.pop(tkt, None)
+    return bool(v) and v[0] == login and v[1] >= time.time()
 
 
 class _ChatLP:
@@ -978,15 +991,14 @@ def chat_directory_join(login: str) -> dict:
     todo = {w: u for w, u in others.items() if u not in done}
     if not todo:
         return {"ok": True, "added": 0}
-    token = _person_token(login)
     key = _chat_api_key()
-    if not token or not key:
-        return {"ok": False, "why": "no-token" if not token else "no-key"}
+    if not key:
+        return {"ok": False, "why": "no-key"}
     lp = _ChatLP(key)
     if not lp.sid:
         return {"ok": False, "why": "no-session"}
     hi = lp.send({"hi": {"ver": "0.25", "ua": "TDH-directory/1.0"}})
-    secret = base64.b64encode((login + ":" + token).encode("utf-8")).decode("ascii")
+    secret = base64.b64encode((login + ":" + _chat_ticket(login)).encode("utf-8")).decode("ascii")
     r = lp.send({"login": {"scheme": "basic", "secret": secret}}) if hi and int(hi.get("code") or 500) < 300 else None
     if not r or int(r.get("code") or 500) >= 300:
         return {"ok": False, "why": "login", "code": (r or {}).get("code")}
@@ -1004,6 +1016,43 @@ def chat_directory_join(login: str) -> dict:
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, TINODE_DIRECTORY)
     return {"ok": len(added) == len(todo), "added": len(added), "of": len(todo)}
+
+
+def chat_provision_all() -> dict:
+    """Make the chat account of every active person who has none yet (company-chat-provision-v1): each is then in
+    everyone's contacts (the directory runs after each new account), so a message reaches people who never opened
+    the chat; they read it when they do."""
+    key = _chat_api_key()
+    if not key:
+        return {"ok": False, "why": "no-key"}
+    links = _tinode_links()
+    made, failed = [], []
+    for row in public_people():
+        login = str(row.get("login") or "")
+        if not login or row.get("status", "active") != "active" or links.get(login):
+            continue
+        try:
+            lp = _ChatLP(key)
+            hi = lp.send({"hi": {"ver": "0.25", "ua": "TDH-provision/1.0"}}) if lp.sid else None
+            secret = base64.b64encode((login + ":" + _chat_ticket(login)).encode("utf-8")).decode("ascii")
+            r = lp.send({"login": {"scheme": "basic", "secret": secret}}) if hi else None
+            (made if r and int(r.get("code") or 500) < 300 else failed).append(login)
+        except Exception:
+            failed.append(login)
+    return {"ok": not failed, "made": made, "failed": failed}
+
+
+def chat_provision_loop() -> None:
+    time.sleep(float(os.environ.get("TDH_CHAT_PROVISION_DELAY") or 20))
+    every = float(os.environ.get("TDH_CHAT_PROVISION_EVERY") or 600)
+    while True:
+        try:
+            res = chat_provision_all()
+            if res.get("made") or res.get("failed"):
+                sys.stderr.write("people-api chat-provision %s\n" % json.dumps(res, ensure_ascii=False))
+        except Exception as exc:  # Tinode not up yet: next round
+            sys.stderr.write("people-api chat-provision failed %s\n" % exc)
+        time.sleep(every)
 
 
 def chat_directory_later(login: str, delay: float) -> None:
@@ -1063,12 +1112,18 @@ def tinode_auth(payload: dict) -> dict:
     if login_blocked(login, src):
         return {"err": "policy"}
     row = person(login)
-    ok = row is not None and row.get("status", "active") == "active" and (
-        (pw.startswith("dsh_") and login_from_token(pw) == login) or (not pw.startswith("dsh_") and check_login(login, pw) is not None))
-    if not ok:
-        login_failed(login, src)
-        return {"err": "failed"}
-    login_succeeded(login, "")
+    active = row is not None and row.get("status", "active") == "active"
+    if pw.startswith("tkt_"):
+        if not (active and _take_ticket(login, pw)):
+            login_failed(login, src)
+            return {"err": "failed"}
+    else:
+        ok = active and (
+            (pw.startswith("dsh_") and login_from_token(pw) == login) or (not pw.startswith("dsh_") and check_login(login, pw) is not None))
+        if not ok:
+            login_failed(login, src)
+            return {"err": "failed"}
+        login_succeeded(login, "")
     name = str(row.get("name") or "").strip() or login
     # Found by the login and by the roster name (company-chat-directory-v1); Tinode takes these when it makes the
     # account. "tdh:" is the server's own namespace: nobody can give it to themselves.
@@ -1527,6 +1582,8 @@ def main() -> None:
     ensure_memory_banks()
     if NOTIFY_EVERY > 0:
         threading.Thread(target=notify_loop, name="notify", daemon=True).start()
+    if os.environ.get("TDH_CHAT_PROVISION", "1") != "0":
+        threading.Thread(target=chat_provision_loop, name="chat-provision", daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     sys.stdout.write("LISTEN=%s:%s\n" % (HOST, PORT))
     sys.stdout.flush()
