@@ -4,6 +4,33 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.20
+
+**Mac 离开公司也能连上服务器，登录框说清为什么没登上**（`company-mac-offlan-resolve-v1`）
+- macOS 只在局域网里找 `.local` 结尾的名字（mDNS）。加密网给 `tdharness.local` 下发的规则在 Mac 上不生效，所以 Mac 一离开公司就找不到服务器，请求根本发不出去，登录框却说「账号或密码不对」（11-20 田总）。
+- 新增 `mac-resolve.js`，启动脚本让桌面的每个 Node 程序都先加载它，它只管服务器这一个名字：在公司时照旧走局域网（1.5 秒内答上就用）；答不上，就问 Tailscale 自己的 DNS 拿加密网地址；再不行，用安装包里记的加密网地址。结果缓存 60 秒，桌面的各个程序共用，从公司走到外面一分钟内会切过去。
+- 下载更新包（`curl --resolve`）和挂共享盘也用同一个地址。在公司时挂盘照旧走局域网。
+- 登录分清原因：连不上服务器、账号或密码不对、失败次数太多、服务器回应异常，各说各的。
+- 证明：`scripts/prove-mac-offlan-resolve.js`（假的 Tailscale DNS 和登录服务；在公司走局域网、在外面走加密网；缓存共用；登录各种失败的退出码）。
+
+**公司里的 Windows 走局域网，不再绕加密隧道**（`company-tailnet-dns-lan-v1`，服务器端，11-20 已上线）
+- Windows 照加密网的规则把服务器名字解析成加密网地址，人在公司也全程绕隧道。隧道在 IPv6 和 IPv4 之间换线路时整条卡住几十秒：一步等了 99 秒才出第一个字，同一时段心跳也断断续续（11-20 小潘）。
+- `tailnet-dns.js` 看这台电脑此刻和服务器怎么连着：走的是公司局域网（同一个 /24，或同一个 IPv6 /64），就回答服务器的局域网地址；在外面、走中继、还没连上，照旧回答加密网地址。地址有效期从 300 秒改成 20 秒。
+
+**每个人的记忆是自己的**（`company-own-memory-v1`）
+- 知识服务原来把所有管理员的个人记忆都指向 `_office/_memory`，那是 tdh 自己的文件夹。第二个管理员查先例时拿到了 tdh 的会话摘录，自己的反而搜不到（11-20 小潘）。现在用花名册里每个人自己的文件夹（服务器端，11-20 已上线）。
+- 电脑端：知识检索和先例查询返回的 `company/…` 路径换成这台电脑能打开的路径（Windows `//tdharness.local/dsh-company/…`，Mac `~/company/…`）。Agent 把路径传回服务器时换回原样。原来 Agent 会把它当成工作区里的相对路径去读，报「找不到」。
+
+**企业知识库：三个区**（`company-kb-groups-v1`，服务器端 11-20 已上线）
+- `_handbook/_company` 全公司共享知识，所有员工能看、能放、能改。`_handbook/_sales-finance` 销售与行政财务（客户信息、底价与成本），只有这两个部门和管理员能看。`_handbook/<行政财务>` 行政财务私密知识，只有本部门和管理员能看。每个分类文件夹里有一页「说明」，写着放什么、不放什么、怎么放。
+- `runtime/kb-zones.json` 新增 `groups`（几个部门共用的区），知识检索和 `secure-folders.ps1` 读同一份。私密部门的文件夹只授给本人自己的账号，不再借给公用账号 `dshshare`。
+- Agent 记客户信息、底价、成本时用 `zone=customers`，记进客户区，不进共享记忆。其他部门的人用会被拒绝。
+- 证明：`scripts/prove-kb-groups.js`，`server/prove-secure-folders.ps1` 按新规则检查。
+
+**Agent 把文件存进知识库**（`company-kb-save-v1`）
+- 新工具 `company_kb_save`：电脑端读本机文件（或一段文字），交给知识服务写进对应区的分类文件夹。权限按区：共享全员，客户与价格只有销售、行政财务和管理员，私密只有本部门和管理员。只能存进已有的分类文件夹，不能覆盖「说明」页，只收常见文件类型，单个最大 25MB。同名文件要用户同意才覆盖，旧版先备份到 `runtime/kb-history`。
+- 证明：`scripts/prove-kb-save.js`。
+
 ## 2026.11.19.17
 
 （.16 是只修 Mac 登录的补丁版。这一版包含 .16，加上下面全部。）
