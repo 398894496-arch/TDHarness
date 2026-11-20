@@ -355,7 +355,20 @@
 			if (t.isGroupType()) rememberMembers(t);
 			markRead(t);
 			bump();
+			// A short chat: see once whether anything is earlier (deleted messages leave a gap at the start).
+			if (t.messageCount() < PAGE && t.minMsgSeq() > 1) earlier(t);
 		}).catch((err) => toast("打不开这个聊天：" + ((err && err.message) || "")));
+	}
+	// Older messages, a page at a time; when a page brings nothing, there is nothing older.
+	function earlier(t) {
+		if (t._tdhLoading || t._tdhNoMore) return Promise.resolve();
+		t._tdhLoading = true;
+		const min = t.minMsgSeq();
+		return t.getMeta(t.startMetaQuery().withEarlierData(PAGE).build()).catch(() => {}).finally(() => {
+			t._tdhLoading = false;
+			if (t.minMsgSeq() === min) t._tdhNoMore = true;
+			bump();
+		});
 	}
 	let readTimer = null;
 	function markRead(t) {
@@ -713,17 +726,16 @@
 		const onScroll = (e) => {
 			const el = e.currentTarget;
 			stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-			if (el.scrollTop < 40 && (t.minMsgSeq() > 1) && !t._tdhLoading) loadEarlier();
+			if (el.scrollTop < 40 && t.minMsgSeq() > 1 && !t._tdhLoading && !t._tdhNoMore) loadEarlier();
 		};
 		const loadEarlier = () => {
 			const el = box.current;
-			t._tdhLoading = true;
 			before.current = el ? el.scrollHeight - el.scrollTop : 0;
-			t.getMeta(t.startMetaQuery().withEarlierData(PAGE).build()).catch(() => {}).finally(() => { t._tdhLoading = false; bump(); });
+			earlier(t);
 		};
 		const nodes = [];
 		let last = 0;
-		if (t.minMsgSeq() > 1) nodes.push(h("button", { key: "more", className: "more", onClick: loadEarlier }, "查看更早的消息"));
+		if (t.minMsgSeq() > 1 && !t._tdhNoMore) nodes.push(h("button", { key: "more", className: "more", onClick: loadEarlier }, "查看更早的消息"));
 		items.forEach((msg, i) => {
 			if (msg._deleted) {
 				const mine = S.recalled[t.name + ":" + msg.low];
