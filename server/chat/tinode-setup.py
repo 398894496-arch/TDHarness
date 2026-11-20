@@ -21,6 +21,8 @@ fetches them again.
 The page wears TDH's look (company-chat-look-v1): tdh-chat.css, beside the page, loaded after Tinode's own sheet.
 TDH's own chat page (company-chat-client-v1, server/chat/tdh-web) goes in static/tdh/, with config.js holding the
 web API key read from Tinode's own page (the public key its page carries; not kept in the repository).
+The chat's page (/chat/, what the desk opens) is TDH's (company-chat-home-v1): Tinode's own page is kept beside it as
+tinode.html. runtime/chat-home (or --home) "tinode" puts Tinode's page back at /chat/; "tdh", or nothing, TDH's.
 Prints TINODE_SETUP_OK=1.
 """
 from __future__ import annotations
@@ -108,7 +110,7 @@ def page(html: str) -> str:
 
 
 # company-chat-tinode-v2: bump when the scripts change, so browsers do not keep an old copy.
-SCRIPT_REV = "tdh3"
+SCRIPT_REV = "tdh4"
 
 
 def bundle(js: str) -> str:
@@ -157,12 +159,44 @@ def web(static: Path, src: Path) -> None:
     (out / "config.js").write_text("window.TDH_CHAT_KEY = %s;\n" % json.dumps(m.group(1)), encoding="utf-8")
 
 
+# TDH's page at /chat/ itself: the same page, its files under tdh/ and Tinode's beside it.
+ROOT_PATHS = [('href="app.css', 'href="tdh/app.css'), ('src="../vendor/', 'src="vendor/'), ('src="../umd/', 'src="umd/'),
+              ('src="config.js', 'src="tdh/config.js'), ('src="app.js', 'src="tdh/app.js')]
+
+
+def home_page(src: Path) -> str:
+    text = (src / "index.html").read_text(encoding="utf-8")
+    for a, b in ROOT_PATHS:
+        if text.count(a) < 1:
+            raise SystemExit("TINODE_SETUP_FAIL anchor-home " + a)
+        text = text.replace(a, b)
+    return text.replace("__REV__", SCRIPT_REV)
+
+
+def pages(static: Path, src: Path, home: str) -> None:
+    """Tinode's own page as tinode.html (patched as before), and /chat/'s index.html: TDH's page, or Tinode's back."""
+    idx = static / "index.html"
+    kept = static / "tinode.html"
+    if not kept.is_file():
+        cur = idx.read_text(encoding="utf-8")
+        if "company-chat-client-v1" in cur:
+            raise SystemExit("TINODE_SETUP_FAIL no-tinode-page (index.html is TDH's and tinode.html is gone)")
+        kept.write_text(cur, encoding="utf-8")
+    kept.write_text(look(bust(page(kept.read_text(encoding="utf-8")))), encoding="utf-8")
+    web(static, src)
+    if home == "tinode":
+        shutil.copyfile(kept, idx)
+    else:
+        idx.write_text(home_page(src), encoding="utf-8")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tinode", required=True)
     ap.add_argument("--runtime", required=True)
     ap.add_argument("--uploads", required=True)
     ap.add_argument("--vendor", required=True)
+    ap.add_argument("--home", choices=("tdh", "tinode"), default=None)
     a = ap.parse_args()
     tin, rt = Path(a.tinode), Path(a.runtime)
     sample = tin / "tinode.conf.sample"
@@ -179,12 +213,13 @@ def main() -> int:
     os.replace(tmp, tin / "tinode.conf")
     static = tin / "static"
     shutil.copytree(a.vendor, static / "vendor", dirs_exist_ok=True)
-    idx = static / "index.html"
     shutil.copyfile(Path(__file__).resolve().parent / "tdh-chat.css", static / "tdh-chat.css")
-    idx.write_text(look(bust(page(idx.read_text(encoding="utf-8")))), encoding="utf-8")
     js = static / "umd" / "index.prod.js"
     js.write_text(bundle(js.read_text(encoding="utf-8")), encoding="utf-8")
-    web(static, Path(__file__).resolve().parent / "tdh-web")
+    home = a.home or ((rt / "chat-home").read_text(encoding="utf-8").strip() if (rt / "chat-home").is_file() else "") or "tdh"
+    home = "tinode" if home == "tinode" else "tdh"
+    pages(static, Path(__file__).resolve().parent / "tdh-web", home)
+    print("CHAT_HOME=" + home)
     print("TINODE_SETUP_OK=1")
     return 0
 
