@@ -67,6 +67,9 @@ jobs:
         run: node scripts/prove-krouter-nightly.js
         env:
           PROVE_PY: python
+      - name: Prove the alias table keeps itself, no one ticks
+        if: runner.os == 'Linux'
+        run: node scripts/prove-krouter-auto-alias.js
       - name: Prove the model gateway answers only a live login token
         run: node scripts/prove-gw-auth.js
       - name: Prove the TLS gateway switch and the /fetch guard

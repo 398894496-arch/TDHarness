@@ -3,6 +3,7 @@
 
     krouter-run.py <bank folder> <script.py> [args...]          e.g. import_sessions.py --vault <bank> --file f
     krouter-run.py <bank folder> --record-uses <transcript>...  what these sessions did with the bank's cards
+    krouter-run.py <bank folder> --auto-aliases                 draft and apply this bank's alias rows (no ticking)
 
 KRouter itself is unchanged (server/vendor/krouter); krouter-nightly.js calls this for each step."""
 from __future__ import annotations
@@ -21,7 +22,7 @@ from krouter_tdh import SCRIPTS, bank_state, ensure_map  # noqa: E402
 
 def main() -> int:
     if len(sys.argv) < 3:
-        print("usage: krouter-run.py <bank> <script.py>|--record-uses ...", file=sys.stderr)
+        print("usage: krouter-run.py <bank> <script.py>|--record-uses ...|--auto-aliases", file=sys.stderr)
         return 2
     bank = Path(sys.argv[1])
     if not bank.is_dir():
@@ -40,6 +41,15 @@ def main() -> int:
             if s["turns"]:
                 n += experience.record_uses(bank, s["id"], s["turns"])
         print("RECORD_USES=%d" % n)
+        return 0
+    if sys.argv[2] == "--auto-aliases":
+        import json
+
+        from krouter_tdh import auto_aliases
+
+        out = auto_aliases(bank)
+        print(json.dumps(out, ensure_ascii=False))
+        print("AUTO_ALIASES=%d REFUSED=%d" % (out["applied"], len(out["refused"])))
         return 0
     script = SCRIPTS / sys.argv[2]
     if not script.is_file():
