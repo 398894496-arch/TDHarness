@@ -64,6 +64,8 @@ jobs:
         run: node scripts/prove-memory-shared.js
       - name: Prove each person's memory is their own folder's, an admin's too
         run: node scripts/prove-own-memory.js
+      - name: Prove the knowledge base zones (shared, sales and finance, finance's own)
+        run: node scripts/prove-kb-groups.js
       - name: Prove KRouter's nightly runs on the company memory, conversations stay private
         if: runner.os == 'Linux'
         run: node scripts/prove-krouter-nightly.js

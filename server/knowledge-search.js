@@ -144,8 +144,19 @@ function privateDepts() {
 }
 function handbookDepts() {
   let names = [];
-  try { names = fs.readdirSync(C('_handbook'), { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== '_company').map((d) => d.name); } catch (e) { return []; }
+  // A department folder; _company, the zones some departments share (_<name>) and anything else starting with _ are not.
+  try { names = fs.readdirSync(C('_handbook'), { withFileTypes: true }).filter((d) => d.isDirectory() && d.name.charAt(0) !== '_').map((d) => d.name); } catch (e) { return []; }
   return names;
+}
+// company-kb-groups-v1: a zone some departments share, listed in kb-zones.json
+// { "groups": [{ "dir": "_sales-finance", "depts": ["<销售>", "<行政财务>"] }] } (2026-11-20: customers, floor
+// prices and costs are for sales and finance only). Only those departments and admins open _handbook/<dir>.
+// secure-folders.ps1 reads the same list.
+function kbGroups() {
+  const z = readJson(ZONES);
+  const gs = z && Array.isArray(z.groups) ? z.groups : [];
+  return gs.map((g) => ({ dir: String((g && g.dir) || ''), depts: new Set(((g && Array.isArray(g.depts)) ? g.depts : []).map((d) => safe(d)).filter(Boolean)) }))
+    .filter((g) => /^_[A-Za-z0-9._-]+$/.test(g.dir) && g.dir !== '_company' && g.depts.size);
 }
 
 function roots(person) {
@@ -164,6 +175,7 @@ function roots(person) {
   const apart = privateDepts();
   for (const h of handbookDepts()) if (!apart.has(h) && h !== d) out.push(C('_handbook', h));
   if (d) out.push(C('_handbook', d));
+  for (const g of kbGroups()) if (d && g.depts.has(d)) out.push(C('_handbook', g.dir));
   if (bd) out.push(B('20-l2', bd));
   if (person.role === 'director' && bd) out.push(B('11-l1', bd), B('10-logs', bd), B('_inbox', 'director', bd));
   return out;
