@@ -149,6 +149,9 @@ jobs:
       - name: Prove people management, including removing an account for good
         if: runner.os == 'Linux'
         run: python3 scripts/prove-people.py
+      - name: Prove the company chat (Tinode) logs in with TDH accounts only
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-auth.py
       - name: Prove task-card reminders (due soon, overdue, the admins' page, WeCom against a fake)
         run: python scripts/prove-task-notify.py
       - name: Prove task cards (share reach, no self-approval, damaged board, body limits)
