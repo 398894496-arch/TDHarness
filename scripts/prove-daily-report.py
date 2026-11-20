@@ -130,6 +130,7 @@ check("这一块今天没取到" in t2 and "【任务卡】" not in t2, "a pack 
 st = {}
 check(not dr.due(datetime(2026, 11, 21, 7, 29), cfg, st) and dr.due(datetime(2026, 11, 21, 7, 30), cfg, st), "due from 07:30")
 check(not dr.due(datetime(2026, 11, 21, 9, 0), cfg, {"day": "2026-11-21"}) and not dr.due(datetime(2026, 11, 21, 9, 0), {}, {}), "once a day; never without config")
+check(dr.due(datetime(2026, 11, 21, 11, 29), cfg, st) and not dr.due(datetime(2026, 11, 21, 11, 30), cfg, st) and not dr.due(datetime(2026, 11, 20, 23, 10), cfg, st), "only within 4 hours of 07:30: never late at night")
 rt = root / "rt"
 rt.mkdir()
 check(dr.load_config(rt) == {}, "no file, no config")
