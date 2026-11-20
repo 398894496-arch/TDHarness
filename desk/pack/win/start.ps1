@@ -287,6 +287,8 @@ $up = [bool](Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort $Port -Stat
 if (-not $up) {
   $stdout = Join-Path $env:DSH_HOME 'web-runtime.out'
   $stderr = Join-Path $env:DSH_HOME 'web-runtime.err'
+  # company-desk-err-keep-v1: keep the last run's stderr; a desk that died mid-turn left its reason there.
+  if ((Test-Path -LiteralPath $stderr) -and ((Get-Item -LiteralPath $stderr).Length -gt 0)) { Copy-Item -LiteralPath $stderr -Destination ($stderr + '.prev') -Force -ErrorAction SilentlyContinue }
   $arg = @(
     $Bin, '--profile', 'web', '--patch', $Overlay,
     '--host', '127.0.0.1', '--port', [string]$Port, '--no-open',

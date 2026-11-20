@@ -40,7 +40,10 @@ OV="$DSH_HOME/profiles/web/overlay.yml"
 if grep -q '__DESK_HOME__' "$OV" 2>/dev/null; then
   OV="$OV" DH="$DSH_HOME" "$NODEBIN" -e 'const fs=require("fs"); fs.writeFileSync(process.env.OV, fs.readFileSync(process.env.OV,"utf8").split("__DESK_HOME__").join(process.env.DH));'
 fi
-# Stale Error: lines here become the login-timeout dialog. Truncate every launch.
+# Stale Error: lines here become the login-timeout dialog. Truncate every launch, but keep
+# the last run's stderr as .prev first: a desk that died mid-turn left its reason here and the
+# relaunch wiped it (company-desk-err-keep-v1).
+if [[ -s "$DSH_HOME/web-runtime.err" ]]; then mv -f "$DSH_HOME/web-runtime.err" "$DSH_HOME/web-runtime.err.prev" || true; fi
 : > "$DSH_HOME/web-runtime.err"
 # Stays workspace-write, and this is MEASURED, not assumed (2026-08-26).
 #
