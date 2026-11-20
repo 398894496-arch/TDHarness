@@ -17,7 +17,9 @@ reach: index.html loads them from static/vendor instead.
 The page's script loads its language and view chunks from "/umd/" (webpack's public path, written for a page at the
 site's root); this page is at /chat/, so the chunks 404 and the page stays blank (11-20). umd/index.prod.js gets the
 relative "umd/" instead, and index.html asks for the scripts under a new URL so a browser that kept the old copy
-fetches them again. Prints TINODE_SETUP_OK=1.
+fetches them again.
+The page wears TDH's look (company-chat-look-v1): tdh-chat.css, beside the page, loaded after Tinode's own sheet.
+Prints TINODE_SETUP_OK=1.
 """
 from __future__ import annotations
 
@@ -104,7 +106,7 @@ def page(html: str) -> str:
 
 
 # company-chat-tinode-v2: bump when the scripts change, so browsers do not keep an old copy.
-SCRIPT_REV = "tdh2"
+SCRIPT_REV = "tdh3"
 
 
 def bundle(js: str) -> str:
@@ -115,6 +117,16 @@ def bundle(js: str) -> str:
     if n == 0 and len(re.findall(r'\.p="umd/"', js)) == 1:
         return js
     raise SystemExit("TINODE_SETUP_FAIL anchor-public-path count=%d" % n)
+
+
+def look(html: str) -> str:
+    """index.html: TDH's sheet right after Tinode's own, under this revision's URL."""
+    html, n = re.subn(r'\s*<link rel="stylesheet" href="tdh-chat\.css[^"]*"\s*/?>', "", html)
+    html, n = re.subn(r'(<link rel="stylesheet" href="css/base\.min\.css"\s*/?>)',
+                      lambda m: m.group(1) + '\n<link rel="stylesheet" href="tdh-chat.css?v=%s" />' % SCRIPT_REV, html)
+    if n != 1:
+        raise SystemExit("TINODE_SETUP_FAIL anchor-base-css count=%d" % n)
+    return html
 
 
 def bust(html: str) -> str:
@@ -149,7 +161,8 @@ def main() -> int:
     static = tin / "static"
     shutil.copytree(a.vendor, static / "vendor", dirs_exist_ok=True)
     idx = static / "index.html"
-    idx.write_text(bust(page(idx.read_text(encoding="utf-8"))), encoding="utf-8")
+    shutil.copyfile(Path(__file__).resolve().parent / "tdh-chat.css", static / "tdh-chat.css")
+    idx.write_text(look(bust(page(idx.read_text(encoding="utf-8")))), encoding="utf-8")
     js = static / "umd" / "index.prod.js"
     js.write_text(bundle(js.read_text(encoding="utf-8")), encoding="utf-8")
     print("TINODE_SETUP_OK=1")

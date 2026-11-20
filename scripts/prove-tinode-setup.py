@@ -3,6 +3,7 @@
 
 - index.html: CDN libraries and fonts come from static/vendor; the two scripts are asked for under this revision's URL
   (a browser that kept a broken copy fetches them again); a second run changes nothing.
+- TDH's look (company-chat-look-v1): tdh-chat.css right after Tinode's own sheet, once.
 - umd/index.prod.js: the chunks (language, views) load from "umd/" beside the page, not "/umd/" at the site's root,
   where under /chat/ they 404 and the page stays blank (11-20); a second run changes nothing; a release that moved
   the public path stops setup instead of passing silently.
@@ -17,6 +18,7 @@ ts = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ts)
 
 HTML = """<!DOCTYPE html><html><head>
+<link rel="stylesheet" href="css/base.min.css" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,400,400i,500,700,700i" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons" />
 <script crossorigin="anonymous" src="https://polyfill-fastly.io/v3/polyfill.min.js?features=Intl.Segmenter"></script>
@@ -34,10 +36,12 @@ def check(cond, what):
         raise SystemExit("TINODE_SETUP_PROVE_FAIL " + what)
 
 
-h = ts.bust(ts.page(HTML))
+h = ts.look(ts.bust(ts.page(HTML)))
 check("cdn.jsdelivr" not in h and "fonts.googleapis" not in h and "polyfill" not in h, "no CDN left: " + h)
 check('src="umd/index.prod.js?v=%s"' % ts.SCRIPT_REV in h and 'src="umd/tinode.prod.js?v=%s"' % ts.SCRIPT_REV in h, "scripts under this revision's URL")
-check(ts.bust(ts.page(h)) == h, "index.html: a second run changes nothing")
+check(ts.look(ts.bust(ts.page(h))) == h, "index.html: a second run changes nothing")
+check(h.count('href="tdh-chat.css?v=%s"' % ts.SCRIPT_REV) == 1 and h.index("css/base.min.css") < h.index("tdh-chat.css"), "TDH's sheet once, after Tinode's own")
+check((Path(__file__).resolve().parent.parent / "server" / "chat" / "tdh-chat.css").read_text(encoding="utf-8").count("company-chat-look-v1") == 1, "the sheet is in the repository")
 j = ts.bundle(JS)
 check('.p="umd/"' in j and '.p="/umd/"' not in j, "chunks from umd/ beside the page: " + j)
 check(ts.bundle(j) == j, "the bundle: a second run changes nothing")
