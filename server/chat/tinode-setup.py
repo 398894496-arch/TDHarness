@@ -109,8 +109,17 @@ def page(html: str) -> str:
     return html.replace("<head>", "<head>\n<!-- company-chat-tinode-v1: libraries and fonts served from static/vendor -->", 1)
 
 
-# company-chat-tinode-v2: bump when the scripts change, so browsers do not keep an old copy.
+# company-chat-tinode-v2: the scripts' URLs change whenever their content does, so browsers do not keep an old copy.
+# main() sets it from the files themselves (TDH's page and sheet); "tdh4" is what a direct call without main gets.
 SCRIPT_REV = "tdh4"
+
+
+def content_rev(chat_dir: Path) -> str:
+    import hashlib
+    h = hashlib.sha256()
+    for f in ("tdh-web/index.html", "tdh-web/app.js", "tdh-web/app.css", "tdh-chat.css"):
+        h.update((chat_dir / f).read_bytes())
+    return "tdh-" + h.hexdigest()[:10]
 
 
 def bundle(js: str) -> str:
@@ -213,6 +222,8 @@ def main() -> int:
     os.replace(tmp, tin / "tinode.conf")
     static = tin / "static"
     shutil.copytree(a.vendor, static / "vendor", dirs_exist_ok=True)
+    global SCRIPT_REV
+    SCRIPT_REV = content_rev(Path(__file__).resolve().parent)
     shutil.copyfile(Path(__file__).resolve().parent / "tdh-chat.css", static / "tdh-chat.css")
     js = static / "umd" / "index.prod.js"
     js.write_text(bundle(js.read_text(encoding="utf-8")), encoding="utf-8")

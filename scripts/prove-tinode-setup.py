@@ -92,4 +92,6 @@ try:
     check(False, "Tinode's page gone and /chat/ TDH's: setup stops")
 except SystemExit as e:
     check("no-tinode-page" in str(e), "Tinode's page gone and /chat/ TDH's: setup stops: " + str(e))
+r1 = ts.content_rev(HERE.parent / "server" / "chat")
+check(r1.startswith("tdh-") and len(r1) == 14 and r1 == ts.content_rev(HERE.parent / "server" / "chat"), "the scripts' version comes from their content: " + r1)
 print("TINODE_SETUP_PROVE_OK=1")
