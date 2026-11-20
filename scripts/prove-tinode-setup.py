@@ -8,6 +8,7 @@
   where under /chat/ they 404 and the page stays blank (11-20); a second run changes nothing; a release that moved
   the public path stops setup instead of passing silently.
 - TDH's own chat page (company-chat-client-v1) into static/tdh/ with the web key read from Tinode's page.
+- company-chat-home-v1: /chat/ is TDH's page, Tinode's kept as tinode.html; "tinode" puts it back; idempotent.
 Prints TINODE_SETUP_PROVE_OK=1.
 """
 import importlib.util
@@ -67,4 +68,28 @@ try:
     check(False, "no key: setup stops")
 except SystemExit as e:
     check("no-api-key" in str(e), "no key: setup stops: " + str(e))
+# company-chat-home-v1: /chat/ is TDH's page, Tinode's kept beside it as tinode.html; "tinode" puts it back.
+home = Path(tempfile.mkdtemp(prefix="tdh-home-"))
+(home / "umd").mkdir()
+(home / "umd" / "index.prod.js").write_text('s.d(t,["Lq",0,"AQ' + "k" * 30 + '"]);', encoding="utf-8")
+(home / "index.html").write_text(HTML, encoding="utf-8")  # a fresh release: Tinode's page at /chat/
+src = HERE.parent / "server" / "chat" / "tdh-web"
+ts.pages(home, src, "tdh")
+idx = (home / "index.html").read_text(encoding="utf-8")
+kept = (home / "tinode.html").read_text(encoding="utf-8")
+check("company-chat-client-v1" in idx and 'src="tdh/app.js?v=' in idx and 'src="umd/tinode.prod.js?v=' in idx and 'src="vendor/react' in idx
+      and 'href="tdh/app.css?v=' in idx and "../" not in idx, "/chat/ is TDH's page, its files under tdh/: " + idx[:300])
+check("tdh-chat.css" in kept and "cdn.jsdelivr" not in kept, "Tinode's own page kept beside it, patched as before")
+ts.pages(home, src, "tdh")
+check((home / "index.html").read_text(encoding="utf-8") == idx and (home / "tinode.html").read_text(encoding="utf-8") == kept, "a second run changes nothing")
+ts.pages(home, src, "tinode")
+check((home / "index.html").read_text(encoding="utf-8") == kept, "home tinode: Tinode's page back at /chat/")
+ts.pages(home, src, "tdh")
+check((home / "index.html").read_text(encoding="utf-8") == idx, "and TDH's again")
+(home / "tinode.html").unlink()
+try:
+    ts.pages(home, src, "tdh")
+    check(False, "Tinode's page gone and /chat/ TDH's: setup stops")
+except SystemExit as e:
+    check("no-tinode-page" in str(e), "Tinode's page gone and /chat/ TDH's: setup stops: " + str(e))
 print("TINODE_SETUP_PROVE_OK=1")
