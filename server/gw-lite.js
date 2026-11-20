@@ -632,8 +632,30 @@ async function keyVendorModels(v, env) {
   const base = String(env[v.baseEnv] || v.base).replace(/\/$/, '');
   const extra = v.id === 'claude' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' } : null;
   const up = await listUpstream(base + '/models', key, extra);
-  const rows = up.rows.map((r) => (r && typeof r.id === 'string' ? r.id : '')).filter((id) => MODEL_ID.test(id) && !NOT_CHAT.test(id)).map((id) => ({ id: id }));
+  const rows = [];
+  for (const r of up.rows) {
+    const id = r && typeof r.id === 'string' ? r.id : '';
+    if (!MODEL_ID.test(id) || NOT_CHAT.test(id)) continue;
+    const row = { id: id };
+    const efforts = keyModelEfforts(r);
+    if (efforts.length) row.efforts = efforts;
+    rows.push(row);
+  }
   return { status: up.status, rows: rows };
+}
+
+// company-key-efforts-v1: the reasoning levels a key vendor lists for a model itself (DeepSeek's /models gives
+// effort.supported_levels: low / high / max). Dropped before, so its models carried none, the desk's 公司模型
+// group then had no default level for any model, and switching models showed Default (2026-11-20).
+function keyModelEfforts(r) {
+  const raw = (r && r.effort && Array.isArray(r.effort.supported_levels) && r.effort.supported_levels)
+    || (r && r.capabilities && Array.isArray(r.capabilities.reasoning_effort) && r.capabilities.reasoning_effort) || [];
+  const out = [];
+  for (const x of raw) {
+    const e = typeof x === 'string' ? x.trim().toLowerCase() : '';
+    if (EFFORT_NAME.test(e) && out.indexOf(e) < 0) out.push(e);
+  }
+  return out;
 }
 
 function offeredKeyRows(vendor, rows) {
