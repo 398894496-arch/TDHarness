@@ -4,7 +4,11 @@
 //   - once the right sidebar's tab registry is there, registers the 聊天 tab type (kept mounted, on the start
 //     page) and its body under the same id;
 //   - the page asks this desk's host where the chat is (/company/chat/where) and shows it in an iframe; when the
-//     host has no relay it says so and offers 重试.
+//     host has no relay it says so and offers 重试;
+//   - company-chat-notify-v1: the desk asks its host for the unread count (badge on 聊天); a new message while the
+//     chat is not on screen pops up in the window (打开 opens the chat panel); while the window is in the
+//     background the host is asked for the system's notification; old messages from before the page loaded are
+//     not announced.
 // Prints CHAT_DESK_PROVE_OK=1.
 "use strict";
 const assert = require("node:assert/strict");
@@ -46,17 +50,19 @@ const React = {
 	Fragment: "Fragment",
 };
 
-function load() {
+function load(o) {
+o = o || {};
 let mod = null;
+const intervals = [];
 const sandbox = {
 	window: { __ModuleLoader__: { load: (m) => { mod = m; } } },
-	document: anything,
+	document: o.document || anything,
 	navigator: anything,
 	localStorage: anything,
 	location: anything,
 	setTimeout: () => 0,
 	clearTimeout: () => {},
-	setInterval: () => 0,
+	setInterval: (fn) => { intervals.push(fn); return intervals.length; },
 	clearInterval: () => {},
 	console,
 	URL,
@@ -64,7 +70,7 @@ const sandbox = {
 	JSON,
 	Promise,
 	Date,
-	fetch: () => new Promise(() => {}),
+	fetch: o.fetch || (() => new Promise(() => {})),
 };
 vm.runInNewContext(fs.readFileSync(CLIENT, "utf8"), sandbox, { filename: "client.js" });
 assert.ok(mod, "client.js registers its module");
@@ -98,19 +104,21 @@ const ctx = new Proxy({}, {
 			}));
 		};
 		if (k === "get") return () => undefined;
+		if (k === "layout" && o.layout) return o.layout;
 		return anything;
 	},
 });
 exp.apply(ctx);
-return { sandbox, regs, tabTypes, injected };
+return { sandbox, regs, tabTypes, injected, intervals };
 }
 const { sandbox, regs, tabTypes, injected } = load();
 
 const panel = regs.find((r) => r.opts.name === "sidebar.panellist" && r.opts.id === "company-chat");
 assert.ok(panel, "聊天 in the left column");
 assert.equal(panel.opts.label(), "聊天");
-const icon = panel.Comp({ size: 18 });
-assert.equal(icon.type, "svg");
+const flat = (n) => { while (n && typeof n.type === "function") n = n.type(n.props); return n; };
+const icon = flat(panel.Comp({ size: 18 }));
+assert.equal(icon.type, "svg", "no unread: just the icon");
 assert.equal(icon.props.width, 18);
 const main = regs.find((r) => r.opts.name === "main" && r.opts.key === "company-chat");
 assert.ok(main, "the 聊天 page in the main area");
@@ -144,6 +152,13 @@ function rerender(Comp) {
 	while (tree && typeof tree.type === "function") { hookAt = 0; tree = tree.type(tree.props); }
 	return tree;
 }
+// The element whose text is 打开 (the stand-in kernel has no Button of its own, so it is found by its text).
+const byText = (n, want) => {
+	if (!n || typeof n !== "object") return null;
+	if ((n.children || []).join("") === want) return n;
+	for (const c of n.children || []) { const hit = byText(c, want); if (hit) return hit; }
+	return null;
+};
 const text = (n) => (n == null ? "" : typeof n === "string" ? n : (n.children || []).map(text).join(""));
 const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type ? n : (n.children || []).map((c) => find(c, type)).find(Boolean) || null);
 
@@ -182,6 +197,67 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 	tree = rerender(freshBody.Comp);
 	assert.match(text(tree), /聊天没打开/);
 	assert.match(text(tree), /重试/);
+	// --- reminders ---------------------------------------------------------------------------------------------
+	const polls = [];
+	const notified = [];
+	const selected = [];
+	const answers = [
+		{ ok: true, live: true, count: 2, seq: 3, events: [{ id: 3, topic: "usrA", from: "旧消息", group: false }] },
+		{ ok: true, live: true, count: 3, seq: 4, events: [{ id: 4, topic: "usrLFH", from: "梁风禾", group: false }] },
+		{ ok: true, live: true, count: 4, seq: 6, events: [{ id: 5, topic: "grpX", from: "报价群", group: true }, { id: 6, topic: "grpX", from: "报价群", group: true }] },
+	];
+	const json = (j) => Promise.resolve({ ok: true, json: () => Promise.resolve(j) });
+	const doc = new Proxy({}, { get(t2, k) {
+		if (k === "hasFocus") return () => false;
+		if (k === "visibilityState") return "visible";
+		return anything;
+	} });
+	const r = load({
+		document: doc,
+		layout: new Proxy({}, { get(t2, k) { return k === "selectPanel" ? (id) => selected.push(id) : anything; } }),
+		fetch: (url, opt) => {
+			if (String(url).indexOf("/company/chat/unread") === 0) {
+				polls.push({ url, header: opt && opt.headers && opt.headers["X-TDH-Chat"] });
+				return json(answers.shift() || { ok: true, count: 4, seq: 6, events: [] });
+			}
+			if (url === "/company/chat/notify") {
+				notified.push(JSON.parse(opt.body));
+				return json({ ok: true });
+			}
+			return new Promise(() => {});
+		},
+	});
+	const settle = async () => { for (let i = 0; i < 6; i++) await new Promise((res) => setImmediate(res)); };
+	await settle();
+	assert.equal(polls.length, 1, "asks its host at once");
+	assert.equal(polls[0].header, "1", "with the desk page's own header");
+	assert.equal(r.intervals.length >= 1, true, "and again every few seconds");
+	const rPanel = r.regs.find((x) => x.opts.name === "sidebar.panellist" && x.opts.id === "company-chat");
+	const toastReg = r.regs.find((x) => x.opts.name === "shell.overlay" && x.opts.id === "company-chat-toast");
+	assert.ok(toastReg, "a popup in the window's overlay");
+	const badgeOf = () => { hookAt = 0; const n = rPanel.Comp({ size: 18 }); return n.props && n.props["data-company-chat-unread"]; };
+	assert.equal(badgeOf(), "2", "the badge shows the unread count");
+	const popup = () => { hookState = []; effects.length = 0; hookAt = 0; return toastReg.Comp(toastReg.opts.inject()); };
+	assert.equal(popup(), null, "messages from before the page loaded are not announced");
+	assert.deepEqual(notified, []);
+
+	r.intervals.forEach((fn) => fn()); // the shell has other timers too; the chat poll is one of them
+	await settle();
+	assert.equal(badgeOf(), "3");
+	let pop = popup();
+	assert.ok(pop, "a new message pops up while the chat is not on screen");
+	assert.match(text(pop), /梁风禾 发来新消息/);
+	assert.deepEqual(notified, [{ title: "TDH 聊天", body: "梁风禾 发来新消息" }], "the window is in the background: the system's notification");
+	const open = byText(pop, "打开");
+	open.props.onClick();
+	assert.deepEqual(selected, ["company-chat"], "打开 opens the chat panel");
+	assert.equal(popup(), null, "and the popup goes");
+
+	r.intervals.forEach((fn) => fn()); // the shell has other timers too; the chat poll is one of them
+	await settle();
+	pop = popup();
+	assert.match(text(pop), /「报价群」有新消息（共 2 条）/, "a group, several at once");
+	assert.equal(badgeOf(), "4");
 	console.log("CHAT_DESK_PROVE_OK=1");
 })().catch((err) => {
 	console.error(err);

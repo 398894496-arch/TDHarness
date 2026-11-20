@@ -6940,7 +6940,127 @@ window.__ModuleLoader__.load({
 			}
 			return chatWhere;
 		}
+		// company-chat-notify-v1: the unread count (badge on 聊天), a popup in the window when a message comes while
+		// the chat is not on screen, and the system's notification while the window is in the background. The desk's
+		// host watches the chat (chat-relay.js); this page asks it every few seconds.
+		let chatSnap = { count: 0, toast: null };
+		const chatSubs = new Set();
+		const chatStore = {
+			subscribe: function (fn) { chatSubs.add(fn); return function () { chatSubs.delete(fn); }; },
+			getSnapshot: function () { return chatSnap; }
+		};
+		function setChatSnap(next) {
+			chatSnap = next;
+			chatSubs.forEach(function (fn) { fn(); });
+		}
+		// The chat frames on screen (left panel or right-sidebar tab); a hidden kept-mounted tab has no box.
+		const chatBoxes = new Set();
+		function chatOnScreen() {
+			try {
+				if (document.visibilityState && document.visibilityState !== "visible") return false;
+				let seen = false;
+				chatBoxes.forEach(function (el) { if (el && el.isConnected && el.getClientRects().length > 0) seen = true; });
+				return seen;
+			} catch (err) {
+				return false;
+			}
+		}
+		function chatHeaders() {
+			return { "Accept": "application/json", "X-TDH-Chat": "1" };
+		}
+		let chatPolling = false;
+		function startChatPoll() {
+			if (chatPolling) return;
+			chatPolling = true;
+			let since = -1;
+			function tick() {
+				fetch("/company/chat/unread?since=" + Math.max(0, since), { credentials: "same-origin", headers: chatHeaders() })
+					.then(function (res) { return res.json(); })
+					.then(function (j) {
+						if (!j || !j.ok) return;
+						const fresh = since < 0 ? [] : (j.events || []);
+						since = Number(j.seq) || 0;
+						let toast = chatSnap.toast;
+						if (fresh.length) {
+							const last = fresh[fresh.length - 1];
+							const text = (last.group ? "「" + (last.from || "群聊") + "」有新消息" : (last.from || "同事") + " 发来新消息") +
+								(fresh.length > 1 ? "（共 " + fresh.length + " 条）" : "");
+							if (!chatOnScreen()) toast = { id: last.id, text: text };
+							let focused = true;
+							try { focused = document.hasFocus(); } catch (err) {}
+							if (!focused) {
+								fetch("/company/chat/notify", {
+									method: "POST",
+									credentials: "same-origin",
+									headers: Object.assign({ "Content-Type": "application/json" }, chatHeaders()),
+									body: JSON.stringify({ title: "TDH 聊天", body: text })
+								}).catch(function () {});
+							}
+						}
+						const count = Number(j.count) || 0;
+						if (count !== chatSnap.count || toast !== chatSnap.toast) setChatSnap({ count: count, toast: toast });
+					})
+					.catch(function () {});
+			}
+			tick();
+			setInterval(tick, 4000);
+		}
 		function ChatIcon(props) {
+			const snap = React.useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+			const glyph = React.createElement(ChatGlyph, props);
+			const n = snap.count;
+			if (!n) return glyph;
+			return React.createElement("span", { style: { position: "relative", display: "inline-flex" }, "data-company-chat-unread": String(n) },
+				glyph,
+				React.createElement("span", {
+					style: {
+						position: "absolute", top: -6, right: -9, minWidth: 15, height: 15, padding: "0 4px", boxSizing: "border-box",
+						borderRadius: 8, background: T.err, color: "#fff", fontSize: 10, lineHeight: "15px", fontWeight: 600,
+						textAlign: "center", fontFamily: FONT, pointerEvents: "none"
+					}
+				}, n > 99 ? "99+" : String(n))
+			);
+		}
+		function ChatToast(props) {
+			const snap = React.useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+			const toast = snap.toast;
+			React.useEffect(function () {
+				if (!toast) return undefined;
+				const timer = setTimeout(function () {
+					if (chatSnap.toast === toast) setChatSnap({ count: chatSnap.count, toast: null });
+				}, 8000);
+				return function () { clearTimeout(timer); };
+			}, [toast]);
+			if (!toast) return null;
+			function close() {
+				if (chatSnap.toast === toast) setChatSnap({ count: chatSnap.count, toast: null });
+			}
+			return React.createElement("div", {
+				role: "status",
+				"data-company-chat-toast": "1",
+				style: {
+					position: "fixed", right: 20, bottom: 20, zIndex: 1000, display: "flex", alignItems: "center", gap: 10,
+					maxWidth: 380, padding: "10px 10px 10px 14px", borderRadius: 10, background: T.base,
+					border: "1px solid " + T.border2, boxShadow: "0 6px 24px rgba(0,0,0,.18)", fontFamily: FONT, fontSize: 13, color: T.label
+				}
+			},
+				React.createElement(ChatGlyph, { size: 16 }),
+				React.createElement("span", { style: { flex: 1, minWidth: 0 } }, toast.text),
+				React.createElement(P.Button, {
+					variant: "outline",
+					size: "sm",
+					type: "button",
+					onClick: function () { close(); if (props && props.openChat) props.openChat(); }
+				}, "打开"),
+				React.createElement("button", {
+					type: "button",
+					"aria-label": "关闭",
+					onClick: close,
+					style: { border: 0, background: "transparent", color: T.label2, cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "2px 4px" }
+				}, "×")
+			);
+		}
+		function ChatGlyph(props) {
 			const size = (props && props.size) || 16;
 			return React.createElement("svg", {
 				width: size,
@@ -6956,6 +7076,11 @@ window.__ModuleLoader__.load({
 				React.createElement("path", { d: "M2.5 3.5h7a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H6l-2.5 2v-2h-1a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z" }),
 				React.createElement("path", { d: "M10.5 6h3a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-1v2l-2.5-2H8a1 1 0 0 1-1-1v-.5" })
 			);
+		}
+		function chatBoxRef(el) {
+			// React calls this with the box, then with null when it goes: forget boxes that left the page.
+			if (el) chatBoxes.add(el);
+			chatBoxes.forEach(function (b) { if (!b.isConnected) chatBoxes.delete(b); });
 		}
 		function ChatFrame() {
 			const [url, setUrl] = React.useState("");
@@ -6983,7 +7108,7 @@ window.__ModuleLoader__.load({
 				fontFamily: FONT
 			};
 			if (url) {
-				return React.createElement("div", { style: box, "data-company-chat": "1" },
+				return React.createElement("div", { style: box, "data-company-chat": "1", ref: chatBoxRef },
 					React.createElement("iframe", {
 						src: url,
 						title: "聊天",
@@ -7103,6 +7228,17 @@ window.__ModuleLoader__.load({
 					key: CHAT_PANEL
 				}, ChatPage);
 			});
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
+					id: "company-chat-toast",
+					order: 30,
+					inject: function () {
+						return { openChat: function () { try { ctx.layout.selectPanel(CHAT_PANEL); } catch (err) {} } };
+					}
+				}, ChatToast);
+			});
+			startChatPoll();
 			ctx.slots.inject("sidebar.panellist", function () {
 				return ctx.slots.register({
 					name: "sidebar.panellist",
@@ -7125,7 +7261,7 @@ window.__ModuleLoader__.load({
 								order: 40,
 								title: function () { return "聊天"; },
 								description: function () { return "和同事私聊、群聊、传文件"; },
-								icon: ChatIcon
+								icon: ChatGlyph
 							}]
 						});
 					}, "company-shell: chat tab type");

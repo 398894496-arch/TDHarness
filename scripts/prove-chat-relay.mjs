@@ -9,6 +9,9 @@
 //   - company-chat-mac-files-v1 (the Mac's window has no file chooser and saves no downloads): with the file
 //     bridge on, the page carries it (valid script); choosing hands over only the chosen files, each once; saving
 //     writes only into Downloads under a clean, unused name and shows it; all of it needs the page's key.
+//   - company-chat-notify-v1: the relay watches the person's chats ("me", with the chat token): the unread count
+//     from the contact list, a new message from someone else counts and is named (a new chat's name is fetched),
+//     one's own message does not count, reading elsewhere takes it off.
 // Prints CHAT_RELAY_PROVE_OK=1.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -27,6 +30,14 @@ const DESK_TOKEN = "dsh_" + "d".repeat(32);
 // --- the stand-in site ---------------------------------------------------------------------------------------
 const sessions = new Map();
 const logins = [];
+const watchers = new Set(); // sessions attached to "me"
+let meSubs = [
+	{ topic: "usrTDH", public: { fn: "tdh" }, seq: 5, read: 3 },
+	{ topic: "grpABC", public: { fn: "报价群" }, seq: 10, read: 10 },
+];
+function push(sid, m) {
+	sessions.get(sid).push(m);
+}
 const site = http.createServer((req, res) => {
 	const u = new URL(req.url, "http://x");
 	if (u.pathname === "/chat/") {
@@ -50,9 +61,10 @@ const site = http.createServer((req, res) => {
 			return;
 		}
 		if (req.method === "GET") {
-			const q = sessions.get(sid);
-			sessions.set(sid, []);
-			out(q);
+			// Long polling: hold an empty answer a little, as Tinode holds it until there is news.
+			const answer = () => { const q = sessions.get(sid); sessions.set(sid, []); out(q); };
+			if (sessions.get(sid).length) answer();
+			else setTimeout(answer, 150);
 			return;
 		}
 		const chunks = [];
@@ -63,7 +75,18 @@ const site = http.createServer((req, res) => {
 			const kind = Object.keys(msg)[0];
 			const body = msg[kind];
 			let ctrl = { id: body.id, code: 200 };
-			if (kind === "login") {
+			if (kind === "login" && body.scheme === "token") {
+				const ok = /^chat-token-of-/.test(body.secret);
+				ctrl = ok ? { id: body.id, code: 200, params: { user: "usr" + body.secret.slice(14) } } : { id: body.id, code: 401 };
+			} else if (kind === "sub" && body.topic === "me") {
+				watchers.add(sid);
+				push(sid, { ctrl });
+				push(sid, { meta: { topic: "me", sub: meSubs } });
+				out([]);
+				return;
+			} else if (kind === "get" && body.topic === "me") {
+				push(sid, { meta: { topic: "me", sub: meSubs } });
+			} else if (kind === "login") {
 				const [login, pw] = Buffer.from(body.secret, "base64").toString().split(":");
 				logins.push(login);
 				ctrl = pw === DESK_TOKEN
@@ -237,6 +260,37 @@ assert.equal(revealed.length, 3, "each saved file is shown in Finder");
 assert.equal((await mreq("POST", "/tdh/save?name=x.txt", Buffer.from("x"))).status, 403, "saving needs the key");
 await mac.close();
 fs.rmSync(box, { recursive: true, force: true });
+
+// --- the unread watcher ---------------------------------------------------------------------------------------
+const w = startChatRelay({ site: () => SITE, deskToken: () => DESK_TOKEN, login: () => "lfh", files: null, warmMs: 10 });
+await w.ready;
+const until = async (what, cond) => {
+	for (let i = 0; i < 100 && !cond(); i++) await new Promise((r) => setTimeout(r, 50));
+	assert.ok(cond(), what + ": " + JSON.stringify(w.unread(0)));
+};
+await until("the watcher is on and has the contact list", () => w.unread(0).live && w.unread(0).count === 2);
+const pres = (p) => { for (const sid of watchers) push(sid, { pres: Object.assign({ topic: "me" }, p) }); };
+pres({ src: "grpABC", what: "msg", seq: 11, act: "usrTDH" });
+await until("someone else's message in the group counts and is named", () => w.unread(0).count === 3 && w.unread(0).events.length === 1);
+let ev = w.unread(0).events[0];
+assert.deepEqual([ev.topic, ev.from, ev.group], ["grpABC", "报价群", true]);
+pres({ src: "usrTDH", what: "msg", seq: 6 });
+await new Promise((r) => setTimeout(r, 500));
+// Sending marks the chat read up to one's own message (Tinode moves the sender's read pointer): tdh's 2 are gone.
+assert.equal(w.unread(0).count, 1, "one's own message (no sender named) does not count, and reads the chat up to it");
+assert.equal(w.unread(0).events.length, 1, "and is not announced");
+pres({ src: "grpABC", what: "read", seq: 11 });
+await until("reading elsewhere takes it off", () => w.unread(0).count === 0);
+meSubs = meSubs.concat([{ topic: "grpNEW", public: { fn: "新群" }, seq: 1, read: 0 }]);
+pres({ src: "grpNEW", what: "msg", seq: 1, act: "usrTDH" });
+await until("a message in a chat the watcher did not know: named after a refresh", () => {
+	const e = w.unread(0).events;
+	return e.length === 2 && e[1].from === "新群" && w.unread(0).count === 1;
+});
+const seq = w.unread(0).seq;
+assert.deepEqual(w.unread(seq).events, [], "nothing new after the last one seen");
+assert.equal(w.unread(seq - 1).events.length, 1);
+await w.close();
 
 // Values in the boot script cannot end it.
 const odd = startChatRelay({ site: () => SITE, deskToken: () => "", login: () => "a</script><b>", files: null });

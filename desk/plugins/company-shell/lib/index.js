@@ -7,7 +7,7 @@ import path from "node:path";
 import { URL } from "node:url";
 import { watchVideo } from "./video-watch.js";
 import { kernelWatchCutover, kernelWatchPlug, kernelWatchPublish, kernelWatchSnapshot, kernelWatchUpgrade } from "./kernel-watch.js";
-import { startChatRelay } from "./chat-relay.js";
+import { startChatRelay, systemNotify } from "./chat-relay.js";
 
 const OPENCLI_STORE =
 	"https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk";
@@ -2452,6 +2452,38 @@ export function apply(ctx) {
 					"cache-control": "no-store",
 				});
 				res.end(JSON.stringify(url ? { ok: true, url } : { ok: false, error: "relay" }));
+			},
+		}),
+	);
+	// company-chat-notify-v1: the unread count and new messages for the desk's badge and popup, and the system's
+	// own notification while the desk's window is in the background. Only for the desk page: it sends a header a
+	// page elsewhere cannot send here without asking first.
+	ctx.effect(() =>
+		web.register({
+			kind: "exact",
+			path: "/company/chat/unread",
+			handler: async (req, res) => {
+				const ok = req.headers["x-tdh-chat"] === "1";
+				const since = Number(new URL(req.url || "/", "http://x").searchParams.get("since")) || 0;
+				const out = ok ? (chat ? chat.unread(since) : { ok: false, error: "relay" }) : { ok: false, error: "header" };
+				res.writeHead(ok ? 200 : 403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+				res.end(JSON.stringify(out));
+			},
+		}),
+	);
+	ctx.effect(() =>
+		web.register({
+			kind: "exact",
+			path: "/company/chat/notify",
+			handler: async (req, res) => {
+				let shown = false;
+				if (req.headers["x-tdh-chat"] === "1" && String(req.method || "").toUpperCase() === "POST") {
+					let j = {};
+					try { j = JSON.parse((await collect(req)).slice(0, 4096).toString("utf8") || "{}"); } catch { j = {}; }
+					shown = systemNotify(String(j.title || "TDH 聊天"), String(j.body || "有新消息"));
+				}
+				res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+				res.end(JSON.stringify({ ok: shown }));
 			},
 		}),
 	);
