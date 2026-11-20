@@ -11,7 +11,9 @@
 //     (_shared/_memory), or for a department kept apart (行政财务) into its own; a card already there stays.
 //  4. What the day's sessions did with the company's cards (adopted, seen again) is recorded on the company
 //     memory (experience.record_uses). With the prompt hook's record (recalled.jsonl) that is the hot cycle's input.
-//  5. KRouter's nightly on each company memory: standing index and trigger words, learned mentions,
+//  5. The alias table keeps itself (company-krouter-auto-alias-v1): KRouter's alias drafts, the model's short nouns for
+//     the pages in force that no alias names yet, applied through KRouter's own re-check; no one ticks (krouter_tdh.py).
+//  6. KRouter's nightly on each company memory: standing index and trigger words, learned mentions,
 //     reconsolidate, checkup; its report also runs the hot cycle (60 days unused: weighed down).
 //
 //   node krouter-nightly.js [--target yyyy-mm-dd] [--company-root D:\dsh\company] [--runtime-root D:\dsh\runtime]
@@ -189,6 +191,12 @@ function main() {
         const u = py(zone.dir, ['--record-uses'].concat(files), laneEnv(''));
         say('USES|' + zone.key + '|' + (u.out.match(/RECORD_USES=\d+/) || ['rc=' + u.rc])[0]);
         if (u.rc) failed += 1;
+      }
+      // company-krouter-auto-alias-v1: the alias table keeps itself (no one ticks); before the standing index is compiled.
+      if (!LOCAL) {
+        const a = py(zone.dir, ['--auto-aliases'], laneEnv(''));
+        say('ALIASES|' + zone.key + '|' + (a.out.match(/AUTO_ALIASES=\d+ REFUSED=\d+/) || ['rc=' + a.rc + '|' + a.err])[0]);
+        if (a.rc) failed += 1;
       }
       const steps = LOCAL ? 'compile_subconscious,learn_mentions,checkup' : 'compile_subconscious,learn_mentions,reconsolidate,checkup';
       const n = py(zone.dir, ['nightly.py', '--vault', zone.dir, '--steps', steps], laneEnv(''));
