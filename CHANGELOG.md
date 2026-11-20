@@ -4,6 +4,17 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.20.4
+
+**聊天新消息提醒**（`company-chat-notify-v1`）
+- 不开聊天页也知道有新消息。电脑端在后台挂一个只看不发的聊天连接（用聊天自己的登录凭证），统计这个人有多少未读，有新消息时记下是谁、哪个群发的。
+  - 左栏「聊天」上显示红色未读数，最多显示 99+。
+  - 来新消息、而聊天没开在屏幕上时（左栏聊天页和右侧栏聊天都没在显示），TDH 窗口右下角弹一条「梁风禾 发来新消息」或「「报价群」有新消息」，带「打开」按钮，8 秒后自动消失。聊天开着时不弹，聊天页自己会显示新消息。
+  - TDH 窗口不在前台时，再发一条系统通知。Mac 用系统通知中心（来源显示为「脚本编辑器」）；Windows 用系统右下角通知（来源显示为 Windows PowerShell，TDH 还没有自己的通知身份）。3 秒内最多一条。
+  - 自己发的消息不算未读，发了以后这个聊天之前的消息也都算已读（Tinode 本来就这么记）。在别处（网页、另一台电脑）读过的，这里的未读数跟着减。
+  - 通知只说是谁、哪个群，不带消息内容。
+- 证明：`scripts/prove-chat-relay.mjs` 加了未读统计（通讯录初始未读、别人发来的算、自己发的不算、别处读过的减、新群先补名字）；`scripts/prove-chat-desk.js` 加了角标、窗口内弹窗、「打开」、后台时的系统通知、页面打开前的旧消息不弹。11-20 在服务器上实测：tdh2 给 tdh 发消息，1 秒内未读数加一、名字对；tdh 在别处读过后归零。
+
 ## 2026.11.20.3
 
 **公司聊天：私聊、群聊、传文件**（`company-chat-tinode-v1`、`company-chat-desk-v1`、`company-chat-directory-v1`、`company-chat-mac-files-v1`）
