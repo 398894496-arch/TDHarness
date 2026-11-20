@@ -14,6 +14,12 @@ MNT="${COMPANY_SMB_MNT:-$HOME/company}"
 SMB_USER="${COMPANY_SMB_USER:-dshshare}"
 PASSFILE="${COMPANY_SMB_PASS:-$HOME/.dsh-company-rc8/.smb-dshshare}"
 RC8="${HOME}/.dsh-company-rc8"
+# company-mac-offlan-resolve-v1: a .local site name is found on the office LAN only; away from it the share is
+# mounted at the server's tailnet address (Tailscale's resolver, else vendor/company-tailnet.txt).
+if [[ "$TS" == *.local ]] && [ -z "${COMPANY_SMB_TS:-}" ] && [ -f "$HERE/mac-resolve.js" ]; then
+  TS_IP="$(NODE_OPTIONS= "$NODE" "$HERE/mac-resolve.js" --tailnet 2>/dev/null || true)"
+  if [[ "$TS_IP" =~ ^100\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then TS="$TS_IP"; fi
+fi
 if [ -f "$RC8/smb.user" ]; then SMB_USER="$(tr -d '\r\n' < "$RC8/smb.user")"; fi
 if [ -f "$RC8/smb.pass" ]; then PASSFILE="$RC8/smb.pass"; fi
 
@@ -46,8 +52,19 @@ pick_host() {
     [[ -n "$bin" ]] || return 1
     local text
     text="$("$bin" status --json 2>/dev/null || true)"
-    [[ "$text" == *'{{TDH_HOST}}'* ]]
+    [[ "$text" == *"\"$TS\""* ]]
   }
+  # A .local name answers on the office LAN only: there, the LAN as before; away, the tailnet address. Asked once
+  # (mac-resolve.js), not by probing the name: away from the office each probe of it waits 5 s for multicast DNS.
+  if [[ "$LAN" == *.local ]]; then
+    local how=""
+    if [ -f "$HERE/mac-resolve.js" ]; then
+      how="$( { NODE_OPTIONS= "$NODE" "$HERE/mac-resolve.js" --how 2>/dev/null || true; } | awk '{ print $2 }')"
+    fi
+    if [ "$how" != "tailnet" ] && [ "$how" != "vendor" ] && host_up "$LAN"; then echo "$LAN"; return 0; fi
+    if [[ "$TS" != "$LAN" ]] && host_up "$TS"; then echo "$TS"; return 0; fi
+    return 1
+  fi
   # Off-LAN: {{TDH_HOST}} may ping via subnet routes (or a home LAN with the
   # same prefix) while SMB 445 is LocalSubnet-only. Prefer the tailnet IP.
   if on_company_ts && host_up "$TS"; then echo "$TS"; return 0; fi

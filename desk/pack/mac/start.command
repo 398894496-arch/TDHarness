@@ -6,6 +6,12 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 export PATH="$ROOT/bin:$ROOT/node/bin:$PATH"
 NODEBIN="$ROOT/node/bin/node"
 [[ -x "$NODEBIN" ]] || { echo "bundled-node-missing" >&2; exit 2; }
+# company-mac-offlan-resolve-v1: macOS finds {{TDH_HOST}} (a .local name) only on the office LAN. Every node of
+# this desk (update check, login, desk, kernel, hooks) loads mac-resolve.js first: away from the office it takes the
+# server's tailnet address from Tailscale instead. Before, nothing left the Mac and the login said "wrong password".
+if [ -f "$ROOT/mac-resolve.js" ]; then
+  export NODE_OPTIONS="--require \"$ROOT/mac-resolve.js\"${NODE_OPTIONS:+ $NODE_OPTIONS}"
+fi
 BOOT_STATUS="$HOME/.dsh-company-rc8/desk-boot.status"
 boot_status() {
   mkdir -p "$HOME/.dsh-company-rc8"
@@ -153,16 +159,25 @@ if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ "$DEEPSEEK_API_KEY" = "company-gateway" ]
     echo "BLOCKED=gw-token-required" >&2
     exit 2
   fi
-  if LOGIN_USER="$USER" LOGIN_PASS="$PASS" LOGIN_URL="$LOGIN_URL" TOKFILE="$TOKFILE" \
-    "$NODEBIN" "$ROOT/mac-company-login.js"; then
+  # company-mac-offlan-resolve-v1: say why it failed (mac-company-login.js exit code), not always "wrong password".
+  LOGIN_RC=0
+  LOGIN_USER="$USER" LOGIN_PASS="$PASS" LOGIN_URL="$LOGIN_URL" TOKFILE="$TOKFILE" \
+    "$NODEBIN" "$ROOT/mac-company-login.js" || LOGIN_RC=$?
+  if [ "$LOGIN_RC" = 0 ]; then
     LOGIN_OK=1
     break
   fi
-  osascript -e 'display dialog "账号或密码不对，再试一次。" buttons {"OK"} default button "OK" with title "TDHarness"' >/dev/null 2>&1 || true
+  case "$LOGIN_RC" in
+    3) LOGIN_WHY="连不上公司服务器。在公司请连公司的 Wi-Fi；不在公司请先打开右上角的 Tailscale，确认已连上，再试一次。" ;;
+    4) LOGIN_WHY="账号或密码不对，再试一次。" ;;
+    5) LOGIN_WHY="登录失败次数太多，请 15 分钟后再试，或找管理员。" ;;
+    *) LOGIN_WHY="服务器没有正常回应，请稍后再试；一直这样请找管理员。" ;;
+  esac
+  osascript -e "display dialog \"$LOGIN_WHY\" buttons {\"OK\"} default button \"OK\" with title \"TDHarness\"" >/dev/null 2>&1 || true
   done
   unset USER PASS LOGIN_USER LOGIN_PASS
   if [ "$LOGIN_OK" != 1 ]; then
-    printf '%s\n' "Error: 登录失败。花名册账号或密码不对。" > "$DSH_HOME/web-runtime.err"
+    printf '%s\n' "Error: 登录失败。${LOGIN_WHY:-花名册账号或密码不对。}" > "$DSH_HOME/web-runtime.err"
     boot_status fail
     echo "BLOCKED=gw-token-required" >&2
     exit 2
