@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import https from "node:https";
 import http from "node:http";
 import os from "node:os";
@@ -1309,7 +1309,8 @@ function registerPriorWorkTool(ctx) {
 
 // company-kb-save-v1: save a file into the company knowledge base. The desk reads the file and hands it to the
 // knowledge service, which writes it by the zone's rule (the desk's sandbox writes only inside its workspace).
-export const KB_SAVE_MAX = 25 * 1024 * 1024;
+// company-kb-nolimit-v1 (the user, 2026-11-21: "知识库工具 取消文件大小上限 无论再大 都读写"): a file is streamed to the
+// server's /v1/kb-upload as it is read, never held whole, whatever its size; text still goes as JSON.
 export function kbSaveBody(args) {
 	const a = args || {};
 	const body = { zone: String(a.zone || ""), folder: String(a.folder || ""), overwrite: a.overwrite === true };
@@ -1319,9 +1320,7 @@ export function kbSaveBody(args) {
 		let st;
 		try { st = statSync(src); } catch { return { error: "no such file: " + src }; }
 		if (!st.isFile()) return { error: "not a file: " + src };
-		if (st.size > KB_SAVE_MAX) return { error: "too large (over 25 MB): " + src };
-		body.data = readFileSync(src).toString("base64");
-		body.name = String(a.name || path.basename(src));
+		return { upload: { file: src, size: st.size, zone: body.zone, folder: body.folder, overwrite: body.overwrite, name: String(a.name || path.basename(src)) } };
 	} else if (typeof a.content === "string" && a.content.trim()) {
 		body.content = a.content;
 		body.name = String(a.name || "");
@@ -1329,6 +1328,35 @@ export function kbSaveBody(args) {
 		return { error: "give path (a file) or content (text)" };
 	}
 	return { body };
+}
+
+// The file streamed to the knowledge service (base: the site, or the service itself in a proof).
+export function kbUpload(up, base = siteBase(), tok = gwToken(), pathname = "/company/knowledge/v1/kb-upload") {
+	const q = new URLSearchParams({ zone: up.zone, folder: up.folder, name: up.name, overwrite: up.overwrite ? "1" : "0" });
+	const u = new URL(pathname + "?" + q.toString(), base);
+	const lib = u.protocol === "http:" ? http : https;
+	const headers = { Accept: "application/json", "Content-Type": "application/octet-stream", "Content-Length": String(up.size) };
+	if (tok && tok !== "company-gateway") {
+		headers.Authorization = "Bearer " + tok;
+		headers["X-Company-Gw-Token"] = tok;
+	}
+	return new Promise((resolve) => {
+		const req = lib.request({ method: "POST", hostname: u.hostname, port: u.port || (u.protocol === "http:" ? 80 : 443),
+			path: u.pathname + u.search, rejectUnauthorized: false, headers }, (res) => {
+			const chunks = [];
+			res.on("data", (c) => chunks.push(c));
+			res.on("end", () => {
+				let json = {};
+				try { json = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"); } catch { json = { ok: false, status: "bad-json" }; }
+				resolve({ status: res.statusCode || 502, json });
+			});
+		});
+		req.setTimeout(3600000, () => req.destroy(new Error("timeout")));
+		req.on("error", (e) => resolve({ status: 502, json: { ok: false, status: "upload-failed", error: String((e && e.message) || e).slice(0, 120) } }));
+		const src = createReadStream(up.file);
+		src.on("error", () => req.destroy(new Error("read")));
+		src.pipe(req);
+	});
 }
 
 function registerKbSaveTool(ctx) {
@@ -1357,7 +1385,7 @@ function registerKbSaveTool(ctx) {
 			},
 			required: ["zone", "folder"],
 		},
-		timeoutMs: 120000,
+		timeoutMs: 3600000,
 		output: {
 			schema: { type: "object", additionalProperties: true, properties: { ok: { type: "boolean" }, status: { type: "string" }, path: { type: "string" } } },
 			render(_args, value) {
@@ -1378,7 +1406,7 @@ function registerKbSaveTool(ctx) {
 			if (!tok || tok === "company-gateway") return { ok: false, status: "no-login" };
 			const made = kbSaveBody(args);
 			if (made.error) return { ok: false, status: "bad-request", error: made.error };
-			const out = await proxyKnowledge(made.body, "/company/knowledge/v1/kb-write");
+			const out = made.upload ? await kbUpload(made.upload) : await proxyKnowledge(made.body, "/company/knowledge/v1/kb-write");
 			const j = out && out.json && typeof out.json === "object" ? out.json : { ok: false, status: "no-answer" };
 			if (typeof j.path === "string" && j.path) j.path = deskHitPath(j.path);
 			return j;
