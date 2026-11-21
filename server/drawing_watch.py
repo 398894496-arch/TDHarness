@@ -37,10 +37,11 @@ def config(runtime: Path) -> dict:
     return dict(DEFAULT, **{k: v for k, v in j.items() if v})
 
 
-def query(day: date) -> str:
-    """The day's 4663 events from the Security log, as wevtutil gives them (XML, one <Event> each)."""
-    start = datetime.combine(day, datetime.min.time()).astimezone(timezone.utc)
-    end = start + timedelta(days=1)
+def query(day: date, since: datetime | None = None, until: datetime | None = None) -> str:
+    """The day's 4663 events from the Security log, as wevtutil gives them (XML, one <Event> each); since/until (local
+    times, company-evening-report-v1): that window instead of the day."""
+    start = (since or datetime.combine(day, datetime.min.time())).astimezone(timezone.utc)
+    end = until.astimezone(timezone.utc) if until else start + timedelta(days=1)
     q = "*[System[(EventID=4663) and TimeCreated[@SystemTime>='%s' and @SystemTime<'%s']]]" % (
         start.strftime("%Y-%m-%dT%H:%M:%S.000Z"), end.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
     r = subprocess.run(["wevtutil", "qe", "Security", "/q:" + q, "/f:xml"], capture_output=True, timeout=300)
@@ -111,12 +112,13 @@ def lines(found: list, people: dict) -> list:
     return out
 
 
-def section(company: Path, runtime: Path, people: dict, day: date, query_fn=query, audit_fn=audit_on) -> dict:
-    """{"title", "lines"} for the morning report of those told (cfg "to")."""
+def section(company: Path, runtime: Path, people: dict, day: date, query_fn=query, audit_fn=audit_on,
+            since: datetime | None = None, until: datetime | None = None) -> dict:
+    """{"title", "lines"} for the report of those told (cfg "to"); since/until: the evening report's 24 hours."""
     cfg = config(runtime)
-    found = reads(query_fn(day), company, cfg)
+    found = reads(query_fn(day, since, until) if since else query_fn(day), company, cfg)
     ls = lines(found, people)
     if not ls:
-        ls = ["昨天没有人打开或下载模具图纸。"] if audit_fn(company, cfg["folders"]) else \
-             ["服务器还没开文件访问审核，记不到谁看过图纸（要管理员在服务器上开一次）。"]
+        ls = [("%s以来没有人打开或下载模具图纸。" % since.strftime("昨天 %H:%M")) if since else "昨天没有人打开或下载模具图纸。"] \
+            if audit_fn(company, cfg["folders"]) else ["服务器还没开文件访问审核，记不到谁看过图纸（要管理员在服务器上开一次）。"]
     return {"title": "模具图纸查看", "lines": ls}

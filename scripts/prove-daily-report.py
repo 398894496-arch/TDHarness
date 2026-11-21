@@ -135,6 +135,23 @@ st = {}
 check(not dr.due(datetime(2026, 11, 21, 7, 29), cfg, st) and dr.due(datetime(2026, 11, 21, 7, 30), cfg, st), "due from 07:30")
 check(not dr.due(datetime(2026, 11, 21, 9, 0), cfg, {"day": "2026-11-21"}) and not dr.due(datetime(2026, 11, 21, 9, 0), {}, {}), "once a day; never without config")
 check(dr.due(datetime(2026, 11, 21, 11, 29), cfg, st) and not dr.due(datetime(2026, 11, 21, 11, 30), cfg, st) and not dr.due(datetime(2026, 11, 20, 23, 10), cfg, st), "only within 4 hours of 07:30: never late at night")
+# company-evening-report-v1: at 17:00 the page is the day's own, the 24 hours up to it: the evening before (the real
+# brain) and the day so far (the scratch brain the service makes just before); the morning's slot does not stop it.
+ev = dict(cfg, at="17:00")
+check(dr.evening(ev) and not dr.evening(cfg), "17:00 is the evening page")
+check(dr.due(datetime(2026, 11, 21, 17, 0), ev, {"day": "2026-11-21"}) and not dr.due(datetime(2026, 11, 21, 16, 59), ev, {})
+      and not dr.due(datetime(2026, 11, 21, 17, 5), ev, {"day": "2026-11-21", "slot": "2026-11-21@17:00"}), "evening slot apart from the morning")
+today = root / "today"
+tf = today / "10-l0" / "d-1" / "alice" / "2026-11" / "2026-11-21.md"
+tf.parent.mkdir(parents=True)
+tf.write_text(L0.replace("2026-11-20T15:10", "2026-11-21T10:00").replace("2026-11-20T09:05", "2026-11-21T18:30"), encoding="utf-8")
+SEEN["gw"].clear()
+eo = dr.run(ev, people, depts, root / "brain", cards, "svc_token", now=datetime(2026, 11, 21, 17, 0), today_brain=today)
+pr = SEEN["gw"][-1][1]["messages"][0]["content"]
+check(eo["late"] and eo["day"] == "2026-11-21" and eo["text"].startswith("TDH 晚报 11-21（周六）") and "傍晚" in eo["html"], "the evening page: " + eo["text"][:30])
+check("王小丽今天在公司 TDH 里的 1 次" in pr and "核甲公司报价" in pr and "查 11 月生产进度" not in pr, "yesterday after 17:00 and today before now, not yesterday morning nor after now: " + pr[:200])
+check(eo["since"] == datetime(2026, 11, 20, 17, 0), "since the evening before")
+
 rt = root / "rt"
 rt.mkdir()
 check(dr.load_config(rt) == {}, "no file, no config")

@@ -110,17 +110,19 @@ def main() -> None:
     with open(log, "wb") as err:
         proc = subprocess.Popen([sys.executable, str(API)], env=env, stdout=subprocess.DEVNULL, stderr=err)
     try:
-        wait(lambda: noted() == {"tdh": "徐总", "lfh": "梁风禾", "wang": "王伟"}, "every name noted: %s" % noted())
-        check(fake.sets == [(UID["tdh"], {"fn": "徐总", "photo": {"type": "image/png", "ref": "/v0/file/s/me.png"}})],
+        wait(lambda: noted() == {"tdh": "徐总", "lfh": "梁风禾", "wang": "王伟", "tdh-assist": "TDH助手"}, "every name noted")
+        mine = [x for x in fake.sets if x[0] != "BOT1"]
+        check(mine == [(UID["tdh"], {"fn": "徐总", "photo": {"type": "image/png", "ref": "/v0/file/s/me.png"}})],
               "only 徐总's set, the photo kept: %s" % fake.sets)
-        check("BOT1" not in fake.logins, "a bot is left alone")
+        # company-evening-report-v1: the server's own senders get their name too (TDH早报 renamed TDH晚报).
+        check([x[1].get("fn") for x in fake.sets if x[0] == "BOT1"] in ([], ["TDH助手"]), "a bot only ever its own name: %s" % fake.sets)
         n = len(fake.logins)
         time.sleep(1.5)
         check(len(fake.logins) == n, "a round with nothing changed logs in for nobody")
         people[2]["name"] = "王伟伟"
         roster.write_text(json.dumps({"owner": "test", "people": people}, ensure_ascii=False), encoding="utf-8")
         wait(lambda: noted().get("wang") == "王伟伟", "the new name noted")
-        check(fake.sets[-1] == (UID["wang"], {"fn": "王伟伟"}) and len(fake.sets) == 2 and fake.logins[n:] == [UID["wang"]],
+        check(fake.sets[-1] == (UID["wang"], {"fn": "王伟伟"}) and len([x for x in fake.sets if x[0] != "BOT1"]) == 2 and fake.logins[n:] == [UID["wang"]],
               "only the changed one: %s %s" % (fake.sets, fake.logins[n:]))
     finally:
         proc.terminate()

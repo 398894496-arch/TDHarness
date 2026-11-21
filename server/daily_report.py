@@ -17,6 +17,12 @@ runtime/daily-report.json (no file, or no "to": nothing is made or sent):
              {"title": "行情", "url": "http://127.0.0.1:4190/daily-market", "weekdays": [0]}],   # weekdays: Monday = 0
    "gateway": "http://127.0.0.1:8450", "model": "gpt-6.2-sol"}
 Nothing here writes to the brain, the board or the packs; only the recipients' 日报/ folder and the state file.
+
+company-evening-report-v1 (the user, 2026-11-21: "给田总的早报改成晚报 每天晚上5点 同时给我也发一份"): with "at" in the
+afternoon or later the page is that evening's: the day it is sent, the 24 hours up to it (the evening before after the
+hour, then the day so far). The brain writes a day's L0 only at 00:15 the next night, so the day so far is read from a
+copy the people service makes just before (a scratch brain, never the real one: day_dirs). The state counts a slot (day
+and hour), so a morning page sent earlier the same day does not stop the evening one.
 """
 from __future__ import annotations
 
@@ -43,18 +49,34 @@ def load_config(runtime: Path) -> dict:
     return dict(DEFAULTS, **cfg)
 
 
-def due(now: datetime, cfg: dict, state: dict) -> bool:
-    """Time for today's page: within window_hours from the hour and minute, and not sent today. A service started
-    late in the evening does not send then (2026-11-20: a restart at 23:10 sent at once); the next morning does."""
-    if not cfg:
-        return False
+def at_of(cfg: dict) -> tuple[int, int]:
     try:
         hh, mm = (int(x) for x in str(cfg.get("at") or "07:30").split(":", 1))
     except ValueError:
         hh, mm = 7, 30
+    return hh, mm
+
+
+def evening(cfg: dict) -> bool:
+    """company-evening-report-v1: a page sent at noon or later is that day's (晚报), not the day before's."""
+    return at_of(cfg)[0] >= 12
+
+
+def slot(now: datetime, cfg: dict) -> str:
+    return "%s@%02d:%02d" % ((now.strftime("%Y-%m-%d"),) + at_of(cfg))
+
+
+def due(now: datetime, cfg: dict, state: dict) -> bool:
+    """Time for today's page: within window_hours from the hour and minute, and not sent in this slot. A service started
+    late in the evening does not send then (2026-11-20: a restart at 23:10 sent at once); the next morning does. A state
+    from before slots (only "day") counts as that day's 07:30."""
+    if not cfg:
+        return False
+    hh, mm = at_of(cfg)
     start = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
     hours = float(cfg.get("window_hours") or DEFAULTS["window_hours"])
-    return start <= now < start + timedelta(hours=hours) and state.get("day") != now.strftime("%Y-%m-%d")
+    done = state.get("slot") or ("%s@07:30" % state["day"] if state.get("day") else "")
+    return start <= now < start + timedelta(hours=hours) and done != slot(now, cfg)
 
 
 # -- what people did -------------------------------------------------------------------------------------------
@@ -86,15 +108,31 @@ def l0_sessions(brain: Path, login: str, day: date) -> list[dict]:
     return rows
 
 
-def summarize(cfg: dict, token: str, name: str, sessions: list[dict], timeout: float = 60) -> str:
+def window_sessions(brains: list, login: str, since: datetime, until: datetime) -> list[dict]:
+    """company-evening-report-v1: the sessions whose time is in [since, until), from each (brain, day) pair; a session
+    two brains both have (the real one and the day-so-far copy) once."""
+    lo, hi = since.strftime("%Y-%m-%dT%H:%M"), until.strftime("%Y-%m-%dT%H:%M")
+    seen, rows = set(), []
+    for brain, day in brains:
+        for r in l0_sessions(brain, login, day):
+            t = str(r.get("time") or "")[:16]
+            k = (t, r.get("title"), r.get("fact", "")[:80])
+            if lo <= t < hi and k not in seen:
+                seen.add(k)
+                rows.append(r)
+    rows.sort(key=lambda r: r.get("time", ""))
+    return rows
+
+
+def summarize(cfg: dict, token: str, name: str, sessions: list[dict], timeout: float = 60, when: str = "昨天") -> str:
     """A line or two in Chinese from the sessions' titles and facts; "" when the gateway does not answer."""
     if not token or not sessions:
         return ""
     items = "\n".join("- %s｜%s｜%s" % (s.get("title", ""), s.get("fact", "")[:400], s.get("completion", ""))
                       for s in sessions[:30])
-    prompt = ("下面是%s昨天在公司 TDH 里的 %d 次工作记录（标题｜要做什么、结果｜完成情况）。\n%s\n\n"
-              "用一两句中文写他昨天做了什么，写具体的事，不要套话。有没完成的、出错的或要老板注意的风险，"
-              "另起一句以「注意：」开头；没有就不写。只根据记录，不要编。不超过 120 字。") % (name, len(sessions), items)
+    prompt = ("下面是%s%s在公司 TDH 里的 %d 次工作记录（标题｜要做什么、结果｜完成情况）。\n%s\n\n"
+              "用一两句中文写他%s做了什么，写具体的事，不要套话。有没完成的、出错的或要老板注意的风险，"
+              "另起一句以「注意：」开头；没有就不写。只根据记录，不要编。不超过 120 字。") % (name, when, len(sessions), items, when)
     body = json.dumps({"model": cfg.get("model") or DEFAULTS["model"], "temperature": 0,
                        "messages": [{"role": "user", "content": prompt}]}).encode()
     req = urllib.request.Request((cfg.get("gateway") or DEFAULTS["gateway"]).rstrip("/") + "/v1/chat/completions",
@@ -109,19 +147,21 @@ def summarize(cfg: dict, token: str, name: str, sessions: list[dict], timeout: f
         return ""
 
 
-def people_work(brain: Path, people: dict, day: date, skip: list, depts: dict, cfg: dict, token: str) -> tuple[list, list]:
-    """(worked, idle): per active person who used TDH that day, their sessions and a summary; the others' names."""
+def people_work(brain: Path, people: dict, day: date, skip: list, depts: dict, cfg: dict, token: str,
+                window: tuple | None = None) -> tuple[list, list]:
+    """(worked, idle): per active person who used TDH that day, their sessions and a summary; the others' names.
+    window (company-evening-report-v1): (brains, since, until): the sessions in those 24 hours instead of the day's."""
     worked, idle = [], []
     for login, row in sorted(people.items(), key=lambda kv: (depts.get(kv[1].get("dept"), ""), kv[1].get("name") or kv[0])):
         if login in skip or (row.get("status") or "active") != "active":
             continue
         name = row.get("name") or login
-        sessions = l0_sessions(brain, login, day)
+        sessions = window_sessions(window[0], login, window[1], window[2]) if window else l0_sessions(brain, login, day)
         if not sessions:
             idle.append(name)
             continue
         worked.append({"login": login, "name": name, "dept": depts.get(row.get("dept"), ""), "sessions": sessions,
-                       "summary": summarize(cfg, token, name, sessions)})
+                       "summary": summarize(cfg, token, name, sessions, when="今天" if window else "昨天")})
     return worked, idle
 
 
@@ -157,9 +197,9 @@ def pack_sections(cfg: dict, token: str, day: date, timeout: float = 120, today:
 WEEK = "一二三四五六日"
 
 
-def build(day: date, sections: list[dict], cards: str, worked: list, idle: list) -> dict:
-    """The chat message (short) and the page (all of it)."""
-    head = "TDH 日报 %s（周%s）" % (day.strftime("%m-%d"), WEEK[day.weekday()])
+def build(day: date, sections: list[dict], cards: str, worked: list, idle: list, late: bool = False) -> dict:
+    """The chat message (short) and the page (all of it). late: the evening page (company-evening-report-v1)."""
+    head = "TDH %s %s（周%s）" % ("晚报" if late else "日报", day.strftime("%m-%d"), WEEK[day.weekday()])
     msg = [head]
     for s in sections:
         msg.append("【%s】" % s["title"])
@@ -198,20 +238,32 @@ main{max-width:860px;margin:0 auto;padding:20px 16px 40px}h1{font-size:20px;marg
 h3{font-size:14px;margin:0 0 4px}.m{color:var(--m);font-weight:400}ul{margin:4px 0;padding-left:20px}
 .p{background:var(--card);border:1px solid var(--l);border-radius:10px;padding:10px 14px;margin:8px 0}
 details summary{cursor:pointer;color:var(--m);font-size:12px}</style></head><body><main>
-<h1>%(head)s</h1><div class=m>每天早上自动生成：资金、任务卡、每个人昨天在 TDH 里做了什么</div>%(body)s</main></body></html>""" % {
-        "head": esc(head), "body": "".join(body)}
+<h1>%(head)s</h1><div class=m>%(sub)s</div>%(body)s</main></body></html>""" % {
+        "head": esc(head), "body": "".join(body),
+        "sub": "每天傍晚自动生成：资金、任务卡、每个人过去一天（到发报时）在 TDH 里做了什么" if late else "每天早上自动生成：资金、任务卡、每个人昨天在 TDH 里做了什么"}
     return {"text": "\n".join(msg), "html": page, "title": head}
 
 
 def run(cfg: dict, people: dict, depts: dict, brain: Path, cards_text: str, token: str, now: datetime | None = None,
-        day: date | None = None) -> dict:
-    """Everything but sending: yesterday's page (or the given day's)."""
+        day: date | None = None, today_brain: Path | None = None) -> dict:
+    """Everything but sending: yesterday's page (or the given day's). Evening (company-evening-report-v1): today's page,
+    the people's 24 hours up to now: the real brain for the evening before, today_brain (the day so far) for today."""
     now = now or datetime.now()
-    day = day or (now.date() - timedelta(days=1))
+    late = evening(cfg) and day is None
+    day = day or (now.date() if late else now.date() - timedelta(days=1))
     sections = pack_sections(cfg, token, day, today=now.date())
-    worked, idle = people_work(brain, people, day, list(cfg.get("skip") or []), depts, cfg, token)
-    out = build(day, sections, cards_text, worked, idle)
+    window = None
+    if late:
+        hh, mm = at_of(cfg)
+        since = (now - timedelta(days=1)).replace(hour=hh, minute=mm, second=0, microsecond=0)
+        brains = [(brain, since.date()), (brain, day)] + ([(today_brain, day)] if today_brain else [])
+        window = (brains, since, now)
+    worked, idle = people_work(brain, people, day, list(cfg.get("skip") or []), depts, cfg, token, window)
+    out = build(day, sections, cards_text, worked, idle, late)
     out["day"] = day.isoformat()
+    out["late"] = late
+    if window:
+        out["since"] = window[1]
     return out
 
 
