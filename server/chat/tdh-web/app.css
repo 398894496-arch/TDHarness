@@ -218,3 +218,13 @@ svg { display: block; flex: none; }
 .narrow .m .col { max-width: calc(100% - 56px); }
 .narrow .img { max-width: 180px; max-height: 180px; }
 .narrow .file { width: 200px; }
+
+/* company-chat-assist-v1: TDH 助手's answers and the line that says the chat is read */
+.assist-note { margin: 6px 10px 4px; padding: 6px 9px; border-radius: 6px; background: var(--field); color: var(--text-2); font-size: 11px; line-height: 1.5; }
+.m.ai .ai-av { background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+.m.ai .b { background: light-dark(#eef4ff, #1e2a40); box-shadow: 0 0 0 1px light-dark(#cfdcf7, #2f4166); }
+.ai-foot { display: flex; gap: 8px; align-items: center; margin: 5px 0 0 2px; font-size: 12px; color: var(--text-3); }
+.ai-foot.ok { color: light-dark(#1a7f37, #4ac26b); }
+.ai-foot.bad { color: var(--red); }
+.ai-foot button { border: 1px solid var(--line-2); background: var(--panel); color: var(--text); border-radius: 5px; padding: 3px 10px; font: inherit; cursor: pointer; }
+.ai-foot button.ai-ok { background: var(--accent); border-color: var(--accent); color: #fff; }

@@ -351,6 +351,31 @@
 		return (v || msg).content;
 	}
 
+	// company-chat-assist-v1: TDH 助手's answers (head tdh_ai: the question's seq, the kind, who confirms; in a one-to-one
+	// chat the person asked posts it, as Tinode has no third party) and their confirmations (head tdh_ai_ok, counted only
+	// from the person named to confirm).
+	function aiOf(msg) {
+		const a = msg && msg.head && msg.head.tdh_ai;
+		return a && typeof a === "object" ? a : null;
+	}
+	function aiOkOf(msg) {
+		const a = msg && msg.head && msg.head.tdh_ai_ok;
+		return a && typeof a === "object" ? a : null;
+	}
+	function aiText(t, msg) {
+		return plain(contentOf(t, msg)).replace(/^【TDH 助手】\s*/, "");
+	}
+	function aiConfirmation(items, msg) {
+		const a = aiOf(msg);
+		let out = null;
+		if (!a || !a.confirm) return null;
+		items.forEach((m) => {
+			const ok = aiOkOf(m);
+			if (ok && (ok.of | 0) === msg.seq && m.from === a.confirm) out = { ok: ok.ok !== false };
+		});
+		return out;
+	}
+
 	// ---- Actions. ------------------------------------------------------------------------------------------------
 	function openTopic(name, again) {
 		const prev = S.topic;
@@ -440,6 +465,12 @@
 		if (head) pub.head = Object.assign({}, pub.head || {}, head);
 		S.reply = null;
 		t.publishDraft(pub).catch(() => {});
+		bump();
+	}
+	function confirmAi(t, msg, ok) {
+		const pub = t.createMessage(ok ? "确认无误" : "这条数据有误，我来核对", true);
+		pub.head = Object.assign({}, pub.head || {}, { tdh_ai_ok: { of: msg.seq, ok: !!ok }, reply: "" + msg.seq });
+		t.publishDraft(pub).catch((err) => toast("发送失败：" + ((err && err.message) || "")));
 		bump();
 	}
 	// Waiting in the input box until 发送 (as WeChat holds a screenshot or a pasted picture).
@@ -686,6 +717,7 @@
 			const quiet = muted(c);
 			let preview = last ? plain(contentOf(c, last)) : "";
 			if (last && c.isGroupType() && last.from && last.from !== S.meId) preview = userName(last.from, c) + "：" + preview;
+			if (last && aiOf(last)) preview = "[TDH 助手] " + aiText(c, last);
 			if (last && last._deleted) preview = S.recalled[c.name + ":" + last.low] != null ? "你撤回了一条消息" : isHidden(c.name, last.low) ? "" : "撤回了一条消息";
 			const at = mentionedUnread(c);
 			return h("div", {
@@ -703,7 +735,9 @@
 				h("div", { className: "top" }, h("div", { className: "name" }, nameOf(c)), h("div", { className: "time" }, listTime(when(c)))),
 				h("div", { className: "bottom" }, h("div", { className: "preview" }, at ? h("b", null, "[有人@我] ") : null, quiet && n > 1 ? "[" + n + "条] " : "", preview || " "), quiet ? ICON.mute() : null)));
 		});
-		return h("div", { className: "rows" }, rows.length ? rows : h("div", { className: "empty" }, q ? "没有找到" : "还没有聊天"));
+		return h("div", { className: "rows" },
+			h("div", { className: "assist-note" }, "TDH 助手会读公司聊天：问到资金、生产进度、原料行情，它会自动查好发在对话里，由被问的人确认。"),
+			rows.length ? rows : h("div", { className: "empty" }, q ? "没有找到" : "还没有聊天"));
 	}
 
 	function Contacts() {
@@ -837,6 +871,29 @@
 			const ts = msg.ts ? new Date(msg.ts).getTime() : Date.now();
 			if (ts - last > 5 * 60 * 1000) nodes.push(h("div", { key: "w" + msg.seq + "-" + i, className: "when" }, chatTime(ts)));
 			last = ts;
+			const okOf = aiOkOf(msg);
+			if (okOf) {
+				nodes.push(h("div", { key: "k" + msg.seq, className: "note" }, userName(msg.from, t) + (okOf.ok !== false ? " 确认了 TDH 助手的数据" : " 说 TDH 助手的数据有误，正在核对")));
+				return;
+			}
+			const ai = aiOf(msg);
+			if (ai) {
+				const conf = aiConfirmation(items, msg);
+				const who = ai.confirm ? userName(ai.confirm, t) : "";
+				let foot = null;
+				if (conf) foot = h("div", { className: "ai-foot " + (conf.ok ? "ok" : "bad") }, conf.ok ? "✓ " + who + " 确认无误" : "✗ " + who + "：有误，正在核对");
+				else if (ai.confirm && ai.confirm === S.meId) foot = h("div", { className: "ai-foot" },
+					h("button", { className: "ai-ok", onClick: () => confirmAi(t, msg, true) }, "确认无误"),
+					h("button", { className: "ai-bad", onClick: () => confirmAi(t, msg, false) }, "有误"));
+				else if (ai.confirm) foot = h("div", { className: "ai-foot" }, "等 " + who + " 确认");
+				nodes.push(h("div", { key: "m" + msg.seq, className: "m ai", onContextMenu: (e) => openMenu(e, [{ label: "复制", run: () => copy(aiText(t, msg)) }]) },
+					h("div", { className: "a s36 ai-av" }, "TDH"),
+					h("div", { className: "col" },
+						h("div", { className: "who" }, "TDH 助手 · 自动查询"),
+						h("div", { className: "b" }, aiText(t, msg)),
+						foot)));
+				return;
+			}
 			const mine = msg.from === S.meId || !msg.from;
 			const r = renderContent(t, msg);
 			let status = null;
@@ -1149,5 +1206,5 @@
 	window.__tdhChat = { S, client, bump, open: openTopic,
 		act: { sendText, sendFiles, recall, quote, createGroup, togglePin, toggleMute, forwardTo, leaveGroup },
 		// company-chat-client-test-v1: the page's own logic, for scripts/prove-chat-client.js and prove-chat-composer.js (CI)
-		fn: { atDraft, plain, mentionsMe, mentionedUnread, allMessages, contentOf, renderContent, safeUrl, listed, unread, Composer, Search } }; // for checks in the desk's tests and a person's own debugging
+		fn: { atDraft, plain, mentionsMe, mentionedUnread, allMessages, contentOf, renderContent, safeUrl, listed, unread, Composer, Search, Messages, aiOf, aiConfirmation } }; // for checks in the desk's tests and a person's own debugging
 })();
