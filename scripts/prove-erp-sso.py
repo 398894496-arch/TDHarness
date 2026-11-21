@@ -272,7 +272,7 @@ def main() -> None:
     head = skill.split("\n---", 1)[0]
     check(head.startswith("---\nname: company-erpnext\n") and "whenToUse:" in head and "disable-model-invocation" not in head,
           "the ERPNext guide is in the agent's list")
-    for w in ("https://tdharness.tail9c7cc7.ts.net", "左栏「聊天」下面的「ERPNext」", "设置向导", "提交", "修订", "物料移动", "销售出库", "采购入库", "生产工单"):
+    for w in ("https://tdharness.tail9c7cc7.ts.net", "左栏「聊天」下面的「ERPNext」", "山东壹通达高分子材料有限公司", "烟台腾达聚氨酯有限公司", "内部客户", "提交", "修订", "物料移动", "销售出库", "采购入库", "生产工单"):
         check(w in skill, "the guide says: " + w)
     print("ERP_SSO_PROVE_OK=1")
 
