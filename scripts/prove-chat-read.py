@@ -16,7 +16,7 @@ a chat between the two others):
 company-chat-bot-v1: the daily report comes from TDH早报 (tdh-daily), the server's own chat account: it cannot log in
 with a password or a desk token, its account is made under that name at its first message, which comes in a chat of
 its own; it opens no chat with anyone else, so it is in nobody else's list (prove-people.py: no one can be added under
-its login).
+its login); an admin's trial to one person goes to them only and is not today's report.
 Prints CHAT_READ_PROVE_OK=1.
 """
 from __future__ import annotations
@@ -359,6 +359,14 @@ def main() -> None:
         check("TDH早报" not in [c["name"] for c in r.get("chats") or []], "not in anyone else's list: " + json.dumps(r, ensure_ascii=False))
         time.sleep(1.0)
         check([t for w, t in fake.subs if w == botuid] == ["usr" + UID["tdh"]], "TDH早报 opened no other chat: " + json.dumps(fake.subs))
+        # A trial to one person: only to them, and it is not today's report.
+        state = (runtime / "daily-report-state.json").read_text(encoding="utf-8")
+        st, r = ask(port, "/company/daily-report", {"to": "lfh"}, TOK["tdh"])
+        check(st == 200 and [(x["to"], x["ok"]) for x in r.get("sent") or []] == [("lfh", True)], "a trial to lfh: " + json.dumps(r, ensure_ascii=False))
+        check(fake.writes[-1] == (botuid, "pub", "usr" + UID["lfh"]), "from TDH早报 to lfh: " + json.dumps(fake.writes[-1:]))
+        check((runtime / "daily-report-state.json").read_text(encoding="utf-8") == state, "a trial is not today's report")
+        check(ask(port, "/company/daily-report", {"to": "nobody"}, TOK["tdh"])[0] == 400, "a trial to someone not in the roster")
+        check(ask(port, "/company/daily-report", {"to": "tdh"}, TOK["lfh"])[0] == 403, "admins only")
     finally:
         proc.terminate()
         proc.wait(timeout=10)

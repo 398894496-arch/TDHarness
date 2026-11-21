@@ -1560,7 +1560,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(*json_bytes(body, status))
             return
         if path == "/company/daily-report":
-            # company-daily-report-v1: an admin makes today's page now (dry: without sending), or another day's.
+            # company-daily-report-v1: an admin makes today's page now (dry: without sending), or another day's, or
+            # sends it to one person only as a trial (to).
             row = person(login_from_token(self._token()))
             if not row or row.get("role") != "admin":
                 self._send(*json_bytes({"ok": False, "error": "admin-only"}, 403))
@@ -1569,7 +1570,11 @@ class Handler(BaseHTTPRequestHandler):
             if day and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
                 self._send(*json_bytes({"ok": False, "error": "bad-day"}, 400))
                 return
-            self._send(*json_bytes(daily_report_once(force=True, dry=bool(payload.get("dry")), day=day or None)))
+            only = str(payload.get("to") or "").strip().lower()
+            if only and person(only) is None:
+                self._send(*json_bytes({"ok": False, "error": "bad-to"}, 400))
+                return
+            self._send(*json_bytes(daily_report_once(force=True, dry=bool(payload.get("dry")), day=day or None, only=only or None)))
             return
         self._send(*json_bytes({"ok": False, "error": "not-found"}, 404))
 
@@ -1720,10 +1725,11 @@ def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
 DAILY_MU = threading.Lock()
 
 
-def daily_report_once(force: bool = False, dry: bool = False, day: str | None = None) -> dict:
+def daily_report_once(force: bool = False, dry: bool = False, day: str | None = None, only: str | None = None) -> dict:
     """company-daily-report-v1 (server/daily_report.py): at the configured time, yesterday's page into each
     recipient's 日报/ folder and a short chat message to them. force: now; dry: make the page, send nothing;
-    day: that day's page instead of yesterday's (sent or not, it does not count as today's)."""
+    day: that day's page instead of yesterday's (sent or not, it does not count as today's); only: to that one person
+    instead of the recipients, a trial (it does not count as today's either)."""
     runtime = TOKEN_STORE.parent
     cfg = daily_report.load_config(runtime)
     if not cfg:
@@ -1752,7 +1758,7 @@ def daily_report_once(force: bool = False, dry: bool = False, day: str | None = 
         out = daily_report.run(cfg, people, depts, ROOT / "brain", cards, token, now,
                                _date.fromisoformat(day) if day else None)
         files, sent = [], []
-        for login in cfg["to"]:
+        for login in ([only] if only else cfg["to"]):
             row = people.get(login)
             if not row:
                 sent.append({"to": login, "ok": False, "why": "not-in-roster"})
@@ -1768,7 +1774,7 @@ def daily_report_once(force: bool = False, dry: bool = False, day: str | None = 
             if not dry:
                 r = chat_send(cfg["from"], login, out["text"] + ("\n完整日报：个人文件夹 › 日报 › %s.html" % out["day"]))
                 sent.append({"to": login, "ok": bool(r.get("ok")), "why": r.get("why", "")})
-        if not dry and not day:
+        if not dry and not day and not only:
             state = {"day": now.strftime("%Y-%m-%d"), "sent": sent, "at": now.isoformat(timespec="seconds")}
             try:
                 state_file.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
