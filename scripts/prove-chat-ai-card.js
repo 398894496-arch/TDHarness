@@ -7,6 +7,7 @@
 // - A confirmation from anyone but the person named does not count.
 // - A proposed task card (company-chat-tasks-v1, kind task, deciders): 记下 and 不用 for the person who said it and the
 //   owner, 等 … 决定 for anyone else; the first answer of one of them counts; the card made is a TDH 助手 · 任务卡 note.
+// - What TDH cannot answer (cannot) is a card with nothing to confirm.
 // - The chat list tells everyone the chat is read.
 // Prints CHAT_AI_CARD_PROVE_OK=1.
 'use strict';
@@ -133,6 +134,14 @@ async function render(me, list) {
   assert.ok(notes.includes('郭迎 说不用记') && !notes.some((n) => n.startsWith('田总')), 'only the answer that counts leaves a note: ' + notes);
   assert.strictEqual(pc[1].querySelector('.who').textContent, 'TDH 助手 · 任务卡');
   assert.ok(!pc[1].querySelector('.ai-foot') && !pc[1].querySelector('button'), 'the card made: a note, nothing to click');
+  v.root.unmount();
+
+  // What TDH cannot answer: a card with nothing to confirm.
+  const cant = { seq: 9, from: FIN, ts: ts(4), head: { tdh_ai: { v: 1, of: 1, kind: 'cash', cannot: true }, reply: '1' },
+    content: '【TDH 助手】TDH 查不到今天的待付款事项，缺付款计划，请财务把付款清单拖进 TDH 对话。' };
+  v = await render(FIN, [question, cant]);
+  assert.strictEqual(v.box.querySelector('.m.ai .b').textContent, 'TDH 查不到今天的待付款事项，缺付款计划，请财务把付款清单拖进 TDH 对话。');
+  assert.ok(!v.box.querySelector('.m.ai button') && !v.box.querySelector('.m.ai .ai-foot'), 'nothing to confirm');
   v.root.unmount();
 
   // An ordinary message stays ordinary.

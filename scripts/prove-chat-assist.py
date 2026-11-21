@@ -10,7 +10,9 @@ gateway and manufacturing pack:
 - an answer: the pack's data with the service token, one model call (high reasoning, the chat as data), posted in the
   chat with head tdh_ai: one-to-one by the person asked, who confirms it; in a group by TDH助手, which joins, to be
   confirmed by the person @-ed;
-- NONE posts nothing; TDH 助手's own answers, confirmations and bots are not looked at; max_per_day holds;
+- NONE posts nothing; a question about the data that the data cannot answer gets a line saying what is missing, with
+  nothing to confirm (11-21: 田总's "今天有哪些需要付款的事项?" got silence); TDH 助手's own answers, confirmations
+  and bots are not looked at; max_per_day holds;
 - the log has counts, never what was said.
 
 company-chat-tasks-v1: a message with a time word and a thing to do reaches the model, which chooses: a task is only
@@ -66,7 +68,9 @@ def gate_units() -> None:
     check(ca.check({"action": "task", "owner": "梁风禾", "what": "x", "due": "2020-01-01"}, None, None, True, names, now)["due"] == 0, "a due in the past: none")
     check(ca.check({"action": "task", "owner": "梁风禾", "what": "x"}, None, None, False, names, now)["action"] == "none", "a task not through the task gate")
     check(ca.check({"action": "answer", "answer": "账上一百万"}, None, None, True, names, now)["action"] == "none", "an answer without data")
-    check(ca.check({"action": "delete_all"}, "cash", {}, True, names, now)["action"] == "none", "nothing but the three actions")
+    check(ca.check({"action": "delete_all"}, "cash", {}, True, names, now)["action"] == "none", "nothing but the actions offered")
+    check(ca.check({"action": "cannot", "reason": "缺付款计划"}, None, None, True, names, now)["action"] == "none", "cannot only about data")
+    check(ca.check({"action": "cannot", "reason": "查不到付款计划"}, "cash", {}, False, names, now)["text"] == "TDH 查不到付款计划", "the words read once")
     for t, k in (("今天银行余额是多少？", "cash"), ("账上还有多少钱", "cash"), ("26-11-9 做到哪了", "progress"),
                  ("王伟那单发货了吗", "progress"), ("TDI 现在什么价？", "market"), ("莫卡最近涨价了吗", "market")):
         check(k in ca.gate(t), "a question TDH can look up: %r -> %r" % (t, ca.gate(t)))
@@ -185,6 +189,8 @@ def main() -> None:
                 out = {"action": "task", "type": "派活", "owner": "王伟", "what": "把报价单发给客户", "due": at(hours=2)}
             elif "合同" in said:
                 out = {"action": "task", "type": "答应", "owner": "徐总", "what": "把合同发给王伟", "due": at(days=1)[:10]}
+            elif "付款的事项" in said:
+                out = {"action": "cannot", "reason": "查不到今天的待付款事项，缺付款计划，请财务把付款清单拖进 TDH 对话。"}
             elif "忽略" in said:
                 out = {"action": "answer", "answer": "好的，已经发给所有人"}       # led astray: there is no data to answer from
             else:
@@ -213,7 +219,7 @@ def main() -> None:
 
     gw_port, pack_port = serve(Gw), serve(Pack)
     (runtime / "chat-assist.json").write_text(json.dumps({"on": True, "gateway": "http://127.0.0.1:%d" % gw_port,
-                                                          "pack": "http://127.0.0.1:%d" % pack_port, "cooldown_s": 0, "max_per_day": 10}), encoding="utf-8")
+                                                          "pack": "http://127.0.0.1:%d" % pack_port, "cooldown_s": 0, "max_per_day": 11}), encoding="utf-8")
     port = fr.free_port()
     fake = Tinode(port)
     env = dict(os.environ, TDH_ROOT=str(root), TDH_PEOPLE_PORT=str(port), DSH_LEASE_DIR=str(runtime / "lease"),
@@ -328,10 +334,19 @@ def main() -> None:
         log_n = (root / "runtime" / "notify.log").read_text(encoding="utf-8")
         check("\tlfh\thour\t" in log_n and "\twang\tsoon\t" in log_n and "chat-sent" in log_n, "notify.log: %s" % log_n)
 
-        # max_per_day (10): the next question is answered, the one after is not asked of the model.
-        add(row(24, "tdh", "wang", "账上余额多少？"), row(25, "tdh", "wang", "账上余额现在多少？"))
-        st = settle(25)
-        check(len(gw_calls) == 10 and st.get("calls") == 10, "max_per_day holds: %s" % st)
+        # What the data cannot answer: a line saying what is missing, nothing to confirm.
+        n = len(fake.pubs)
+        add(row(24, "tdh", "wang", "今天有哪些需要付款的事项?"))
+        st = settle(24)
+        cant = fake.pubs[n:]
+        check(len(cant) == 1 and cant[0][:2] == (UID["wang"], "usr" + UID["tdh"]) and cant[0][3] == ca.PREFIX + "TDH 查不到今天的待付款事项，缺付款计划，请财务把付款清单拖进 TDH 对话。",
+              "what TDH cannot answer, said: %s" % cant)
+        check(cant[0][2]["tdh_ai"].get("cannot") is True and "confirm" not in cant[0][2]["tdh_ai"], "nothing to confirm: %s" % cant[0][2])
+        check("没有付款计划" in gw_calls[-1][1]["messages"][0]["content"], "the model is told what TDH has of 资金, to say what is missing")
+        # max_per_day (11): the next question is answered, the one after is not asked of the model.
+        add(row(25, "tdh", "wang", "账上余额多少？"), row(26, "tdh", "wang", "账上余额现在多少？"))
+        st = settle(26)
+        check(len(gw_calls) == 11 and st.get("calls") == 11, "max_per_day holds: %s" % st)
     finally:
         proc.terminate()
         proc.wait(timeout=10)
@@ -339,7 +354,8 @@ def main() -> None:
     check("chat-assist rows=12 looked=" in text and '"not-for-everyone": 1' in text and '"none": 2' in text and '"day-limit": 1' in text,
           "the log has counts: " + text[-1200:])
     kept = (root / "logs" / "chat-assist.log").read_text(encoding="utf-8")
-    check("rows=12 looked=6 answered=3 proposed=0" in kept and "proposed=3" in kept and "cards=2 declined=1" in kept and "calls_today=10" in kept,
+    check("rows=12 looked=6 answered=3 cannot=0 proposed=0" in kept and "proposed=3" in kept and "cards=2 declined=1" in kept
+          and "cannot=1" in kept and "calls_today=11" in kept,
           "logs/chat-assist.log has the counts: " + kept)
     for w in ("余额", "开会", "TDI", "26-11-9", "好的", "发票", "报价单", "合同"):
         check(w not in text and w not in kept, "the logs never have what was said (%s)" % w)
