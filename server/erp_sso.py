@@ -227,12 +227,17 @@ def erp_api(cfg: dict, method: str, path: str, body: dict | None = None, timeout
             return e.code, {}
 
 
+# Roles ERPNext takes off a user again when it is saved: Employee needs an Employee record (2026-11-21, every round re-added
+# it to the admins and the 公司 people, and it never stayed); Desk User is given by ERPNext itself.
+NEVER_KEPT = ("Employee", "Desk User")
+
+
 def roles_for(row: dict, dept: str, mapping: dict, known: set) -> list[str]:
     if row.get("role") == "admin":
         want = list(mapping.get("admin") or [])
     else:
         want = list((mapping.get("depts") or {}).get(dept) or mapping.get("default") or [])
-    return [r for r in dict.fromkeys(want) if r in known]
+    return [r for r in dict.fromkeys(want) if r in known and r not in NEVER_KEPT]
 
 
 def sync(cfg: dict, people: dict, depts: dict, mapping: dict, api=None) -> dict:
@@ -246,7 +251,7 @@ def sync(cfg: dict, people: dict, depts: dict, mapping: dict, api=None) -> dict:
     known = {r.get("name") for r in j.get("data") or []}
     # company-erp-admin-all-v1 (the user, 2026-11-21, 郑飞飞 told "Work Order 权限不足"): TDH's admins have every role
     # ERPNext has for its desk, kept so each round (a role added later reaches them too; none is taken away).
-    every = sorted(r["name"] for r in j.get("data") or [] if r.get("name") and r["name"] not in ("Administrator", "Guest", "All")
+    every = sorted(r["name"] for r in j.get("data") or [] if r.get("name") and r["name"] not in ("Administrator", "Guest", "All") + NEVER_KEPT
                    and int(r.get("desk_access", 1) or 0) and not int(r.get("disabled") or 0))
     st, j = api("GET", "/api/resource/User?" + urllib.parse.urlencode({
         "fields": json.dumps(["name", "enabled", "first_name"]), "filters": json.dumps([["name", "like", "%@" + domain]]),
