@@ -8,6 +8,7 @@
 // - A proposed task card (company-chat-tasks-v1, kind task, deciders): 记下 and 不用 for the person who said it and the
 //   owner, 等 … 决定 for anyone else; the first answer of one of them counts; the card made is a TDH 助手 · 任务卡 note.
 // - What TDH cannot answer (cannot) is a card with nothing to confirm.
+// - Finance papers (company-chat-docs-v1): filed (撤销 for the people named), asked about (存进财务 / 不用), a note (nothing).
 // - The chat list tells everyone the chat is read.
 // Prints CHAT_AI_CARD_PROVE_OK=1.
 'use strict';
@@ -134,6 +135,41 @@ async function render(me, list) {
   assert.ok(notes.includes('郭迎 说不用记') && !notes.some((n) => n.startsWith('田总')), 'only the answer that counts leaves a note: ' + notes);
   assert.strictEqual(pc[1].querySelector('.who').textContent, 'TDH 助手 · 任务卡');
   assert.ok(!pc[1].querySelector('.ai-foot') && !pc[1].querySelector('button'), 'the card made: a note, nothing to click');
+  v.root.unmount();
+
+  // Finance papers (company-chat-docs-v1): filed (撤销 only, for the people named), asked about (存进财务 / 不用), a note.
+  const pic = { seq: 10, from: BOSS, ts: ts(5), content: '[图片]' };
+  const filed = { seq: 11, from: FIN, ts: ts(5), head: { tdh_ai: { v: 1, of: 10, kind: 'doc-saved', deciders: [BOSS, FIN] }, reply: '10' },
+    content: '【TDH 助手】已存进财务（费用账单）：三晚住宿费，594 元，2026-11-21。存错了点「撤销」。' };
+  v = await render(FIN, [pic, filed]);
+  let dc = v.box.querySelector('.m.ai');
+  assert.strictEqual(dc.querySelector('.who').textContent, 'TDH 助手 · 财务单据');
+  assert.deepStrictEqual(Array.from(dc.querySelectorAll('button')).map((b) => b.textContent), ['撤销'], 'a filed paper: only 撤销');
+  dc.querySelector('button').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(v.sent[0].head)), { tdh_ai_ok: { of: 11, ok: false }, reply: '11' });
+  assert.strictEqual(v.sent[0].content, '撤销');
+  v.root.unmount();
+  v = await render('usrOther00001', [pic, filed]);
+  assert.ok(!v.box.querySelector('.m.ai .ai-foot'), 'anyone else: nothing to wait for');
+  v.root.unmount();
+  const undo = { seq: 12, from: BOSS, ts: ts(6), head: { tdh_ai_ok: { of: 11, ok: false } }, content: '撤销' };
+  v = await render(FIN, [pic, filed, undo]);
+  assert.strictEqual(v.box.querySelector('.m.ai .ai-foot').textContent, '田总 撤销了这张单据');
+  assert.ok(Array.from(v.box.querySelectorAll('.note')).some((n) => n.textContent === '田总 撤销了这张单据'));
+  v.root.unmount();
+  const asked = { seq: 13, from: FIN, ts: ts(7), head: { tdh_ai: { v: 1, of: 10, kind: 'doc-ask', deciders: [BOSS, FIN] } },
+    content: '【TDH 助手】这张图像是付款回单：看不太清。要存进财务的「付款回单」吗？' };
+  v = await render(BOSS, [pic, asked]);
+  dc = v.box.querySelector('.m.ai');
+  assert.deepStrictEqual(Array.from(dc.querySelectorAll('button')).map((b) => b.textContent), ['存进财务', '不用']);
+  dc.querySelector('button.ai-ok').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  assert.strictEqual(v.sent[0].content, '存进财务');
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(v.sent[0].head.tdh_ai_ok)), { of: 13, ok: true });
+  v.root.unmount();
+  const note = { seq: 14, from: FIN, ts: ts(8), head: { tdh_ai: { v: 1, of: 10, kind: 'doc-note' } }, content: '【TDH 助手】这张付款回单之前已经存过。' };
+  v = await render(BOSS, [pic, note]);
+  dc = v.box.querySelector('.m.ai');
+  assert.ok(dc.querySelector('.who').textContent === 'TDH 助手 · 财务单据' && !dc.querySelector('.ai-foot'), 'a note: nothing to click');
   v.root.unmount();
 
   // What TDH cannot answer: a card with nothing to confirm.
