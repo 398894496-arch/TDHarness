@@ -138,6 +138,7 @@ async function render(me, list) {
   // An ordinary message stays ordinary.
   assert.strictEqual(F.aiOf(question), null);
   assert.ok(/assist-note/.test(src) && /TDH 助手会读公司聊天/.test(src), 'the chat list says the chat is read');
+  assert.ok(src.indexOf('还没有聊天') < src.indexOf('TDH 助手会读公司聊天'), 'under the list, not on top');
   console.log('CHAT_AI_CARD_PROVE_OK=1');
   w.close();
   process.exit(0);
