@@ -8,6 +8,7 @@ import { URL } from "node:url";
 import { watchVideo } from "./video-watch.js";
 import { kernelWatchCutover, kernelWatchPlug, kernelWatchPublish, kernelWatchSnapshot, kernelWatchUpgrade } from "./kernel-watch.js";
 import { startChatRelay, systemNotify } from "./chat-relay.js";
+import { startErpRelay } from "./erp-relay.js";
 
 const OPENCLI_STORE =
 	"https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk";
@@ -2331,7 +2332,8 @@ export function openInBrowser(url, platform = process.platform) {
 	else execFile("xdg-open", [url], () => {});
 }
 
-export async function erpOpen(call = companyExtCall, open = openInBrowser, platform = process.platform) {
+// The one-time link: { ok, url } or { ok: false, error }.
+export async function erpLink(call = companyExtCall) {
 	let out = null;
 	try {
 		out = await call({ pack: "erp", route: "/ticket", body: {} });
@@ -2341,8 +2343,26 @@ export async function erpOpen(call = companyExtCall, open = openInBrowser, platf
 	const v = (out && out.value) || {};
 	const url = String(v.url || "");
 	if (!out || !out.ok || !ERP_START_RE.test(url)) return { ok: false, error: String(v.error || "ticket") };
-	open(url, platform);
+	return { ok: true, url };
+}
+
+export async function erpOpen(call = companyExtCall, open = openInBrowser, platform = process.platform) {
+	const link = await erpLink(call);
+	if (!link.ok) return link;
+	open(link.url, platform);
 	return { ok: true };
+}
+
+// company-erp-desk-v2: ERPNext in the desk's own frame, through this desk's relay (erp-relay.js): the relay's address
+// for a fresh one-time link. The relay starts the first time ERPNext is opened here.
+export async function erpWhere(relay, call = companyExtCall) {
+	const r = relay();
+	const port = r ? await r.ready : 0;
+	if (!port) return { ok: false, error: "relay" };
+	const link = await erpLink(call);
+	if (!link.ok) return link;
+	const url = r.pageFor(link.url);
+	return url ? { ok: true, url } : { ok: false, error: "ticket" };
 }
 
 function registerExtTool(ctx) {
@@ -2584,6 +2604,29 @@ export function apply(ctx) {
 				}
 				res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
 				res.end(JSON.stringify({ ok: shown }));
+			},
+		}),
+	);
+	// company-erp-desk-v2: ERPNext in the desk's frame (its relay started when first asked for), and in the browser.
+	let erpRelay = null;
+	ctx.effect(() => () => {
+		const mine = erpRelay;
+		erpRelay = null;
+		if (mine) mine.close().catch(() => {});
+	});
+	const erpRelayNow = () => {
+		if (!erpRelay) erpRelay = startErpRelay({ site: siteBase });
+		return erpRelay;
+	};
+	ctx.effect(() =>
+		web.register({
+			kind: "exact",
+			path: "/company/erp/where",
+			handler: async (req, res) => {
+				const ok = req.headers["x-tdh-erp"] === "1" && String(req.method || "").toUpperCase() === "POST";
+				const out = ok ? await erpWhere(erpRelayNow) : { ok: false, error: "header" };
+				res.writeHead(out.ok ? 200 : ok ? 502 : 403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+				res.end(JSON.stringify(out));
 			},
 		}),
 	);
