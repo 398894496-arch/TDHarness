@@ -9,8 +9,10 @@
 
 The people service runs it at the configured time (it can sign in to the chat as the sender with a one-time
 ticket) and sends a short message in the chat; the whole page goes into each recipient's own folder, 日报/.
+The sender is TDH早报 (tdh-daily, the server's own chat account, company-chat-bot-v1), so the report comes in a
+chat of its own, not from a person.
 runtime/daily-report.json (no file, or no "to": nothing is made or sent):
-  {"to": ["<login>"], "from": "tdh", "at": "07:30", "skip": ["tdh"],
+  {"to": ["<login>"], "from": "tdh-daily", "at": "07:30", "skip": ["tdh"],
    "packs": [{"title": "资金", "url": "http://127.0.0.1:4190/daily"},
              {"title": "行情", "url": "http://127.0.0.1:4190/daily-market", "weekdays": [0]}],   # weekdays: Monday = 0
    "gateway": "http://127.0.0.1:8450", "model": "gpt-6.2-sol"}
@@ -26,7 +28,7 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-DEFAULTS = {"from": "tdh", "at": "07:30", "window_hours": 4, "skip": ["tdh"], "packs": [],
+DEFAULTS = {"from": "tdh-daily", "at": "07:30", "window_hours": 4, "skip": ["tdh"], "packs": [],
             "gateway": "http://127.0.0.1:8450", "model": "gpt-6.2-sol"}
 _OPEN = urllib.request.build_opener(urllib.request.ProxyHandler({}))      # this machine only, never a proxy
 

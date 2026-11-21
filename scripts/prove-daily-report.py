@@ -142,7 +142,7 @@ check(dr.load_config(rt) == {}, "no file, no config")
 check(dr.load_config(rt) == {}, "no recipients, no config")
 (rt / "daily-report.json").write_text(json.dumps({"to": ["x"], "at": "08:00"}), encoding="utf-8")
 c = dr.load_config(rt)
-check(c["at"] == "08:00" and c["from"] == "tdh" and c["skip"] == ["tdh"], "defaults under the file's values")
+check(c["at"] == "08:00" and c["from"] == "tdh-daily" and c["skip"] == ["tdh"], "defaults under the file's values")
 p = dr.write_page(str(root / "company" / "emp-x"), "2026-11-20", h)
 check(p is not None and p.name == "2026-11-20.html" and p.parent.name == "日报", "the page in the recipient's 日报/")
 
