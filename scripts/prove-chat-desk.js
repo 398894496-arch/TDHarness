@@ -75,6 +75,15 @@ const sandbox = {
 vm.runInNewContext(fs.readFileSync(CLIENT, "utf8"), sandbox, { filename: "client.js" });
 assert.ok(mod, "client.js registers its module");
 const exp = mod.factory((name) => (name === "react" ? React : anything));
+// company-panels-for-all-v1: an employee's left column has 工件、定时任务、聊天; only 插件 is the admin's.
+{
+	const rows = [{ id: "plugins" }, { id: "artifacts" }, { id: "schedules" }, { id: "company-chat" }];
+	assert.deepEqual(Array.from(exp.panelsForRole("employee", rows), (r) => r.id), ["artifacts", "schedules", "company-chat"], "an employee sees all but 插件");
+	assert.deepEqual(Array.from(exp.panelsForRole("director", rows), (r) => r.id), ["artifacts", "schedules", "company-chat"]);
+	assert.deepEqual(Array.from(exp.panelsForRole("admin", rows), (r) => r.id), ["plugins", "artifacts", "schedules", "company-chat"], "the admin sees 插件 too");
+	assert.deepEqual(Array.from(exp.panelsForRole("employee", null)), []);
+	assert.ok(/const shownPanels = panelsForRole\(shellRole, panels\);/.test(fs.readFileSync(CLIENT, "utf8")), "the left column uses it");
+}
 const regs = [];
 const tabTypes = [];
 let injected = null;

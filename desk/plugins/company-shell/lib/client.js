@@ -3074,8 +3074,8 @@ window.__ModuleLoader__.load({
 				function () { return props.panelInfo ? props.panelInfo.getSnapshot().activePanelId : null; }
 			);
 			// Plugins can switch whole parts of the desk off, so only the admin gets
-			// the entry, same as the models and version pages.
-			const shownPanels = shellRole === "admin" ? panels : [];
+			// that entry, same as the models and version pages; the rest are everyone's.
+			const shownPanels = panelsForRole(shellRole, panels);
 			function openFreshSession() {
 				if (props.selectPanel) props.selectPanel(null);
 				selectTask(null);
@@ -7445,6 +7445,14 @@ window.__ModuleLoader__.load({
 			});
 		}
 
+		// company-panels-for-all-v1: the left column's panels for this person. 插件 can switch whole parts of the
+		// desk off, so it stays the admin's; 工件、定时任务、聊天 are everyone's. Until 2026-11-20 the whole row was the
+		// admin's, and an employee's desk (seen on Windows) had no 聊天 in the left column at all.
+		function panelsForRole(role, panels) {
+			const list = Array.isArray(panels) ? panels : [];
+			return role === "admin" ? list : list.filter(function (p) { return p && p.id !== "plugins"; });
+		}
+		exports.panelsForRole = panelsForRole;
 		exports.apply = apply;
 		exports.inject = inject;
 		return module.exports;
