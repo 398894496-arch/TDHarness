@@ -229,10 +229,14 @@ def sync(cfg: dict, people: dict, depts: dict, mapping: dict, api=None) -> dict:
     api = api or (lambda m, p, b=None: erp_api(cfg, m, p, b))
     domain = cfg["email_domain"]
     out = {"ok": True, "created": 0, "enabled": 0, "disabled": 0, "renamed": 0, "failed": 0}
-    st, j = api("GET", "/api/resource/Role?" + urllib.parse.urlencode({"fields": json.dumps(["name"]), "limit_page_length": 500}))
+    st, j = api("GET", "/api/resource/Role?" + urllib.parse.urlencode({"fields": json.dumps(["name", "desk_access", "disabled"]), "limit_page_length": 1000}))
     if st != 200:
         return {"ok": False, "why": "erp-%s" % st}
     known = {r.get("name") for r in j.get("data") or []}
+    # company-erp-admin-all-v1 (the user, 2026-11-21, 郑飞飞 told "Work Order 权限不足"): TDH's admins have every role
+    # ERPNext has for its desk, kept so each round (a role added later reaches them too; none is taken away).
+    every = sorted(r["name"] for r in j.get("data") or [] if r.get("name") and r["name"] not in ("Administrator", "Guest", "All")
+                   and int(r.get("desk_access", 1) or 0) and not int(r.get("disabled") or 0))
     st, j = api("GET", "/api/resource/User?" + urllib.parse.urlencode({
         "fields": json.dumps(["name", "enabled", "first_name"]), "filters": json.dumps([["name", "like", "%@" + domain]]),
         "limit_page_length": 1000}))
@@ -247,7 +251,7 @@ def sync(cfg: dict, people: dict, depts: dict, mapping: dict, api=None) -> dict:
         name = str(row.get("name") or "").strip() or row["login"]
         u = have.get(email)
         if u is None:
-            roles = roles_for(row, depts.get(row.get("dept"), ""), mapping, known)
+            roles = every if row.get("role") == "admin" else roles_for(row, depts.get(row.get("dept"), ""), mapping, known)
             st, _ = api("POST", "/api/resource/User", {"email": email, "first_name": name, "enabled": 1, "send_welcome_email": 0,
                                                        "user_type": "System User", "roles": [{"role": r} for r in roles]})
             out["created" if st in (200, 201) else "failed"] += 1
@@ -263,6 +267,17 @@ def sync(cfg: dict, people: dict, depts: dict, mapping: dict, api=None) -> dict:
                 out["enabled" if "enabled" in change else "renamed"] += 1
             else:
                 out["failed"] += 1
+    out["admin_roles"] = 0
+    for email, row in active.items():
+        if row.get("role") != "admin" or email not in have:
+            continue
+        st, d = api("GET", "/api/resource/User/" + urllib.parse.quote(email))
+        if st != 200:
+            continue
+        mine = {r.get("role") for r in ((d.get("data") or {}).get("roles") or [])}
+        if set(every) - mine:
+            st, _ = api("PUT", "/api/resource/User/" + urllib.parse.quote(email), {"roles": [{"role": r} for r in sorted(mine | set(every))]})
+            out["admin_roles" if st == 200 else "failed"] += 1
     for email, u in have.items():
         if email not in active and int(u.get("enabled") or 0):
             st, _ = api("PUT", "/api/resource/User/" + urllib.parse.quote(email), {"enabled": 0})
