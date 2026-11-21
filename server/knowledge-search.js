@@ -483,6 +483,26 @@ function kbZone(person, zone) {
   }
   return null;
 }
+// company-kb-audience-v1 (2026-11-21: 郭迎's agent would not save two invoice files to 行政财务's zone because it could
+// not tell that only 田总、小潘、郭迎 would see them; they are exactly that department): who reads a zone, by name.
+// Admins read every zone (the company's rule); they are listed apart.
+function kbAudience(zone) {
+  const roster = readJson(ROSTER);
+  const people = (roster && Array.isArray(roster.people) ? roster.people : []).filter((p) => p && (p.status || 'active') === 'active');
+  const name = (p) => String(p.name || p.login || '');
+  const admins = people.filter((p) => p.role === 'admin').map(name);
+  let readers;
+  if (zone === 'company') readers = ['全公司'];
+  else if (zone.startsWith('group:')) {
+    const g = kbGroups().find((x) => 'group:' + x.dir === zone);
+    readers = people.filter((p) => g && g.depts.has(safe(p.dept || ''))).map(name);
+  } else if (zone.startsWith('dept:')) {
+    const d = zone.slice(5);
+    readers = people.filter((p) => safe(p.dept || '') === d).map(name);
+  } else readers = [];
+  const note = zone === 'company' ? '全公司都能看、能改。' : '能看到的人：' + (readers.join('、') || '（本区没有成员）') + '；管理员（' + admins.join('、') + '）能看所有区，这是公司规定。';
+  return { readers, admins, note };
+}
 function kbFolders(dir) {
   try { return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && !/^[_.]/.test(d.name)).map((d) => d.name).sort(); } catch (e) { return []; }
 }
@@ -496,7 +516,8 @@ function kbWrite(person, body) {
   if (!z) return { ok: false, status: 'not-in-zone', hint: '这个区你放不进去：客户与价格只有销售和行政财务能放，私密区只有本部门能放。' };
   const folders = kbFolders(z.dir);
   const folder = String(body.folder || '').trim();
-  if (folders.indexOf(folder) < 0) return { ok: false, status: 'bad-folder', zone: z.zone, folders };
+  const audience = kbAudience(z.zone);
+  if (folders.indexOf(folder) < 0) return { ok: false, status: 'bad-folder', zone: z.zone, folders, audience, hint: audience.note };
   const name = kbName(body.name);
   if (!name) return { ok: false, status: 'bad-name', hint: '文件名不能带路径或特殊字符，要有扩展名：' + [...KB_EXT].join(' ') };
   let buf = null;
@@ -512,7 +533,7 @@ function kbWrite(person, body) {
   if (!under(into, file) || path.dirname(file) !== into) return { ok: false, status: 'bad-name' };
   let replaced = false;
   if (fs.existsSync(file)) {
-    if (body.overwrite !== true) return { ok: false, status: 'exists', zone: z.zone, path: relName(file) };
+    if (body.overwrite !== true) return { ok: false, status: 'exists', zone: z.zone, path: relName(file), audience, hint: audience.note };
     const stamp = new Date(Date.now() + 8 * 3600e3).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
     const keep = path.join(KB_HISTORY, stamp + '-' + safe(person.login), path.relative(COMPANY, file));
     fs.mkdirSync(path.dirname(keep), { recursive: true });
@@ -522,7 +543,7 @@ function kbWrite(person, body) {
   const tmp = file + '.' + process.pid + '.tmp';
   fs.writeFileSync(tmp, buf);
   fs.renameSync(tmp, file);
-  return { ok: true, status: 'written', zone: z.zone, path: relName(file), bytes: buf.length, replaced };
+  return { ok: true, status: 'written', zone: z.zone, path: relName(file), bytes: buf.length, replaced, audience, hint: audience.note };
 }
 
 const server = http.createServer(async (req, res) => {

@@ -91,6 +91,10 @@ function post(port, token, route, body) {
     // Finance's own: its people and admins.
     r = await S('fay', { zone: 'private', folder: '03 人事与薪酬', name: '社保标准.md', content: '# 社保标准\n\n按当地最低基数缴纳。\n' });
     assert.ok(r.ok && r.zone === 'dept:d-fin', 'finance saves into its own: ' + JSON.stringify(r));
+    // company-kb-audience-v1: the answer says who reads that zone (its department; admins apart), by name.
+    assert.deepEqual(r.audience.readers, ['fay'], 'who reads 行政财务\'s zone: ' + JSON.stringify(r.audience));
+    assert.deepEqual(r.audience.admins, ['boss']);
+    assert.ok(/能看到的人：fay；管理员（boss）能看所有区/.test(r.hint), r.hint);
     r = await S('boss', { zone: 'private', folder: '03 人事与薪酬', name: '年终奖.md', content: '# 年终奖\n\n按考核发。\n' });
     assert.ok(r.ok && r.zone === 'dept:d-fin', 'an admin too (one department kept apart): ' + JSON.stringify(r));
     r = await S('sam', { zone: 'private', folder: '03 人事与薪酬', name: 'a.md', content: 'x' });
