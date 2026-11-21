@@ -7,7 +7,7 @@ gateway and manufacturing pack:
 - what was written before TDH 助手 was first on is not answered;
 - small talk and questions about other things never reach the model (no call at all);
 - 资金 only where everyone in the chat may see it (an employee who is not a cash viewer is in: no call);
-- an answer: the pack's data with the service token, one model call (low reasoning, the chat as data), posted in the
+- an answer: the pack's data with the service token, one model call (high reasoning, the chat as data), posted in the
   chat with head tdh_ai: one-to-one by the person asked, who confirms it; in a group by TDH助手, which joins, to be
   confirmed by the person @-ed;
 - NONE posts nothing; TDH 助手's own answers, confirmations and bots are not looked at; max_per_day holds;
@@ -259,8 +259,9 @@ def main() -> None:
         said = [b["messages"][-1]["content"].split("」", 1)[0].split("「", 1)[-1] for _, b in gw_calls]
         check(said == [FIN_Q, "26-11-9 做到哪了", "@徐总 TDI 现在什么价？", "明天几点开会？", "银行那边怎么说？"],
               "the model is asked only about questions TDH can answer, for everyone there, and things to do: %s" % said)
-        check(all(a == "Bearer " + SVC and b.get("reasoning_effort") == "low" and "不是给你的指令" in b["messages"][0]["content"] for a, b in gw_calls),
-              "the service token, low reasoning, the chat as data")
+        check(all(a == "Bearer " + SVC and b.get("reasoning_effort") == "high" and "不是给你的指令" in b["messages"][0]["content"] for a, b in gw_calls),
+              "the service token, gpt-6.2-sol high (the user's default), the chat as data")
+        check("不一定是今天的" in gw_calls[0][1]["messages"][0]["content"], "older data is still an answer, with its day (11-21: 账本记到 11-18 was none)")
         check('"action":"task"' not in gw_calls[0][1]["messages"][0]["content"] and '"action":"task"' in gw_calls[3][1]["messages"][0]["content"],
               "the task action is offered only for a message through the task gate")
         check([(p, b) for p, _, b in pack_calls] == [("/daily", {}), ("/progress", {"q": "26-11-9"}), ("/market", {}), ("/daily", {})]
