@@ -1628,7 +1628,7 @@ class Handler(BaseHTTPRequestHandler):
             if not row or row.get("status", "active") != "active":
                 self._note(403, "这个链接已经用过或过期了。请回到 TDH，再点一次左边的 ERPNext。")
                 return
-            link = erp_sso.erp_login_link(cfg) or cfg["base"] + "/login?redirect-to=%2Fapp"
+            link = erp_sso.erp_login_link(cfg) or cfg["base"] + "/login?redirect-to=%2Fdesk%2Fhome"
             self._redirect(link, self._sso_cookie(cfg, row["login"]))
             return
         if sub == "authorize":
