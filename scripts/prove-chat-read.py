@@ -374,6 +374,10 @@ def main() -> None:
     check("chat-read tdh read n=4" in text and "chat-read tdh search n=2" in text, "the log has the counts: " + text[-800:])
     for said in ("交货", "上午十点", "报价单", "私下", "图片"):
         check(said not in text, "the log never has what was said (%s)" % said)
+    skill = (HERE.parent / "server" / "chat" / "skills" / "company-chat-history" / "SKILL.md").read_text(encoding="utf-8")
+    check(skill.startswith("---\nname: company-chat-history\n") and "company_ext" in skill
+          and "disable-model-invocation" not in skill.split("\n---", 1)[0],
+          "the skill is in the agent's list (the kernel hides one marked disable-model-invocation; 2026-11-21)")
     print("CHAT_READ_PROVE_OK=1")
 
 

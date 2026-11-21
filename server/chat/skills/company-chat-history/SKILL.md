@@ -2,7 +2,6 @@
 name: company-chat-history
 description: 读用户自己在公司聊天里的记录：有哪些聊天、某个同事或群最近说了什么、搜一个词。只读，只能看到用户本人所在的私聊和群。
 whenToUse: 聊天记录, 聊天内容, 看聊天, 翻聊天, 群里说了什么, 他跟我说了什么, 他发给我的, 搜聊天, 聊天里找, 谁说过, 未读消息, 最近的消息, 总结聊天, 群消息
-disable-model-invocation: true
 ---
 
 # company-chat-history
