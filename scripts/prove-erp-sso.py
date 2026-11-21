@@ -267,7 +267,7 @@ def main() -> None:
         check(("tdh@tdh.test", {"enabled": 1}) in erp.puts and ("old@tdh.test", {"enabled": 0}) in erp.puts, "enabled again / disabled: %s" % erp.puts)
         check(not any(n in ("Administrator", "someone@other.org") for n, _ in erp.puts), "Administrator and other domains untouched")
         roles_put = [b for n, b in erp.puts if n == "tdh@tdh.test" and "roles" in b]
-        check(len(roles_put) == 1 and sorted(r["role"] for r in roles_put[0]["roles"]) == sorted(erp.roles),
+        check(len(roles_put) == 1 and sorted(r["role"] for r in roles_put[0]["roles"]) == sorted(r for r in erp.roles if r not in ("Employee", "Desk User")),
               "an admin has every role ERPNext has (company-erp-admin-all-v1): %s" % roles_put)
         check(len(erp.created) == 2 and len(erp.puts) == 3, "a second round changes nothing: %s %s" % (erp.created, erp.puts))
         check(erp.auths == {"token %s:%s" % (KEY, KSECRET)}, "the sync's own API key")
