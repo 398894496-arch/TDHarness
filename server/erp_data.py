@@ -69,7 +69,8 @@ def _load(path: Path) -> dict:
 
 def generate(api, email: str) -> dict | None:
     """A new API key and secret for an ERPNext user (the old secret stops working). None when it failed."""
-    st, j = api("POST", "/api/method/frappe.core.doctype.user.user.generate_keys?" + urllib.parse.urlencode({"user": email}), {})
+    # ERPNext 16 reads the user from the body only (a query string's is "missing 1 required positional argument").
+    st, j = api("POST", "/api/method/frappe.core.doctype.user.user.generate_keys", {"user": email})
     m = (j or {}).get("message") or {}
     if st != 200 or not m.get("api_secret"):
         return None

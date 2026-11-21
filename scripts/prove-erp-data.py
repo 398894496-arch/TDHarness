@@ -103,7 +103,9 @@ class FakeErp:
                 if p == "/api/method/frappe.core.doctype.user.user.generate_keys":
                     if who != "sync":
                         return self._json(403, {})
-                    user = q["user"]
+                    if "user" not in body:                      # as ERPNext 16: the body only
+                        return self._json(500, {"exc_type": "TypeError"})
+                    user = body["user"]
                     k = fake.users[user].setdefault("api_key", "k-" + user.split("@")[0])
                     sec = "s-%s-%d" % (user.split("@")[0], len(fake.generated))
                     fake.keys[k] = (sec, user)
