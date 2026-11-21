@@ -186,8 +186,12 @@ def authorize_link(page: str, base: str) -> str:
     return ""
 
 
-def home_of(row: dict, dept_name: str) -> str:
-    """Where a person lands in ERPNext: an admin on its home, a department on its workspace, anyone else on the home."""
+def home_of(row: dict, dept_name: str, mapping: dict | None = None) -> str:
+    """Where a person lands in ERPNext: an admin on its home, someone given a workspace of their own (erp-roles.json
+    "people") there, a department on its workspace, anyone else on the home."""
+    own = ((mapping or {}).get("people") or {}).get(str(row.get("login") or "")) or {}
+    if row.get("role") != "admin" and isinstance(own, dict) and str(own.get("home") or "").startswith("/desk/"):
+        return str(own["home"])
     return HOME if row.get("role") == "admin" else HOME_BY_DEPT.get(dept_name, HOME)
 
 
@@ -233,8 +237,13 @@ NEVER_KEPT = ("Employee", "Desk User")
 
 
 def roles_for(row: dict, dept: str, mapping: dict, known: set) -> list[str]:
+    # company-erp-people-v1 (the user, 2026-11-21: 尚晓晨 采购、张荣 质检、郭秋兰 仓库管理员, all in 公司): erp-roles.json
+    # "people": {login: {"roles": [...], "home": "/desk/..."}} for someone whose department says nothing of their job.
+    own = (mapping.get("people") or {}).get(str(row.get("login") or "")) or {}
     if row.get("role") == "admin":
         want = list(mapping.get("admin") or [])
+    elif isinstance(own, dict) and own.get("roles"):
+        want = list(own["roles"])
     else:
         want = list((mapping.get("depts") or {}).get(dept) or mapping.get("default") or [])
     return [r for r in dict.fromkeys(want) if r in known and r not in NEVER_KEPT]
