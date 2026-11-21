@@ -177,6 +177,9 @@ jobs:
       - name: The chat's files onto the company disk, by kind (company-chat-archive-v1)
         if: runner.os == 'Linux'
         run: python3 scripts/prove-chat-archive.py
+      - name: Finance papers in the chat read, filed, asked about, paired (company-chat-docs-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-docs.py
       - name: The desk's ERPNext entry (company-erp-desk-v1)
         run: node scripts/prove-erp-desk.mjs
       - name: Chat page logic, its input boxes with a Chinese input method, TDH 助手's cards (company-chat-client-v1, company-chat-ime-v1, company-chat-assist-v1; tinode-sdk 0.25.3, as the server runs)

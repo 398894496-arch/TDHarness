@@ -12,6 +12,7 @@ import secrets
 import sys
 import threading
 import time
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -25,6 +26,7 @@ import notify  # noqa: E402
 import chat_read  # noqa: E402
 import chat_assist  # noqa: E402
 import chat_archive  # noqa: E402
+import chat_docs  # noqa: E402
 import erp_sso  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
@@ -2071,13 +2073,126 @@ def _assist_card(p: dict, people: dict) -> tuple:
     return str(res.get("ticket") or ""), ""
 
 
-def _assist_decided(state: dict, topic: str, who: str, ok: dict, people: dict, out: dict) -> None:
-    """A 记下 / 不用 under a proposal: from one of the people it names, the first answer counts."""
+def _docs_ctx(people: dict) -> dict:
+    """company-chat-docs-v1: the finance store, the copies' places, our companies' names, the finance people."""
+    runtime = TOKEN_STORE.parent
+    fin = chat_docs.finance_people(people, runtime)
+    office = ROOT / "company" / "_office"
+    copies = [office] + [Path(str(people[k].get("personal"))) for k in sorted(fin)
+                         if people[k].get("role") != "admin" and people[k].get("personal")
+                         and os.path.normcase(os.path.abspath(str(people[k]["personal"]))) != os.path.normcase(os.path.abspath(str(office)))]
+    try:
+        ours = {c["name"] for c in json.loads((runtime / "erp-companies.json").read_text(encoding="utf-8-sig")).get("companies") or []}
+    except (OSError, ValueError, KeyError, TypeError):
+        ours = set()
+    return {"ledger": chat_docs.Ledger(runtime / "mfg" / "finance"), "copies": copies, "ours": ours, "fin": fin}
+
+
+def _docs_post(c: dict, kind: str, text: str, links: dict, deciders: list) -> dict:
+    poster, topic = _assist_where(c, links)
+    if not poster:
+        return {"ok": False, "why": "members"}
+    head = {"tdh_ai": {"v": 1, "of": c["seq"], "kind": kind}, "reply": str(c["seq"])}
+    if deciders:
+        head["tdh_ai"]["deciders"] = ["usr" + links[x] for x in deciders if links.get(x)]
+    r = chat_post(poster, topic, chat_assist.PREFIX + text, head)
+    r["poster"], r["post_topic"] = poster, topic
+    return r
+
+
+def _docs_row(row: dict, people: dict, links: dict, cfg: dict, token: str, state: dict, ctx: list, out: dict) -> None:
+    """company-chat-docs-v1: the pictures of one message, read; filed or asked about in its chat."""
+    sender = chat_assist.login_of(row.get("from_tags"))
+    members = sorted({chat_assist.login_of(t) for t in row.get("member_tags") or []} - {""} - set(CHAT_BOTS))
+    d = _docs_ctx(people)
+    if not sender or sender in CHAT_BOTS or not (set(members) & d["fin"]):
+        return
+    pics = chat_docs.pictures(row)
+    if not pics:
+        return
+    name = lambda x: (people.get(x) or {}).get("name") or x
+    topic = str(row.get("topic") or "")
+    pub = row.get("topic_public") if isinstance(row.get("topic_public"), dict) else {}
+    chat = (pub.get("fn") or "群聊") if topic.startswith("grp") else " 与 ".join(name(m) for m in members)
+    c = {"topic": topic, "seq": int(row.get("seq") or 0), "sender": sender, "members": members, "mentions": []}
+    deciders = sorted({sender} | (set(members) & d["fin"]))
+    for pic in pics:
+        if int(state.get("calls") or 0) >= int(cfg["max_per_day"]):
+            out["skipped"]["day-limit"] = out["skipped"].get("day-limit", 0) + 1
+            return
+        state["calls"] = int(state.get("calls") or 0) + 1
+        act = chat_docs.check(chat_docs.recognize(cfg, token, pic, ctx))
+        if act["action"] == "none":
+            out["skipped"]["not-finance"] = out["skipped"].get("not-finance", 0) + 1
+            continue
+        f = act["fields"]
+        meta = {"when": chat_docs.when_of(row), "chat": chat, "sender": sender, "msg": row.get("id")}
+        if act["action"] == "save":
+            dup = d["ledger"].duplicate(f)
+            if dup:
+                _docs_post(c, "doc-note", "这张%s之前已经存过（%s，%s），没有再存。" % (f["kind"], dup.get("summary") or "", dup.get("at", "")[:10]), links, [])
+                out["docs_dup"] = out.get("docs_dup", 0) + 1
+                continue
+            line = d["ledger"].file_in(pic, f, meta, d["copies"], d["ours"])
+            r = _docs_post(c, "doc-saved", chat_docs.said_filed(line), links, deciders)
+            if r.get("ok") and r.get("seq"):
+                state.setdefault("pending", {})["%s:%s" % (topic, r["seq"])] = {"type": "doc-saved", "line": line["id"], "deciders": deciders,
+                                                                               "poster": r["poster"], "post_topic": r["post_topic"], "seq": r["seq"], "at": time.time()}
+            out["docs_filed"] = out.get("docs_filed", 0) + 1
+        else:
+            hold = d["ledger"].root / "_待确认" / ("%s%s" % (secrets.token_hex(8), os.path.splitext(pic["name"])[1].lower()))
+            hold.parent.mkdir(parents=True, exist_ok=True)
+            hold.write_bytes(pic["bytes"])
+            r = _docs_post(c, "doc-ask", chat_docs.said_ask(f), links, deciders)
+            if r.get("ok") and r.get("seq"):
+                state.setdefault("pending", {})["%s:%s" % (topic, r["seq"])] = {
+                    "type": "doc-ask", "fields": f, "hold": str(hold), "name": pic["name"], "mime": pic["mime"], "deciders": deciders,
+                    "chat": chat, "sender": sender, "msg": row.get("id"), "when": meta["when"].isoformat(), "poster": r["poster"],
+                    "post_topic": r["post_topic"], "seq": r["seq"], "at": time.time(), "topic": topic, "members": members}
+            out["docs_asked"] = out.get("docs_asked", 0) + 1
+
+
+def _docs_decided(p: dict, ok: dict, people: dict, links: dict, out: dict) -> None:
+    d = _docs_ctx(people)
+    if p["type"] == "doc-saved":
+        if ok.get("ok") is False and d["ledger"].undo(p["line"]):
+            chat_post(p["poster"], p["post_topic"], chat_assist.PREFIX + "已撤销，这张单据不再算在财务里。",
+                      {"tdh_ai": {"v": 1, "of": p["seq"], "kind": "doc-note"}})
+            out["docs_undone"] = out.get("docs_undone", 0) + 1
+        return
+    hold = Path(p["hold"])
+    if ok.get("ok") is False:
+        try:
+            hold.unlink()
+        except OSError:
+            pass
+        return
+    try:
+        data = hold.read_bytes()
+    except OSError:
+        return
+    meta = {"when": datetime.fromisoformat(p["when"]), "chat": p["chat"], "sender": p["sender"], "msg": p["msg"]}
+    line = d["ledger"].file_in({"name": p["name"], "mime": p["mime"], "bytes": data}, p["fields"], meta, d["copies"], d["ours"])
+    try:
+        hold.unlink()
+    except OSError:
+        pass
+    chat_post(p["poster"], p["post_topic"], chat_assist.PREFIX + chat_docs.said_filed(line).replace("存错了点「撤销」。", ""),
+              {"tdh_ai": {"v": 1, "of": p["seq"], "kind": "doc-note"}})
+    out["docs_filed"] = out.get("docs_filed", 0) + 1
+
+
+def _assist_decided(state: dict, topic: str, who: str, ok: dict, people: dict, out: dict, links: dict | None = None) -> None:
+    """A 记下 / 不用 (a task), 撤销 (a filed paper) or 存进财务 / 不用 (a paper asked about): from one of the people
+    it names, the first answer counts."""
     key = "%s:%s" % (topic, int(ok.get("of") or 0))
     p = (state.get("pending") or {}).get(key)
     if not p or who not in p["deciders"]:
         return
     del state["pending"][key]
+    if p.get("type") in ("doc-saved", "doc-ask"):
+        _docs_decided(p, ok, people, links or _tinode_links(), out)
+        return
     if ok.get("ok") is False:
         out["declined"] = out.get("declined", 0) + 1
         return
@@ -2124,63 +2239,76 @@ def chat_assist_once() -> dict:
 
         for row in rows:
             state["last_id"] = max(int(state["last_id"]), int(row.get("id") or 0))
-            topic = str(row.get("topic") or "")
-            head = row.get("head") if isinstance(row.get("head"), dict) else {}
-            who = chat_assist.login_of(row.get("from_tags"))
-            words = chat_assist.own_words(row.get("content"))
-            ctx = _ASSIST_CTX.setdefault(topic, [])
-            if who and words and not head.get("tdh_ai"):
-                ctx.append("%s：%s" % ((people.get(who) or {}).get("name") or who, words[:120]))
-                del ctx[:-6]
-            if isinstance(head.get("tdh_ai_ok"), dict):
-                _assist_decided(state, topic, who, head["tdh_ai_ok"], people, out)
-                continue
-            c = chat_assist.candidate(row, CHAT_BOTS)
-            if c is None:
-                continue
-            out["looked"] += 1
-            data_kinds = [k for k in c["kinds"] if k != "task" and chat_assist.may_see(k, c["members"], people, viewers)]
-            with_task = "task" in c["kinds"] and chat_assist.may_see("task", c["members"], people, viewers)
-            if not data_kinds and not with_task:
-                skip("not-for-everyone")
-                continue
-            if time.time() - _ASSIST_LAST.get(topic, 0) < float(cfg["cooldown_s"]):
-                skip("cooldown")
-                continue
-            if int(state.get("calls") or 0) >= int(cfg["max_per_day"]):
-                skip("day-limit")
-                continue
-            if not token:
-                skip("no-service-token")
-                continue
-            kind = data_kinds[0] if data_kinds else None
-            data = chat_assist.pack_data(cfg, token, kind, c["text"]) if kind else None
-            if data is None and not with_task:
-                skip("no-data")
-                continue
-            state["calls"] = int(state.get("calls") or 0) + 1
-            names = {re.sub(r"\s+", "", (people.get(m) or {}).get("name") or m): m for m in c["members"]}
-            asker = (people.get(c["sender"]) or {}).get("name") or c["sender"]
-            choice = chat_assist.decide(cfg, token, asker, c["text"], ctx[:-1], list(names), kind, data, with_task)
-            act = chat_assist.check(choice, kind, data, with_task, names)
-            if act["action"] in ("answer", "cannot"):
-                r = _assist_post(c, kind, act["text"], links, cannot=act["action"] == "cannot")
-                counted = "answered" if act["action"] == "answer" else "cannot"
-            elif act["action"] == "task":
-                r = _assist_propose(c, act, links, people, state)
-                counted = "proposed"
-            else:
-                skip("none")
-                continue
-            if r.get("ok"):
-                out[counted] += 1
-                _ASSIST_LAST[topic] = time.time()
-            else:
-                skip("post-%s" % r.get("why"))
+            try:
+                topic = str(row.get("topic") or "")
+                head = row.get("head") if isinstance(row.get("head"), dict) else {}
+                who = chat_assist.login_of(row.get("from_tags"))
+                words = chat_assist.own_words(row.get("content"))
+                ctx = _ASSIST_CTX.setdefault(topic, [])
+                if who and words and not head.get("tdh_ai"):
+                    ctx.append("%s：%s" % ((people.get(who) or {}).get("name") or who, words[:120]))
+                    del ctx[:-6]
+                if isinstance(head.get("tdh_ai_ok"), dict):
+                    _assist_decided(state, topic, who, head["tdh_ai_ok"], people, out, links)
+                    continue
+                ents = row["content"].get("ent") if isinstance(row.get("content"), dict) else None
+                if cfg.get("docs") and token and not head.get("tdh_ai") and ents and any((e or {}).get("tp") in ("IM", "EX") for e in ents):
+                    try:
+                        _docs_row(row, people, links, cfg, token, state, ctx[:-1] if words else list(ctx), out)
+                    except OSError as e:
+                        out["skipped"]["docs-" + type(e).__name__] = out["skipped"].get("docs-" + type(e).__name__, 0) + 1
+                c = chat_assist.candidate(row, CHAT_BOTS)
+                if c is None:
+                    continue
+                out["looked"] += 1
+                data_kinds = [k for k in c["kinds"] if k != "task" and chat_assist.may_see(k, c["members"], people, viewers)]
+                with_task = "task" in c["kinds"] and chat_assist.may_see("task", c["members"], people, viewers)
+                if not data_kinds and not with_task:
+                    skip("not-for-everyone")
+                    continue
+                if time.time() - _ASSIST_LAST.get(topic, 0) < float(cfg["cooldown_s"]):
+                    skip("cooldown")
+                    continue
+                if int(state.get("calls") or 0) >= int(cfg["max_per_day"]):
+                    skip("day-limit")
+                    continue
+                if not token:
+                    skip("no-service-token")
+                    continue
+                kind = data_kinds[0] if data_kinds else None
+                data = chat_assist.pack_data(cfg, token, kind, c["text"]) if kind else None
+                if data is None and not with_task:
+                    skip("no-data")
+                    continue
+                state["calls"] = int(state.get("calls") or 0) + 1
+                names = {re.sub(r"\s+", "", (people.get(m) or {}).get("name") or m): m for m in c["members"]}
+                asker = (people.get(c["sender"]) or {}).get("name") or c["sender"]
+                choice = chat_assist.decide(cfg, token, asker, c["text"], ctx[:-1], list(names), kind, data, with_task)
+                act = chat_assist.check(choice, kind, data, with_task, names)
+                if act["action"] in ("answer", "cannot"):
+                    r = _assist_post(c, kind, act["text"], links, cannot=act["action"] == "cannot")
+                    counted = "answered" if act["action"] == "answer" else "cannot"
+                elif act["action"] == "task":
+                    r = _assist_propose(c, act, links, people, state)
+                    counted = "proposed"
+                else:
+                    skip("none")
+                    continue
+                if r.get("ok"):
+                    out[counted] += 1
+                    _ASSIST_LAST[topic] = time.time()
+                else:
+                    skip("post-%s" % r.get("why"))
+            except Exception as exc:  # noqa: BLE001 - one message that cannot be handled must not stop the rest (2026-11-21)
+                import traceback
+                where = traceback.extract_tb(exc.__traceback__)[-1]
+                skip("error-%s@%s:%d" % (type(exc).__name__, os.path.basename(where.filename), where.lineno))
+
         chat_assist.save_state(runtime, state)
-    if out["looked"] or out.get("cards") or out.get("declined") or out.get("card_failed"):
-        line = "rows=%d looked=%d answered=%d cannot=%d proposed=%d cards=%d declined=%d skipped=%s calls_today=%s" % (
+    if out["looked"] or any(out.get(k) for k in ("cards", "declined", "card_failed", "docs_filed", "docs_asked", "docs_dup", "docs_undone")) or out["skipped"]:
+        line = "rows=%d looked=%d answered=%d cannot=%d proposed=%d cards=%d declined=%d docs=%d/%d/%d/%d skipped=%s calls_today=%s" % (
             out["rows"], out["looked"], out["answered"], out["cannot"], out["proposed"], out.get("cards", 0), out.get("declined", 0),
+            out.get("docs_filed", 0), out.get("docs_asked", 0), out.get("docs_dup", 0), out.get("docs_undone", 0),
             json.dumps(out["skipped"]), state.get("calls"))
         sys.stderr.write("people-api chat-assist " + line + "\n")
         try:
@@ -2199,7 +2327,9 @@ def chat_assist_loop() -> None:
         try:
             chat_assist_once()
         except Exception as exc:  # noqa: BLE001 - the chat works without it; the next round tries again
-            sys.stderr.write("people-api chat-assist failed %s\n" % type(exc).__name__)
+            import traceback
+            where = traceback.extract_tb(exc.__traceback__)[-1]
+            sys.stderr.write("people-api chat-assist failed %s at %s:%d\n" % (type(exc).__name__, os.path.basename(where.filename), where.lineno))
         time.sleep(every)
 
 

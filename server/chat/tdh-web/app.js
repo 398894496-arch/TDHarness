@@ -472,9 +472,26 @@
 		t.publishDraft(pub).catch(() => {});
 		bump();
 	}
+	// The words of each kind of TDH 助手 message: its label, its buttons (none: no button), what an answer says.
+	// data: an answer from the data; task: a proposed task card (company-chat-tasks-v1); doc-saved / doc-ask / doc-note:
+	// a finance paper filed, asked about, or a line about one (company-chat-docs-v1).
+	const AI_WORDS = {
+		data: { label: "TDH 助手 · 自动查询", yes: "确认无误", no: "有误", sayYes: "确认无误", sayNo: "这条数据有误，我来核对",
+			noteYes: " 确认了 TDH 助手的数据", noteNo: " 说 TDH 助手的数据有误，正在核对", doneYes: (b) => "✓ " + b + " 确认无误", doneNo: (b) => "✗ " + b + "：有误，正在核对", wait: " 确认" },
+		task: { label: "TDH 助手 · 任务卡", yes: "记下", no: "不用", sayYes: "记下", sayNo: "不用记",
+			noteYes: " 记下了这张任务卡", noteNo: " 说不用记", doneYes: (b) => "✓ " + b + " 记下了", doneNo: (b) => b + "：不用记", wait: " 决定" },
+		"task-made": { label: "TDH 助手 · 任务卡" },
+		"doc-saved": { label: "TDH 助手 · 财务单据", no: "撤销", sayNo: "撤销", noteNo: " 撤销了这张单据", doneNo: (b) => b + " 撤销了这张单据" },
+		"doc-ask": { label: "TDH 助手 · 财务单据", yes: "存进财务", no: "不用", sayYes: "存进财务", sayNo: "不用存",
+			noteYes: " 把它存进了财务", noteNo: " 说不用存", doneYes: (b) => "✓ " + b + " 存进了财务", doneNo: (b) => b + "：不用存", wait: " 决定" },
+		"doc-note": { label: "TDH 助手 · 财务单据" },
+	};
+	function aiWords(a) {
+		return AI_WORDS[(a && a.kind) || ""] || AI_WORDS.data;
+	}
 	function confirmAi(t, msg, ok) {
-		const task = (aiOf(msg) || {}).kind === "task";
-		const pub = t.createMessage(task ? (ok ? "记下" : "不用记") : ok ? "确认无误" : "这条数据有误，我来核对", true);
+		const w = aiWords(aiOf(msg));
+		const pub = t.createMessage(ok ? w.sayYes : w.sayNo, true);
 		pub.head = Object.assign({}, pub.head || {}, { tdh_ai_ok: { of: msg.seq, ok: !!ok }, reply: "" + msg.seq });
 		t.publishDraft(pub).catch((err) => toast("发送失败：" + ((err && err.message) || "")));
 		bump();
@@ -744,7 +761,7 @@
 		// The line that says TDH 助手 reads the chat, under the list (the user, 2026-11-21: not on top).
 		return h("div", { className: "rows" },
 			rows.length ? rows : h("div", { className: "empty" }, q ? "没有找到" : "还没有聊天"),
-			h("div", { className: "assist-note" }, "TDH 助手会读公司聊天：问到资金、生产进度、原料行情，它会自动查好发在对话里，由被问的人确认；说到要做的事，它会问一句要不要记成任务卡，到期前提醒。"));
+			h("div", { className: "assist-note" }, "TDH 助手会读公司聊天：问到资金、生产进度、原料行情，它会自动查好发在对话里，由被问的人确认；说到要做的事，它会问一句要不要记成任务卡，到期前提醒；发来的账单、回单、发票图片，它会认出来存进财务。"));
 	}
 
 	function Contacts() {
@@ -883,31 +900,29 @@
 				const target = items.find((x) => x.seq === (okOf.of | 0));
 				const counted = target ? aiConfirmation(items, target) : null;
 				if (!counted || counted.seq !== msg.seq) return; // an answer that does not count leaves no note
-				const onTask = (aiOf(target) || {}).kind === "task";
-				const yes = okOf.ok !== false;
-				nodes.push(h("div", { key: "k" + msg.seq, className: "note" }, userName(msg.from, t) +
-					(onTask ? (yes ? " 记下了这张任务卡" : " 说不用记") : yes ? " 确认了 TDH 助手的数据" : " 说 TDH 助手的数据有误，正在核对")));
+				const tw = aiWords(aiOf(target));
+				nodes.push(h("div", { key: "k" + msg.seq, className: "note" }, userName(msg.from, t) + (okOf.ok !== false ? tw.noteYes : tw.noteNo)));
 				return;
 			}
 			const ai = aiOf(msg);
 			if (ai) {
 				const conf = aiConfirmation(items, msg);
-				const task = ai.kind === "task";
-				const who = aiDeciders(ai);
+				const w = aiWords(ai);
+				const who = w.no ? aiDeciders(ai) : [];
 				const names = who.map((u) => userName(u, t)).join(" 或 ");
 				let foot = null;
 				if (conf) {
 					const by = userName(conf.by, t);
-					foot = h("div", { className: "ai-foot " + (conf.ok ? "ok" : "bad") },
-						task ? (conf.ok ? "✓ " + by + " 记下了" : by + "：不用记") : conf.ok ? "✓ " + by + " 确认无误" : "✗ " + by + "：有误，正在核对");
+					const said = conf.ok ? (w.doneYes ? w.doneYes(by) : "") : w.doneNo ? w.doneNo(by) : "";
+					foot = said ? h("div", { className: "ai-foot " + (conf.ok ? "ok" : "bad") }, said) : null;
 				} else if (who.includes(S.meId)) foot = h("div", { className: "ai-foot" },
-					h("button", { className: "ai-ok", onClick: () => confirmAi(t, msg, true) }, task ? "记下" : "确认无误"),
-					h("button", { className: "ai-bad", onClick: () => confirmAi(t, msg, false) }, task ? "不用" : "有误"));
-				else if (who.length) foot = h("div", { className: "ai-foot" }, "等 " + names + (task ? " 决定" : " 确认"));
+					w.yes ? h("button", { className: "ai-ok", onClick: () => confirmAi(t, msg, true) }, w.yes) : null,
+					h("button", { className: w.yes ? "ai-bad" : "ai-bad only", onClick: () => confirmAi(t, msg, false) }, w.no));
+				else if (who.length && w.wait) foot = h("div", { className: "ai-foot" }, "等 " + names + w.wait);
 				nodes.push(h("div", { key: "m" + msg.seq, className: "m ai", onContextMenu: (e) => openMenu(e, [{ label: "复制", run: () => copy(aiText(t, msg)) }]) },
 					h("div", { className: "a s36 ai-av" }, "TDH"),
 					h("div", { className: "col" },
-						h("div", { className: "who" }, task || ai.kind === "task-made" ? "TDH 助手 · 任务卡" : "TDH 助手 · 自动查询"),
+						h("div", { className: "who" }, w.label),
 						h("div", { className: "b" }, aiText(t, msg)),
 						foot)));
 				return;
