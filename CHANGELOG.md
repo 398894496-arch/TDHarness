@@ -4,6 +4,13 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.20.7
+
+**员工电脑左栏的「工件、定时任务、聊天」回来了**
+- 现象：用员工账号登录（Windows 上看到的），左栏顶上一个入口都没有；管理员账号（Mac 上的 tdh）有「插件、工件、定时任务、聊天」。
+- 原因：左栏这一排是公司插件自己画的，原来写死成「只有管理员显示」。那时这一排只有「插件」，它能把桌面的整块功能关掉，所以只给管理员。后来加进来的「定时任务」「聊天」被这条规则一起藏了，员工在左栏找不到聊天（右侧栏的聊天一直有）。
+- 修法（`company-panels-for-all-v1`）：只有「插件」还是管理员才有；「工件、定时任务、聊天」每个人都显示。`prove-chat-desk.js` 加了这一条。
+
 ## 2026.11.20.6
 
 **任务做到一半被登出修好；服务挂了自动拉起；每天早上给田总的日报；财务对账、排产草稿、原料行情**
