@@ -1715,7 +1715,9 @@ internal sealed class ShellForm : Form
                 _logoutWatch = null;
             }
             AppHost.ClearLogin();
-            AppHost.QuitLease(_personal, _org, _leaseWatch);
+            var closingWatch = _leaseWatch;
+            _leaseWatch = null;
+            AppHost.QuitLease(_personal, _org, closingWatch);
             AppHost.StopDeskNode();
         };
         Shown += delegate
@@ -1947,7 +1949,9 @@ internal sealed class ShellForm : Form
             _err.Text = "正在交接会话…";
             Application.DoEvents();
             AppHost.StopDeskNode();
-            try { AppHost.QuitLease(hit.Personal, hit.Org, _leaseWatch); } catch { }
+            var oldWatch = _leaseWatch;
+            _leaseWatch = null;                 // a watch we stop ourselves is not a seat lost (company-seat-back-v1)
+            try { AppHost.QuitLease(hit.Personal, hit.Org, oldWatch); } catch { }
             AppHost.AcquireLease(hit.Personal, hit.Org);
             _err.Text = "正在打开本机 Agent…";
             Application.DoEvents();
@@ -1955,23 +1959,28 @@ internal sealed class ShellForm : Form
             _leaseWatch = AppHost.StartLeaseWatch(hit.Personal, hit.Org);
             if (_leaseWatch != null)
             {
+                // company-seat-back-v1 (2026-11-21, 小潘: his desktop sat on 「重新连接中」 after his laptop took the seat; the
+                // user: the desktop signing in should simply put the laptop out). A desk that loses its seat, or whose
+                // local Agent stops, goes back to the sign-in with the account filled in and says why; 登录 takes the
+                // seat back on this computer (the other one is put out), the usual sign-in. No window left stuck.
                 var watch = _leaseWatch;
                 var t = new Thread(new ThreadStart(delegate
                 {
                     try { watch.WaitForExit(); }
                     catch { return; }
-                    if (watch.ExitCode == 3)
+                    var code = 0;
+                    try { code = watch.ExitCode; } catch { }
+                    try
                     {
-                        try
+                        BeginInvoke(new Action(delegate
                         {
-                            BeginInvoke(new Action(delegate
-                            {
-                                MessageBox.Show("这个账号已在其他设备登录，本机已退出。", "TDHarness");
-                                Close();
-                            }));
-                        }
-                        catch { }
+                            if (!object.ReferenceEquals(_leaseWatch, watch)) return;     // a newer sign-in has its own
+                            SeatLost(code == 3
+                                ? "这个账号已在其他设备登录，这台电脑已退出。点「登录」就在这台电脑继续用，另一台会退出。"
+                                : "这台电脑的 TDH 停了。点「登录」重新打开。");
+                        }));
                     }
+                    catch { }
                 }));
                 t.IsBackground = true;
                 t.Start();
@@ -1990,6 +1999,34 @@ internal sealed class ShellForm : Form
         {
             _go.Enabled = true;
         }
+    }
+
+    // company-seat-back-v1: back to the sign-in, the account kept (the password only in memory, as it was), the reason said.
+    private void SeatLost(string why)
+    {
+        if (_logoutWatch != null)
+        {
+            try { _logoutWatch.Stop(); _logoutWatch.Dispose(); } catch { }
+            _logoutWatch = null;
+        }
+        _leaseWatch = null;
+        AppHost.StopDeskNode();
+        if (_web != null)
+        {
+            Controls.Remove(_web);
+            try { _web.Dispose(); } catch { }
+            _web = null;
+        }
+        if (_authUser.Length > 0) _user.Text = _authUser;
+        if (_authPass.Length > 0) _pass.Text = _authPass;
+        _err.ForeColor = Color.FromArgb(217, 45, 32);
+        _err.Text = why;
+        _go.Enabled = true;
+        _login.Visible = true;
+        _login.Enabled = true;
+        _login.BringToFront();
+        try { Activate(); } catch { }
+        AppHost.Log("seat-lost " + why.Substring(0, Math.Min(12, why.Length)));
     }
 
     private void WatchLogout()
@@ -2016,8 +2053,9 @@ internal sealed class ShellForm : Form
             _logoutWatch = null;
         }
         AppHost.ClearLogin();
-        AppHost.QuitLease(_personal, _org, _leaseWatch);
+        var oldWatch = _leaseWatch;
         _leaseWatch = null;
+        AppHost.QuitLease(_personal, _org, oldWatch);
         AppHost.StopDeskNode();
         if (_web != null)
         {
