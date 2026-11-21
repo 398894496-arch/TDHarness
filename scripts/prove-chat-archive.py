@@ -62,7 +62,7 @@ def main() -> None:
     rows = [
         {"id": 3, "topic": "p2pBL", "at": "2026-11-20T01:05:00", "content": {"txt": "", "fmt": [{"at": -1, "len": 0, "key": 0}], "ent": [ex("销售合同:澳洲.pdf")]},
          "from_tags": tags["boss"], "member_tags": [tags["boss"], tags["lfh"]], "files": [{"loc": str(uploads / "f1")}], "topic_public": None},
-        {"id": 5, "topic": "grpS", "at": "2026-11-20T02:00:00", "content": {"txt": " ", "ent": [{"tp": "IM", "data": {"mime": "image/png", "ref": "/v0/file/s/p.png"}}]},
+        {"id": 5, "topic": "grpS", "at": "2026-11-20T02:00:00", "content": {"txt": " ", "ent": [{"tp": "IM", "data": {"mime": "image/png", "ref": "/v0/file/s/p.png", "val": base64.b64encode(b"tiny preview").decode()}}]},
          "from_tags": tags["wang"], "member_tags": [tags["boss"], tags["lfh"], tags["wang"], tags["gone"]], "files": [{"loc": str(uploads / "f3")}],
          "topic_public": {"fn": "销售群"}},
         {"id": 6, "topic": "p2pLW", "at": "2026-11-20T03:00:00", "content": {"txt": "两个", "ent": [ex("资料.zip"), {"tp": "IM", "data": {"mime": "image/png", "val": pic}}]},
@@ -112,7 +112,7 @@ def main() -> None:
     check(got == want, "the files where they belong:\n%s\nwant:\n%s" % ("\n".join(got), "\n".join(want)))
     check(not (company / "emp-gone").exists(), "a disabled member gets nothing")
     check((company / "_office/聊天文件/图片/2026-11/梁风禾 与 王伟/1120-1100 梁风禾 图片.png").read_bytes() == b"\x89PNG inline", "the picture kept in the message")
-    check((company / "emp-wang/聊天文件/图片/2026-11/销售群/1120-1000 王伟 图片.png").read_bytes() == b"\x89PNG group pic", "the uploaded picture")
+    check((company / "emp-wang/聊天文件/图片/2026-11/销售群/1120-1000 王伟 图片.png").read_bytes() == b"\x89PNG group pic", "the uploaded picture, not its preview")
     check(out == {"rows": 7, "files": 6, "copies": 13, "unreadable": 1}, "the counts: %s" % out)
     check(json.loads((rt / "chat-archive-state.json").read_text())["last_id"] == 12, "where it got to")
     out = ca.run_once(cfg, rt, people, office, bots)
