@@ -1221,7 +1221,7 @@
 	function App() {
 		useBump();
 		const narrow = useNarrow();
-		if (S.status === "noauth") return h("div", { className: "full-note" }, "聊天没登录上。", h("br"), "请从 TDH 左栏或右侧栏的「聊天」打开。");
+		if (S.status === "noauth") return h("div", { className: "full-note" }, "聊天没登录上。", h("br"), "请从 TDH 窗口最右边的聊天栏，或左栏的「聊天」打开。");
 		if (S.status === "error") return h("div", { className: "full-note" }, "聊天出错了：" + S.error, h("br"), h("button", { className: "btn", style: { marginTop: "12px" }, onClick: () => location.reload() }, "重新打开"));
 		if (S.status === "connecting" && !S.meId) return h("div", { className: "full-note" }, "正在打开聊天…");
 		return h("div", { className: "app" + (narrow ? " narrow" : "") },
