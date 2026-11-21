@@ -212,8 +212,9 @@ def _run(company, runtime, people, now, dry, model, ask, tell) -> dict:
             out["seen"] += 1
             rel = f.relative_to(company).as_posix()
             stamp = [st.st_size, int(st.st_mtime)]
-            if (done.get(rel) or {}).get("stamp") == stamp or (review.get(rel) or {}).get("stamp") == stamp:
-                continue
+            r0 = review.get(rel) or {}
+            if (done.get(rel) or {}).get("stamp") == stamp or (r0.get("stamp") == stamp and (model is None or r0.get("model_tried"))):
+                continue                                  # a file noted before the model sorted: tried once more, by it
             if (declined.get(rel) or {}).get("stamp") == stamp:
                 continue
             if (asks.get(rel) or {}).get("stamp") == stamp:
@@ -241,7 +242,8 @@ def _run(company, runtime, people, now, dry, model, ask, tell) -> dict:
                         out["asked"] += 1
                         continue
             if not ok(got):
-                review[rel] = {"stamp": stamp, "who": name, "why": "认不出该放哪个区、哪个分类" if not got else "那个区或分类不在"}
+                review[rel] = {"stamp": stamp, "who": name, "why": "认不出该放哪个区、哪个分类" if not got else "那个区或分类不在",
+                               "model_tried": model is not None}
                 out["review"] += 1
                 continue
             review.pop(rel, None)
