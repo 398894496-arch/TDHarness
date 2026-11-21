@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import urllib.request as urllib_request
+from html import escape as html_escape
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -31,6 +32,7 @@ import chat_docs  # noqa: E402
 import erp_sso  # noqa: E402
 import erp_data  # noqa: E402
 import kb_organize  # noqa: E402
+import drawing_watch  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
 ROSTER = Path(os.environ.get("TDH_ROSTER") or str(ROOT / "runtime" / "roster.json"))
@@ -2768,12 +2770,24 @@ def daily_report_once(force: bool = False, dry: bool = False, day: str | None = 
         out = daily_report.run(cfg, people, depts, ROOT / "brain", cards, token, now,
                                _date.fromisoformat(day) if day else None)
         files, sent = [], []
+        # company-drawing-watch-v1: who opened or downloaded the mould drawings, for those told (田总) only.
+        watch = drawing_watch.config(TOKEN_STORE.parent)
+        extra = None
+        if watch.get("to") and os.environ.get("TDH_DRAWING_WATCH", "1") != "0":
+            try:
+                extra = drawing_watch.section(ROOT / "company", TOKEN_STORE.parent, people, _date.fromisoformat(out["day"]))
+            except Exception as e:  # noqa: BLE001 - the report goes out without it
+                extra = {"title": "模具图纸查看", "lines": ["这一节没取到（%s）。" % type(e).__name__]}
         for login in ([only] if only else cfg["to"]):
             row = people.get(login)
             if not row:
                 sent.append({"to": login, "ok": False, "why": "not-in-roster"})
                 continue
-            f = daily_report.write_page(row.get("personal") or "", out["day"], out["html"])
+            mine = extra if extra and login in watch["to"] else None
+            text = out["text"] + (("\n【%s】\n" % mine["title"]) + "\n".join("  " + x for x in mine["lines"]) if mine else "")
+            page = out["html"].replace("</main></body></html>", "<h2>%s</h2><ul>%s</ul></main></body></html>" % (
+                html_escape(mine["title"]), "".join("<li>%s</li>" % html_escape(x) for x in mine["lines"]))) if mine else out["html"]
+            f = daily_report.write_page(row.get("personal") or "", out["day"], page)
             rel = ""
             if f is not None:
                 try:
@@ -2782,7 +2796,7 @@ def daily_report_once(force: bool = False, dry: bool = False, day: str | None = 
                     rel = f.name
                 files.append(rel)
             if not dry:
-                r = chat_send(cfg["from"], login, out["text"] + ("\n完整日报：个人文件夹 › 日报 › %s.html" % out["day"]))
+                r = chat_send(cfg["from"], login, text + ("\n完整日报：个人文件夹 › 日报 › %s.html" % out["day"]))
                 sent.append({"to": login, "ok": bool(r.get("ok")), "why": r.get("why", "")})
         if not dry and not day and not only:
             state = {"day": now.strftime("%Y-%m-%d"), "sent": sent, "at": now.isoformat(timespec="seconds")}
