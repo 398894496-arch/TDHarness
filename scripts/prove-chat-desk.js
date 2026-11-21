@@ -9,6 +9,10 @@
 //     chat is not on screen pops up in the window (打开 opens the chat panel); while the window is in the
 //     background the host is asked for the system's notification; old messages from before the page loaded are
 //     not announced.
+//   - company-erp-desk-v1: ERPNext under 聊天 (sidebar.panellist "company-erp", order after 聊天, for every role) and
+//     its page (main, keyed "company-erp"): it asks this desk's host to open ERPNext (POST /company/erp/open with the
+//     desk page's header) and says it is open, with 再打开一次; a site that is not set up or a stale login say so,
+//     with 重试.
 // Prints CHAT_DESK_PROVE_OK=1.
 "use strict";
 const assert = require("node:assert/strict");
@@ -50,6 +54,7 @@ const React = {
 	Fragment: "Fragment",
 };
 
+let exp0 = null;
 function load(o) {
 o = o || {};
 let mod = null;
@@ -75,6 +80,7 @@ const sandbox = {
 vm.runInNewContext(fs.readFileSync(CLIENT, "utf8"), sandbox, { filename: "client.js" });
 assert.ok(mod, "client.js registers its module");
 const exp = mod.factory((name) => (name === "react" ? React : anything));
+exp0 = exp;
 // company-panels-for-all-v1: an employee's left column has 工件、定时任务、聊天; only 插件 is the admin's.
 {
 	const rows = [{ id: "plugins" }, { id: "artifacts" }, { id: "schedules" }, { id: "company-chat" }];
@@ -267,6 +273,40 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 	pop = popup();
 	assert.match(text(pop), /「报价群」有新消息（共 2 条）/, "a group, several at once");
 	assert.equal(badgeOf(), "4");
+	// company-erp-desk-v1
+	const erpPanel = regs.find((x) => x.opts.name === "sidebar.panellist" && x.opts.id === "company-erp");
+	const chatPanel = regs.find((x) => x.opts.name === "sidebar.panellist" && x.opts.id === "company-chat");
+	assert.ok(erpPanel && erpPanel.opts.label() === "ERPNext", "ERPNext in the left column");
+	assert.ok(erpPanel.opts.order > chatPanel.opts.order, "under 聊天");
+	assert.equal(flat(erpPanel.Comp({ size: 18 })).type, "svg");
+	assert.deepEqual(Array.from(exp0.panelsForRole("employee", [{ id: "plugins" }, { id: "company-chat" }, { id: "company-erp" }]), (r) => r.id),
+		["company-chat", "company-erp"], "every role has ERPNext");
+	const erpMain = regs.find((x) => x.opts.name === "main" && x.opts.key === "company-erp");
+	assert.ok(erpMain, "its page in the main area");
+	let erpAsk = null;
+	tree = render(erpMain.Comp, (url, opts) => {
+		erpAsk = { url, opts };
+		return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+	});
+	assert.match(text(tree), /正在用你的 TDH 账号打开 ERPNext/);
+	effects.forEach((fn) => fn());
+	await new Promise((r) => setImmediate(r));
+	await new Promise((r) => setImmediate(r));
+	assert.equal(erpAsk.url, "/company/erp/open", "asks this desk's host");
+	assert.equal(erpAsk.opts.method, "POST");
+	assert.equal(erpAsk.opts.headers["X-TDH-ERP"], "1", "with the desk page's header");
+	tree = rerender(erpMain.Comp);
+	assert.match(text(tree), /ERPNext 已在浏览器里打开/);
+	assert.ok(byText(tree, "再打开一次"), "and can open it again");
+	for (const [error, says] of [["erp-off", /ERPNext 还没接好/], ["bad-token", /TDH 的登录过期了/], ["", /连不上公司服务器/]]) {
+		tree = render(erpMain.Comp, () => Promise.resolve({ ok: false, json: () => Promise.resolve({ ok: false, error }) }));
+		effects.forEach((fn) => fn());
+		await new Promise((r) => setImmediate(r));
+		await new Promise((r) => setImmediate(r));
+		tree = rerender(erpMain.Comp);
+		assert.match(text(tree), says, "says why: " + error);
+		assert.ok(byText(tree, "重试"));
+	}
 	console.log("CHAT_DESK_PROVE_OK=1");
 })().catch((err) => {
 	console.error(err);

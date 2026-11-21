@@ -1,0 +1,5 @@
+# company-erp-sso-v1: the desk's ERPNext entry asks the people service for a one-time login link (its other routes,
+# the login itself, are reached at https://<erp host>/tdh-sso/ through Tailscale Serve, not here).
+handle /company/ext/erp/ticket {
+	reverse_proxy 127.0.0.1:4181
+}

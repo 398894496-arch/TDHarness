@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import https from "node:https";
 import http from "node:http";
@@ -2320,6 +2320,31 @@ export async function companyExtCall(args, root) {
 	return { ok: out.status < 400 && j.ok !== false, status: out.status, value: j };
 }
 
+// company-erp-desk-v1: the desk's ERPNext entry. The site gives a one-time link (POST /company/ext/erp/ticket with
+// this person's login token) that logs them in to ERPNext with their TDH account; only such a link (https, the
+// /tdh-sso/start address, a ticket) is opened, in the system's browser, never through a shell.
+const ERP_START_RE = /^https:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?\/tdh-sso\/start\?t=[A-Za-z0-9_-]{8,80}$/;
+
+export function openInBrowser(url, platform = process.platform) {
+	if (platform === "darwin") execFile("open", [url], () => {});
+	else if (platform === "win32") execFile("rundll32.exe", ["url.dll,FileProtocolHandler", url], { windowsHide: true }, () => {});
+	else execFile("xdg-open", [url], () => {});
+}
+
+export async function erpOpen(call = companyExtCall, open = openInBrowser, platform = process.platform) {
+	let out = null;
+	try {
+		out = await call({ pack: "erp", route: "/ticket", body: {} });
+	} catch {
+		out = null;
+	}
+	const v = (out && out.value) || {};
+	const url = String(v.url || "");
+	if (!out || !out.ok || !ERP_START_RE.test(url)) return { ok: false, error: String(v.error || "ticket") };
+	open(url, platform);
+	return { ok: true };
+}
+
 function registerExtTool(ctx) {
 	const tools = typeof ctx.get === "function" ? ctx.get("tools") : ctx.tools;
 	if (tools == null || typeof tools.register !== "function") return;
@@ -2543,6 +2568,20 @@ export function apply(ctx) {
 				}
 				res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
 				res.end(JSON.stringify({ ok: shown }));
+			},
+		}),
+	);
+	// company-erp-desk-v1: ERPNext, opened in the browser with this person's TDH account. Only for the desk page (a
+	// header a page elsewhere cannot send here without asking first).
+	ctx.effect(() =>
+		web.register({
+			kind: "exact",
+			path: "/company/erp/open",
+			handler: async (req, res) => {
+				const ok = req.headers["x-tdh-erp"] === "1" && String(req.method || "").toUpperCase() === "POST";
+				const out = ok ? await erpOpen() : { ok: false, error: "header" };
+				res.writeHead(out.ok ? 200 : ok ? 502 : 403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+				res.end(JSON.stringify(out));
 			},
 		}),
 	);

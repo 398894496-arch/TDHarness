@@ -7149,6 +7149,74 @@ window.__ModuleLoader__.load({
 		function ChatPage() {
 			return React.createElement(ChatFrame);
 		}
+
+		// company-erp-desk-v1: ERPNext (on the company server, the tailnet only) under 聊天 in the left column. A page in
+		// the desk cannot hold it (ERPNext refuses frames, and its login would not stay there), so this desk's host asks
+		// the site for a one-time link that logs the person in with their TDH account and opens it in the browser.
+		const ERP_PANEL = "company-erp";
+		const ERP_WHY = {
+			"erp-off": "ERPNext 还没接好，请找管理员。",
+			"bad-token": "TDH 的登录过期了，请重新打开 TDH 再试。",
+			"header": "这个页面不能打开 ERPNext。",
+		};
+		function erpOpen() {
+			return fetch("/company/erp/open", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Accept": "application/json", "X-TDH-ERP": "1" }
+			}).then(function (res) {
+				return res.json().then(function (j) {
+					if (res.ok && j && j.ok) return true;
+					throw new Error((j && j.error) || "open");
+				});
+			});
+		}
+		function ErpGlyph(props) {
+			const size = (props && props.size) || 16;
+			return React.createElement("svg", {
+				width: size, height: size, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3,
+				strokeLinejoin: "round", strokeLinecap: "round", "aria-hidden": true
+			},
+				React.createElement("rect", { x: 2, y: 2.5, width: 12, height: 11, rx: 1.5 }),
+				React.createElement("path", { d: "M2 6h12M6 6v7.5M8.5 8.5h3M8.5 11h3" })
+			);
+		}
+		function ErpPage() {
+			const [state, setState] = React.useState("opening");
+			const [why, setWhy] = React.useState("");
+			const [round, setRound] = React.useState(0);
+			React.useEffect(function () {
+				let live = true;
+				setState("opening");
+				erpOpen().then(function () {
+					if (live) setState("opened");
+				}, function (err) {
+					if (!live) return;
+					setWhy(ERP_WHY[String((err && err.message) || "")] || "没打开：这台电脑连不上公司服务器，或 ERPNext 没在运行。");
+					setState("failed");
+				});
+				return function () { live = false; };
+			}, [round]);
+			const line = state === "opening" ? "正在用你的 TDH 账号打开 ERPNext…"
+				: state === "opened" ? "ERPNext 已在浏览器里打开，用的是你的 TDH 账号。" : why;
+			return React.createElement("div", {
+				"data-company-erp": state,
+				style: {
+					width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+					gap: 12, background: T.base, color: T.label2, fontFamily: FONT, fontSize: 13, textAlign: "center", padding: 24, boxSizing: "border-box"
+				}
+			},
+				React.createElement(ErpGlyph, { size: 28 }),
+				React.createElement("div", { style: { color: T.label, fontSize: 15, fontWeight: 600 } }, "ERPNext"),
+				React.createElement("div", null, line),
+				state === "opening" ? null : React.createElement(P.Button, {
+					variant: "outline",
+					size: "sm",
+					type: "button",
+					onClick: function () { setRound(round + 1); }
+				}, state === "opened" ? "再打开一次" : "重试")
+			);
+		}
 		function ChatTab() {
 			return React.createElement(ChatFrame);
 		}
@@ -7238,6 +7306,22 @@ window.__ModuleLoader__.load({
 				ctx.workspaces.list.subscribe(function () { pulse(); });
 			}
 
+			// company-erp-desk-v1: ERPNext under 聊天 (opens in the browser, logged in with the TDH account).
+			ctx.slots.inject("main", function () {
+				return ctx.slots.register({
+					name: "main",
+					key: ERP_PANEL
+				}, ErpPage);
+			});
+			ctx.slots.inject("sidebar.panellist", function () {
+				return ctx.slots.register({
+					name: "sidebar.panellist",
+					id: ERP_PANEL,
+					order: 31,
+					label: function () { return "ERPNext"; }
+				}, ErpGlyph);
+			});
+
 			// company-chat-desk-v1: 聊天, the company chat (Tinode on the site), as a panel in the left column and
 			// as a right-sidebar tab. Both show the chat page this desk's host relays (chat-relay.js), on a port of
 			// its own: a separate origin from this page, already logged in as the person at this desk.
@@ -7296,7 +7380,7 @@ window.__ModuleLoader__.load({
 			// Global panels (the official plugin manager registers "plugins" here).
 			// The shipped sidebar row used to list them; ours does now, above the
 			// workspaces, the same way.
-			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务", "company-chat": "聊天" };
+			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务", "company-chat": "聊天", "company-erp": "ERPNext" };
 			const panelSubs = new Set();
 			let panelRows = [];
 			function syncPanels() {
