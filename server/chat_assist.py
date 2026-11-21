@@ -48,7 +48,7 @@ KIND_NAMES = {"cash": "资金", "progress": "生产进度", "market": "原料行
 # What TDH has of each kind, so that an answer it cannot give says what is missing (company-chat-assist-v1, 11-21:
 # 田总 asked "今天有哪些需要付款的事项?" and TDH, with no 付款计划, said nothing at all).
 KIND_HAS = {"cash": "财务拖进 TDH 的银行收付款表：各户余额、某天的收付、大额流水、手上的承兑、付了款没收到票和收了款没开票的金额；"
-                    "没有付款计划、应付账款、应收账期",
+                    "聊天里认出的付款计划、没对上回单的账单、付款任务卡（「要付的款」）；没有应收账期",
             "progress": "排产员拖进 TDH 的生产日报、排产明细、计划单：每张计划单做了多少、还差多少、预计哪天做完；没有库存、发货单",
             "market": "生意社公开基准价（TDI、MDI、PTMEG、莫卡、中厚板、热轧板卷）；不是公司的采购价"}
 ASK = re.compile(r"[?？]|多少|几[个张件天号点吨台套批]|[吗呢么嘛]|啥|什么|哪|怎么|怎样|如何|有没有|是不是|能不能|查一?下|看一?下|"
@@ -227,7 +227,7 @@ def decide(cfg: dict, token: str, asker: str, text: str, context: list, members:
         now.strftime("%Y-%m-%d"), WEEK[now.weekday()], now.strftime("%H:%M"), "、".join(members), asker, text,
         "\n".join("- " + c for c in context[-4:]) or "（没有）")
     if kind and data is not None:
-        user += "\n\nTDH 查到的%s（JSON）：\n%s" % (KIND_NAMES.get(kind, kind), json.dumps(data, ensure_ascii=False)[:6000])
+        user += "\n\nTDH 查到的%s（JSON）：\n%s" % (KIND_NAMES.get(kind, kind), json.dumps(data, ensure_ascii=False)[:9000])
     body = {"model": cfg["model"], "temperature": 0,
             "messages": [{"role": "system", "content": _system(bool(kind and data is not None), with_task, kind)}, {"role": "user", "content": user}]}
     if cfg.get("effort"):

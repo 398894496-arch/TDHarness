@@ -1776,6 +1776,13 @@ def notify_once(now_ms: int | None = None) -> list:
             r = (r + " " if r else "") + ("chat-sent" if c.get("ok") else "chat-%s" % c.get("why"))
         notify.log(runtime, n["to"], n["kind"], n["ticket"], r)
         done.append((n["to"], n["kind"], n["ticket"], r))
+    if chat:
+        try:
+            for x in _plan_notices(people):
+                notify.log(runtime, x[0], x[1], x[2], x[3])
+                done.append(x)
+        except (OSError, ValueError) as e:
+            notify.log(runtime, "-", "plan", "-", "error-" + type(e).__name__)
     if not wc.on:
         return done
     now = (now_ms or int(time.time() * 1000)) / 1000
@@ -2107,7 +2114,7 @@ def _docs_row(row: dict, people: dict, links: dict, cfg: dict, token: str, state
     d = _docs_ctx(people)
     if not sender or sender in CHAT_BOTS or not (set(members) & d["fin"]):
         return
-    pics = chat_docs.pictures(row)
+    pics = chat_docs.papers(row)
     if not pics:
         return
     name = lambda x: (people.get(x) or {}).get("name") or x
@@ -2116,6 +2123,7 @@ def _docs_row(row: dict, people: dict, links: dict, cfg: dict, token: str, state
     chat = (pub.get("fn") or "群聊") if topic.startswith("grp") else " 与 ".join(name(m) for m in members)
     c = {"topic": topic, "seq": int(row.get("seq") or 0), "sender": sender, "members": members, "mentions": []}
     deciders = sorted({sender} | (set(members) & d["fin"]))
+    chat_cards = {k for k, v in (state.get("chat_cards") or {}).items() if v.get("topic") == topic}
     for pic in pics:
         if int(state.get("calls") or 0) >= int(cfg["max_per_day"]):
             out["skipped"]["day-limit"] = out["skipped"].get("day-limit", 0) + 1
@@ -2127,6 +2135,9 @@ def _docs_row(row: dict, people: dict, links: dict, cfg: dict, token: str, state
             continue
         f = act["fields"]
         meta = {"when": chat_docs.when_of(row), "chat": chat, "sender": sender, "msg": row.get("id")}
+        seen = _ASSIST_CTX.setdefault(topic, [])          # so that "安排付款" after it is about this bill
+        seen.append("%s：%s" % (name(sender), chat_docs.said_seen(f, d["ours"])))
+        del seen[:-6]
         if act["action"] == "save":
             dup = d["ledger"].duplicate(f)
             if dup:
@@ -2134,7 +2145,8 @@ def _docs_row(row: dict, people: dict, links: dict, cfg: dict, token: str, state
                 out["docs_dup"] = out.get("docs_dup", 0) + 1
                 continue
             line = d["ledger"].file_in(pic, f, meta, d["copies"], d["ours"])
-            r = _docs_post(c, "doc-saved", chat_docs.said_filed(line), links, deciders)
+            extra = _docs_card_link(line, sender, people, members, d, chat_cards)
+            r = _docs_post(c, "doc-saved", chat_docs.said_filed(line).replace("存错了点「撤销」。", extra + "存错了点「撤销」。"), links, deciders)
             if r.get("ok") and r.get("seq"):
                 state.setdefault("pending", {})["%s:%s" % (topic, r["seq"])] = {"type": "doc-saved", "line": line["id"], "deciders": deciders,
                                                                                "poster": r["poster"], "post_topic": r["post_topic"], "seq": r["seq"], "at": time.time()}
@@ -2148,14 +2160,142 @@ def _docs_row(row: dict, people: dict, links: dict, cfg: dict, token: str, state
                 state.setdefault("pending", {})["%s:%s" % (topic, r["seq"])] = {
                     "type": "doc-ask", "fields": f, "hold": str(hold), "name": pic["name"], "mime": pic["mime"], "deciders": deciders,
                     "chat": chat, "sender": sender, "msg": row.get("id"), "when": meta["when"].isoformat(), "poster": r["poster"],
-                    "post_topic": r["post_topic"], "seq": r["seq"], "at": time.time(), "topic": topic, "members": members}
+                    "post_topic": r["post_topic"], "seq": r["seq"], "at": time.time(), "topic": topic, "members": members,
+                    "chat_cards": sorted(chat_cards)}
             out["docs_asked"] = out.get("docs_asked", 0) + 1
+
+
+def _docs_card_link(line: dict, sender: str, people: dict, members: list, d: dict, chat_cards: set) -> str:
+    """company-chat-docs-v2: a payment receipt goes on the open 付款 task card it is for (chat_docs.card_for). Sent by
+    the card's assignee: the receipt is uploaded to the card and the card handed in, so its issuer approves it; sent
+    by its issuer: uploaded and noted. What to add to the chat's words ("" when nothing was done, or when someone in
+    the chat may not see that card)."""
+    if line.get("kind") != "付款回单":
+        return ""
+    who = people.get(sender)
+    if who is None:
+        return ""
+    with BOARD_MU:
+        try:
+            cards = BOARD.load()["tickets"]
+        except (OSError, ValueError, ticket_board.Refused):
+            return ""
+        card = chat_docs.card_for(line, cards, d["ours"], chat_cards, int(time.time() * 1000))
+        if card is None or not BOARD.can_see(who, card):
+            return ""
+        may = BOARD.abilities(who, card)
+        if not may["files"]:
+            return ""
+        try:
+            raw = (d["ledger"].root / line["file"]).read_bytes()
+        except OSError:
+            return ""
+        said = "付款回单已到：%s，%s 元%s（TDH 助手从聊天里认出这张回单，附在卡上）。" % (
+            line.get("summary") or "付款回单", chat_docs.yuan(line.get("amount")) or "?", ("，" + line["date"]) if line.get("date") else "")
+        try:
+            BOARD.apply("upload", who, people, {"ticket": card["id"], "name": "付款回单 " + os.path.basename(line["file"]),
+                                                "content": base64.b64encode(raw).decode()})
+            now = BOARD.find(BOARD.load()["tickets"], card["id"])
+            up = str(((now.get("files") or [{}])[-1]).get("path") or "")
+            if may["submit"]:
+                BOARD.apply("submit", who, people, {"ticket": card["id"], "summary": ((now.get("summary") or "") + "\n" + said).strip()})
+                how = "submitted"
+            else:
+                BOARD.apply("comment", who, people, {"ticket": card["id"], "text": said})
+                how = "attached"
+        except (ticket_board.Refused, OSError, ValueError):
+            return ""
+    d["ledger"].note(line["id"], card=card["id"], card_how=how, card_file=up)
+    if not all(m in (card.get("from"), card.get("to")) for m in members):
+        return ""
+    if how == "submitted":
+        boss = (people.get(card.get("from")) or {}).get("name") or card.get("from")
+        return "回单已附在任务卡「%s」上，交给%s验收。" % (card.get("title"), boss) if card.get("from") != card.get("to") else "回单已附在任务卡「%s」上，已提交。" % card.get("title")
+    return "回单已附在任务卡「%s」上。" % card.get("title")
+
+
+def _docs_card_unlink(row: dict, people: dict) -> None:
+    """Undo of a receipt put on a card: handed back (if it is still waiting and was handed in for it), taken off, noted."""
+    cid = row.get("card")
+    who = people.get(row.get("sender") or "")
+    if not cid or who is None:
+        return
+    with BOARD_MU:
+        try:
+            card = BOARD.find(BOARD.load()["tickets"], cid)
+            if row.get("card_how") == "submitted" and card.get("state") == "待审批" and card.get("submitted_by") == row.get("sender"):
+                BOARD.apply("withdraw", who, people, {"ticket": cid})
+            if row.get("card_file"):
+                try:
+                    BOARD.apply("detach-file", who, people, {"ticket": cid, "path": row["card_file"]})
+                except ticket_board.Refused:
+                    pass
+            BOARD.apply("comment", who, people, {"ticket": cid, "text": "这张付款回单在聊天里撤销了，已从卡上取下。"})
+        except (ticket_board.Refused, OSError, ValueError):
+            pass
+
+
+def _docs_payables(people: dict, members: list) -> dict:
+    """company-chat-docs-v2: what there is to pay, for a 资金 question: the newest 付款计划, the bills with no receipt,
+    and the open 付款 task cards that everyone in this chat may see (a card is its issuer's and assignee's only)."""
+    d = _docs_ctx(people)
+    cards = []
+    try:
+        with BOARD_MU:
+            rows = BOARD.load()["tickets"]
+    except (OSError, ValueError, ticket_board.Refused):
+        rows = []
+    for c in rows:
+        if c.get("state") in ticket_board.CLOSED_STATES or c.get("archived"):
+            continue
+        if not chat_docs.PAY_RE.search((c.get("title") or "") + " " + (c.get("assignment") or "")):
+            continue
+        if not members or not all(m in (c.get("from"), c.get("to")) for m in members):
+            continue
+        cards.append({"任务": c.get("title"), "负责人": (people.get(c.get("to")) or {}).get("name") or c.get("to"),
+                      "截止": ticket_board.fmt_ms(int(c.get("due") or 0)) if c.get("due") else "没定", "状态": c.get("state")})
+    name = lambda x: (people.get(x) or {}).get("name") or x
+    return chat_docs.payables(d["ledger"], d["ours"], cards, datetime.now().strftime("%Y-%m-%d"), name)
+
+
+def _plan_notices(people: dict) -> list:
+    """company-chat-docs-v2: the newest 付款计划's lines due today (or in the last three days, with no receipt), said
+    once a day in the chat to whoever sent the plan, from 9:00."""
+    runtime = TOKEN_STORE.parent
+    now = datetime.now()
+    if now.hour < int(os.environ.get("TDH_PLAN_HOUR") or 9) or not chat_assist.load_config(runtime).get("docs"):
+        return []
+    d = _docs_ctx(people)
+    sender, due = chat_docs.plan_due(d["ledger"], d["ours"], now.strftime("%Y-%m-%d"))
+    if not due or sender not in people or (people[sender].get("status") or "active") != "active":
+        return []
+    state_file = runtime / "plan-notify-state.json"
+    day = now.strftime("%Y-%m-%d")
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    told = set(state.get("told") or []) if state.get("day") == day else set()
+    fresh = [i for i in due if i["key"] not in told]
+    if not fresh:
+        return []
+    lines = ["· %s %s 元%s（应付 %s%s）" % (i.get("payee") or "?", chat_docs.yuan(i.get("amount")) or "?", ("，" + i["note"]) if i.get("note") else "",
+                                        i["due"][5:], "，已过 %d 天" % i["late"] if i["late"] else "") for i in fresh]
+    r = chat_send("tdh-assist", sender, "⏰ 付款计划里到期还没见到回单的：\n" + "\n".join(lines) + "\n付了把回单发在聊天里，我会对上。")
+    if r.get("ok"):
+        state = {"day": day, "told": sorted(told | {i["key"] for i in fresh})}
+        tmp = state_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        os.replace(tmp, state_file)
+    return [(sender, "plan", i["key"], "chat-sent" if r.get("ok") else "chat-%s" % r.get("why")) for i in fresh]
 
 
 def _docs_decided(p: dict, ok: dict, people: dict, links: dict, out: dict) -> None:
     d = _docs_ctx(people)
     if p["type"] == "doc-saved":
+        row = next((r for r in d["ledger"].rows() if r.get("id") == p["line"]), {})
         if ok.get("ok") is False and d["ledger"].undo(p["line"]):
+            _docs_card_unlink(row, people)
             chat_post(p["poster"], p["post_topic"], chat_assist.PREFIX + "已撤销，这张单据不再算在财务里。",
                       {"tdh_ai": {"v": 1, "of": p["seq"], "kind": "doc-note"}})
             out["docs_undone"] = out.get("docs_undone", 0) + 1
@@ -2177,7 +2317,8 @@ def _docs_decided(p: dict, ok: dict, people: dict, links: dict, out: dict) -> No
         hold.unlink()
     except OSError:
         pass
-    chat_post(p["poster"], p["post_topic"], chat_assist.PREFIX + chat_docs.said_filed(line).replace("存错了点「撤销」。", ""),
+    extra = _docs_card_link(line, p["sender"], people, p.get("members") or [], d, set(p.get("chat_cards") or []))
+    chat_post(p["poster"], p["post_topic"], chat_assist.PREFIX + chat_docs.said_filed(line).replace("存错了点「撤销」。", extra),
               {"tdh_ai": {"v": 1, "of": p["seq"], "kind": "doc-note"}})
     out["docs_filed"] = out.get("docs_filed", 0) + 1
 
@@ -2197,6 +2338,11 @@ def _assist_decided(state: dict, topic: str, who: str, ok: dict, people: dict, o
         out["declined"] = out.get("declined", 0) + 1
         return
     tid, why = _assist_card(p, people)
+    if tid:
+        made = state.setdefault("chat_cards", {})
+        made[tid] = {"topic": topic, "at": time.time()}
+        for k in [k for k, v in made.items() if time.time() - float(v.get("at") or 0) > 30 * 86400]:
+            del made[k]
     owner = (people.get(p["owner"]) or {}).get("name") or p["owner"]
     text = ("已记成任务卡「%s」：负责人 %s，截止 %s。到期前我会在聊天里提醒。" % (p["what"], owner, chat_assist.due_text(p["due"])) if tid
             else "这张任务卡没建成（%s），请在 TDH 的任务卡里自己建一张。" % why)
@@ -2277,6 +2423,11 @@ def chat_assist_once() -> dict:
                     continue
                 kind = data_kinds[0] if data_kinds else None
                 data = chat_assist.pack_data(cfg, token, kind, c["text"]) if kind else None
+                if kind == "cash" and cfg.get("docs"):
+                    try:
+                        data = dict({"要付的款": _docs_payables(people, c["members"])}, **(data or {}))   # first: the JSON is cut at its end
+                    except (OSError, ValueError) as e:
+                        skip("payables-" + type(e).__name__)
                 if data is None and not with_task:
                     skip("no-data")
                     continue
