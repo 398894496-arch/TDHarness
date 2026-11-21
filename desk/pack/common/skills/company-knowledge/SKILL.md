@@ -2,7 +2,6 @@
 name: company-knowledge
 description: One company_knowledge lookup. route=search. On not-found, web_search once.
 whenToUse: 查公司, 手册.
-disable-model-invocation: true
 ---
 
 # company-knowledge

@@ -2,7 +2,6 @@
 name: company-docs
 description: Read current official docs before guessing APIs or vendor behavior. Use when the user says latest, official, or a versioned tool changed.
 whenToUse: official docs, API drift, 最新, 官方文档.
-disable-model-invocation: true
 ---
 
 # company-docs

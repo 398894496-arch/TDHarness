@@ -2,7 +2,6 @@
 name: company-web
 description: How this complete agent splits public pages and OpenCLI click.
 whenToUse: 公开网, 打开网址, 浏览器.
-disable-model-invocation: true
 ---
 
 # company-web

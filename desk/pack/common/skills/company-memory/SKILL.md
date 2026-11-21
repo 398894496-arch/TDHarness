@@ -2,7 +2,6 @@
 name: company-memory
 description: Write company-disk memory. Load only when writing.
 whenToUse: 记住, 写入记忆.
-disable-model-invocation: true
 ---
 
 # company-memory
