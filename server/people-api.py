@@ -870,7 +870,7 @@ _TINODE_MU = threading.Lock()
 # in a chat of its own (TDH早报), not from a person. Only this server logs in as one (one-time tickets, never a
 # password or a desk token); a bot opens no directory, so it is in nobody's contacts until it writes to them. No one
 # can be added to the roster under a bot's login. TDH助手 posts TDH 助手's answers in groups (company-chat-assist-v1).
-CHAT_BOTS = {"tdh-daily": "TDH早报", "tdh-assist": "TDH助手"}
+CHAT_BOTS = {"tdh-daily": "TDH晚报", "tdh-assist": "TDH助手"}   # company-evening-report-v1: 早报 became 晚报 (2026-11-21)
 
 
 def _tinode_links() -> dict:
@@ -1130,10 +1130,13 @@ def chat_names_sync() -> dict:
     except (OSError, ValueError):
         done = {}
     out: dict = {}
-    for row in public_people():
+    # The server's own senders too (company-evening-report-v1: TDH早报 renamed TDH晚报 must show so in the chat).
+    rows = [{"login": k, "name": v, "bot": True} for k, v in CHAT_BOTS.items()] + list(public_people())
+    for row in rows:
         login = str(row.get("login") or "")
         name = str(row.get("name") or "").strip()
-        if not login or login in CHAT_BOTS or not links.get(login) or not name or row.get("status", "active") != "active" or done.get(login) == name:
+        if not login or (login in CHAT_BOTS and not row.get("bot")) or not links.get(login) or not name \
+                or row.get("status", "active") != "active" or done.get(login) == name:
             continue
         try:
             r = chat_set_name(login, name)
@@ -2767,15 +2770,19 @@ def daily_report_once(force: bool = False, dry: bool = False, day: str | None = 
         except OSError:
             token = ""
         from datetime import date as _date
+        today_brain = None
+        if daily_report.evening(cfg) and not day:
+            today_brain = _day_so_far()
         out = daily_report.run(cfg, people, depts, ROOT / "brain", cards, token, now,
-                               _date.fromisoformat(day) if day else None)
+                               _date.fromisoformat(day) if day else None, today_brain)
         files, sent = [], []
         # company-drawing-watch-v1: who opened or downloaded the mould drawings, for those told (田总) only.
         watch = drawing_watch.config(TOKEN_STORE.parent)
         extra = None
         if watch.get("to") and os.environ.get("TDH_DRAWING_WATCH", "1") != "0":
             try:
-                extra = drawing_watch.section(ROOT / "company", TOKEN_STORE.parent, people, _date.fromisoformat(out["day"]))
+                extra = drawing_watch.section(ROOT / "company", TOKEN_STORE.parent, people, _date.fromisoformat(out["day"]),
+                                              since=out.get("since"), until=now if out.get("since") else None)
             except Exception as e:  # noqa: BLE001 - the report goes out without it
                 extra = {"title": "模具图纸查看", "lines": ["这一节没取到（%s）。" % type(e).__name__]}
         for login in ([only] if only else cfg["to"]):
@@ -2796,10 +2803,10 @@ def daily_report_once(force: bool = False, dry: bool = False, day: str | None = 
                     rel = f.name
                 files.append(rel)
             if not dry:
-                r = chat_send(cfg["from"], login, text + ("\n完整日报：个人文件夹 › 日报 › %s.html" % out["day"]))
+                r = chat_send(cfg["from"], login, text + ("\n完整%s：个人文件夹 › 日报 › %s.html" % ("晚报" if out.get("late") else "日报", out["day"])))
                 sent.append({"to": login, "ok": bool(r.get("ok")), "why": r.get("why", "")})
         if not dry and not day and not only:
-            state = {"day": now.strftime("%Y-%m-%d"), "sent": sent, "at": now.isoformat(timespec="seconds")}
+            state = {"day": now.strftime("%Y-%m-%d"), "slot": daily_report.slot(now, cfg), "sent": sent, "at": now.isoformat(timespec="seconds")}
             try:
                 state_file.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
             except OSError:
@@ -2812,6 +2819,28 @@ def daily_report_once(force: bool = False, dry: bool = False, day: str | None = 
         except OSError:
             pass
     return {"ok": True, "day": out["day"], "text": out["text"], "files": files, "sent": sent}
+
+
+def _day_so_far():
+    """company-evening-report-v1: today's evidence (L0) so far, in a scratch brain (runtime/daily-report-l0, made anew
+    each time), for the evening report; None when it cannot be made (the page then has the evening before only)."""
+    import shutil
+    import subprocess
+    scratch = TOKEN_STORE.parent / "daily-report-l0"
+    shutil.rmtree(scratch, ignore_errors=True)
+    node = os.environ.get("TDH_NODE") or shutil.which("node") or r"C:\Program Files\nodejs\node.exe"
+    env = {k: v for k, v in os.environ.items() if k.lower() not in ("http_proxy", "https_proxy", "all_proxy")}
+    env["NO_PROXY"] = "*"
+    try:
+        r = subprocess.run([node, str(Path(__file__).resolve().parent / "brain" / "day-so-far.js"), "--brain-root", str(scratch),
+                            "--source-brain", str(ROOT / "brain"), "--company-root", str(ROOT / "company"),
+                            "--people-roster", str(TOKEN_STORE.parent / "roster.json")],
+                           capture_output=True, timeout=900, env=env, cwd=str(ROOT))
+    except (OSError, subprocess.SubprocessError) as e:
+        sys.stderr.write("people-api day-so-far failed %s\n" % type(e).__name__)
+        return None
+    sys.stderr.write("people-api day-so-far rc=%d %s\n" % (r.returncode, r.stdout.decode("utf-8", "replace").strip()[-200:]))
+    return scratch if r.returncode == 0 else None
 
 
 def daily_report_loop() -> None:
