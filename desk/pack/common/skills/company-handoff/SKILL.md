@@ -2,7 +2,6 @@
 name: company-handoff
 description: Split ticket, hands, and acceptance.
 whenToUse: 下达, 验收, Hands vs Manager.
-disable-model-invocation: true
 ---
 
 # company-handoff

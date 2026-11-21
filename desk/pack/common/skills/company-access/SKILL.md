@@ -2,7 +2,6 @@
 name: company-access
 description: Split company shared memory and personal memory from shared skills and personal skills. Use when choosing a knowledge door, writing a skill, or deciding who can read what.
 whenToUse: 权限, 共享 skill, 谁能看.
-disable-model-invocation: true
 ---
 
 # company-access

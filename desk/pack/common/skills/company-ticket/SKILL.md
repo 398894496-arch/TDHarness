@@ -2,7 +2,6 @@
 name: company-ticket
 description: Company task cards on the shared disk.
 whenToUse: 上传下达, 任务卡, 做完了, 验收.
-disable-model-invocation: true
 ---
 
 # company-ticket

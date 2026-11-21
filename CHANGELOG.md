@@ -4,6 +4,34 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.20.8
+
+**左栏「聊天」下面多了 ERPNext；TDH 助手终于看得见公司技能，能读你本人的聊天**
+- **ERPNext 入口**（`company-erp-desk-v1`，电脑端，这一版起生效）：
+  - 左栏「聊天」下面多一个「ERPNext」，每个人都有。点一下，用系统浏览器打开公司的 ERPNext，用的是你的 TDH 账号，不用再输密码。
+  - 原理：桌面向服务器要一张两分钟内有效、只能用一次的登录链接，再交给浏览器打开；桌面只打开这种链接，不会打开别的地址。
+  - ERPNext 不放进 TDH 窗口里，是因为它不允许被嵌进别的页面，嵌进去也保不住登录。
+- **公司技能对 TDH 助手可见**（电脑端，这一版起生效）：
+  - 原因：安装包里的公司技能（任务卡、知识库、记忆、交接、部门、文档、网页、工具、权限、桌面操作）都带着 `disable-model-invocation: true`。内核的意思是「模型看不到，只能用户手打 `/名字`」，所以 TDH 助手从来没有主动用过它们。
+  - 修法：这 11 个去掉这个标记；`writing-artifacts` 不动，内核自己有一个同名的。`prove-erp-desk.mjs` 检查以后不再加回去。
+  - 服务器上的公司技能（读聊天、财务对账、生产进度、行情、报价、利润、订单、跟进）11-21 已改好，重启 TDH 就会生效。
+- **读你本人的聊天，写进 TDH 助手的固定规则**（`company-chat-history-prompt-v1`）：问到聊天记录、某人说了什么、群里在聊什么，它会先去查（`company_ext` 的 chat），不再说「看不到」。
+- 下面这些在服务器端，11-21 已上线，不用更新电脑端：
+  - **ERPNext 用 TDH 账号**（`company-erp-sso-v1`）：
+    - 名单里在职的人自动有 ERPNext 账号，权限按岗位先给一份默认的（`runtime/erp-roles.json`），以后再细调。离职或停用的同步停用。
+    - 登录用 TDH 的账号密码；从桌面入口进不用再输。ERPNext 里不存任何人的密码。
+    - 地址是 `https://tdharness.tail9c7cc7.ts.net`，只在公司私网（Tailscale）里能开。员工设备要能打开，Tailscale 访问规则里要放行 443。
+  - **TDH 助手在聊天里自动查数据**（`company-chat-assist-v1`）：
+    - 问到资金、生产进度、原料行情，它查好发在对话里，由被问的人点「确认无误」。
+    - 先过关键词门槛：闲聊、短句不调模型。资金只在聊天里每个人都有权看时才答。
+    - 答不了的，回一句缺什么资料、该谁上传。
+    - 模型默认用 gpt-6.2-sol 的 high 档。
+  - **聊天里说到要做的事，问一句要不要记成任务卡**（`company-chat-tasks-v1`）：点「记下」才建；任务卡到期前由「TDH助手」在聊天里提醒（以前只走企业微信，没配，所以一条都没发出过）。
+  - **每天的早报**由单独的「TDH早报」账号发，不再显示成管理员发的（`company-chat-bot-v1`）。
+  - **TDH 能读你本人的聊天**：列出聊天、读某个聊天、按词搜，只读，不标已读（`company-chat-read-v1`）。
+  - **聊天里打中文不再串拼音**（`company-chat-ime-v1`）。
+  - 原料行情：当天没搜到的品种，用 14 天内最近一次的价格；一个都没搜到时，半小时后重查。
+
 ## 2026.11.20.7
 
 **员工电脑左栏的「工件、定时任务、聊天」回来了**

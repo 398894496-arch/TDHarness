@@ -2,7 +2,6 @@
 name: company-tools
 description: Hands on this complete agent desk. Use when picking a tool.
 whenToUse: 用哪个工具, plugin add, skill.
-disable-model-invocation: true
 ---
 
 # company-tools
