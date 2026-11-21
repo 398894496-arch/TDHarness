@@ -152,8 +152,8 @@ def login_of(tags) -> str:
 def candidate(row: dict, bots) -> dict | None:
     """A new message from the database, if it is one to look at: who wrote it, who is in that chat, its words, kinds."""
     head = row.get("head") if isinstance(row.get("head"), dict) else {}
-    if head.get("tdh_ai") or head.get("tdh_ai_ok") or head.get("replace") or head.get("webrtc"):
-        return None
+    if head.get("tdh_ai") or head.get("tdh_ai_ok") or head.get("tdh_card") or head.get("replace") or head.get("webrtc"):
+        return None                                   # tdh_card: a task card said in the chat (company-chat-cards-v1)
     sender = login_of(row.get("from_tags"))
     if not sender or sender in bots:
         return None

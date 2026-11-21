@@ -351,6 +351,23 @@
 		return (v || msg).content;
 	}
 
+	// company-chat-cards-v1: a task card between the two people of a one-to-one chat (head tdh_card: what happened to
+	// it, said by the one who did it), drawn as a card in that person's bubble.
+	function cardOf(msg) {
+		const c = msg && msg.head && msg.head.tdh_card;
+		return c && typeof c === "object" && c.title ? c : null;
+	}
+	const CARD_EVENT = { issued: "下达了任务卡", submitted: "提交验收", passed: "验收通过", returned: "打回了", cancelled: "作废了", due: "改了截止时间" };
+	function cardBody(c) {
+		const due = c.due ? new Date(c.due) : null;
+		return h("div", { className: "tcard " + String(c.event || ""), "data-card": String(c.id || "") },
+			h("div", { className: "tc-top" }, h("span", { className: "tc-tag" }, "任务卡"), h("span", { className: "tc-ev" }, CARD_EVENT[c.event] || "")),
+			h("div", { className: "tc-title" }, String(c.title)),
+			h("div", { className: "tc-meta" }, "负责人 " + String(c.to || "") + (due ? " · 截止 " + (due.getMonth() + 1) + "月" + due.getDate() + "日 " + pad(due.getHours()) + ":" + pad(due.getMinutes()) : "")),
+			c.note ? h("div", { className: "tc-note" }, String(c.note)) : null,
+			h("div", { className: "tc-foot" }, "在 TDH 左栏「任务」里查看和处理"));
+	}
+
 	// company-chat-assist-v1: TDH 助手's answers (head tdh_ai: the question's seq, the kind, who confirms; in a one-to-one
 	// chat the person asked posts it, as Tinode has no third party) and their confirmations (head tdh_ai_ok, counted only
 	// from the person named to confirm).
@@ -928,7 +945,8 @@
 				return;
 			}
 			const mine = msg.from === S.meId || !msg.from;
-			const r = renderContent(t, msg);
+			const card = cardOf(msg);
+			const r = card ? { body: cardBody(card), bare: true } : renderContent(t, msg);
 			let status = null;
 			// The state under the last of one's own messages in a row (and any that is still on its way or failed).
 			const next = items[i + 1];
