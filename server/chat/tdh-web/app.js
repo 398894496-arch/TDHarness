@@ -761,7 +761,7 @@
 		// The line that says TDH 助手 reads the chat, under the list (the user, 2026-11-21: not on top).
 		return h("div", { className: "rows" },
 			rows.length ? rows : h("div", { className: "empty" }, q ? "没有找到" : "还没有聊天"),
-			h("div", { className: "assist-note" }, "TDH 助手会读公司聊天：问到资金、生产进度、原料行情，它会自动查好发在对话里，由被问的人确认；说到要做的事，它会问一句要不要记成任务卡，到期前提醒；发来的账单、回单、发票图片，它会认出来存进财务。"));
+			h("div", { className: "assist-note" }, "TDH 助手会读公司聊天：问到资金、生产进度、原料行情，它会自动查好发在对话里，由被问的人确认；说到要做的事，它会问一句要不要记成任务卡，到期前提醒；发来的账单、回单、发票、付款计划（图片、PDF 都行），它会认出来存进财务，付款回单还会挂到对应的付款任务卡上。"));
 	}
 
 	function Contacts() {

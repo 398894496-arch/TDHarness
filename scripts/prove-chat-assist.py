@@ -342,7 +342,8 @@ def main() -> None:
         check(len(cant) == 1 and cant[0][:2] == (UID["wang"], "usr" + UID["tdh"]) and cant[0][3] == ca.PREFIX + "TDH 查不到今天的待付款事项，缺付款计划，请财务把付款清单拖进 TDH 对话。",
               "what TDH cannot answer, said: %s" % cant)
         check(cant[0][2]["tdh_ai"].get("cannot") is True and "confirm" not in cant[0][2]["tdh_ai"], "nothing to confirm: %s" % cant[0][2])
-        check("没有付款计划" in gw_calls[-1][1]["messages"][0]["content"], "the model is told what TDH has of 资金, to say what is missing")
+        sysp = gw_calls[-1][1]["messages"][0]["content"]
+        check("付款计划" in sysp and "没有应收账期" in sysp, "the model is told what TDH has of 资金, to say what is missing")
         # max_per_day (11): the next question is answered, the one after is not asked of the model.
         add(row(25, "tdh", "wang", "账上余额多少？"), row(26, "tdh", "wang", "账上余额现在多少？"))
         st = settle(26)
