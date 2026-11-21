@@ -11,7 +11,7 @@
 //     not announced.
 //   - company-erp-desk-v1/v2: ERPNext under 聊天 (sidebar.panellist "company-erp", order after 聊天, for every role) and
 //     its page (main, keyed "company-erp"): ERPNext in a frame at the address this desk's host gives (POST
-//     /company/erp/where), the browser on a click; before v2 it asked this desk's host to open ERPNext (POST /company/erp/open with the
+//     /company/erp/where), no browser button; before v2 it asked this desk's host to open ERPNext (POST /company/erp/open with the
 //     desk page's header) and says it is open, with 再打开一次; a site that is not set up or a stale login say so,
 //     with 重试.
 //   - company-chat-dock-v1: 聊天 locked in a column of its own at the window's right edge (工作区 | AI 对话 |
@@ -307,13 +307,14 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 	assert.equal(erpAsk[0].opts.headers["X-TDH-ERP"], "1", "with the desk page's header");
 	tree = rerender(erpMain.Comp);
 	assert.equal(find(tree, "iframe").props.src, FRAME, "ERPNext in this page's frame");
-	byText(tree, "在浏览器里打开").props.onClick();
-	await new Promise((r) => setImmediate(r));
-	await new Promise((r) => setImmediate(r));
-	assert.equal(erpAsk[1].url, "/company/erp/open", "and in the browser on a click");
+	assert.ok(!byText(tree, "在浏览器里打开") && !/浏览器/.test(text(tree)), "no button for the browser (the user: 不要这个按钮)");
+	assert.ok(byText(tree, "重新打开"), "it can be opened again");
+	byText(tree, "重新打开").props.onClick();
 	tree = rerender(erpMain.Comp);
-	assert.match(text(tree), /已在浏览器里打开/);
-	assert.ok(byText(tree, "重新打开"), "and can be opened again");
+	effects.forEach((fn) => fn());
+	await new Promise((r) => setImmediate(r));
+	await new Promise((r) => setImmediate(r));
+	assert.ok(erpAsk.length > 1 && erpAsk.every((a) => a.url === "/company/erp/where"), "重新打开 asks for a fresh address, never the browser: " + erpAsk.map((a) => a.url));
 	for (const [error, says] of [["erp-off", /ERPNext 还没接好/], ["bad-token", /TDH 的登录过期了/], ["", /连不上公司服务器/]]) {
 		tree = render(erpMain.Comp, () => Promise.resolve({ ok: false, json: () => Promise.resolve({ ok: false, error }) }));
 		effects.forEach((fn) => fn());

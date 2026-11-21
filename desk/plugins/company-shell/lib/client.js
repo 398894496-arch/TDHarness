@@ -7314,7 +7314,7 @@ window.__ModuleLoader__.load({
 		// company-erp-desk-v1: ERPNext (on the company server, the tailnet only) under 聊天 in the left column.
 		// company-erp-desk-v2 (the user, 2026-11-21: "能不能直接在TDH里打开"): in this page, through this desk's host's
 		// relay (erp-relay.js, as the chat's): the relay's address for a one-time link that logs the person in with
-		// their TDH account. The browser stays one click away (it needs the tailnet to let 443 through).
+		// their TDH account. No button for the browser (the user, same day: "不要这个按钮").
 		const ERP_PANEL = "company-erp";
 		const ERP_WHY = {
 			"erp-off": "ERPNext 还没接好，请找管理员。",
@@ -7360,7 +7360,6 @@ window.__ModuleLoader__.load({
 			const [url, setUrl] = React.useState("");
 			const [why, setWhy] = React.useState("");
 			const [round, setRound] = React.useState(0);
-			const [note, setNote] = React.useState("");
 			React.useEffect(function () {
 				let live = true;
 				setUrl("");
@@ -7372,14 +7371,6 @@ window.__ModuleLoader__.load({
 				});
 				return function () { live = false; };
 			}, [round]);
-			const outside = function () {
-				setNote("");
-				erpOpen().then(function () {
-					setNote("已在浏览器里打开。浏览器打不开时，就在这里用。");
-				}, function (err) {
-					setNote(ERP_WHY[String((err && err.message) || "")] || "浏览器没打开。");
-				});
-			};
 			const bar = React.createElement("div", {
 				style: {
 					height: 36, flex: "none", display: "flex", alignItems: "center", gap: 8, padding: "0 10px",
@@ -7388,9 +7379,8 @@ window.__ModuleLoader__.load({
 			},
 				React.createElement(ErpGlyph, { size: 14 }),
 				React.createElement("span", { style: { color: T.label, fontWeight: 600, fontSize: 13 } }, "ERPNext"),
-				React.createElement("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, note),
-				React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: function () { setRound(round + 1); } }, "重新打开"),
-				React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: outside }, "在浏览器里打开")
+				React.createElement("span", { style: { flex: 1 } }),
+				React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: function () { setRound(round + 1); } }, "重新打开")
 			);
 			const box = { width: "100%", height: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
 				background: T.base, fontFamily: FONT };
