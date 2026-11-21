@@ -1489,6 +1489,7 @@ class Handler(BaseHTTPRequestHandler):
                 with BOARD_MU:
                     hit = BOARD.apply(action, who, people, payload)
                 self._send(*json_bytes(mailbox_hit(actor, ticket=hit.get("ticket"), card=hit.get("card"))))
+                card_to_chat(action, actor, hit.get("card") or {}, people)
                 return
             if action == "file":
                 with BOARD_MU:
@@ -1925,6 +1926,68 @@ def chat_post(sender: str, topic: str, content, head: dict | None = None, ua: st
     p = lp.send({"pub": pub})
     lp.send({"leave": {"topic": topic}})
     return {"ok": bool(p) and int(p.get("code") or 500) < 300, "seq": ((p or {}).get("params") or {}).get("seq")}
+
+
+# company-chat-cards-v1 (the user, 2026-11-21: a card 田总 gave them should be in their chat with 田总): what happens to
+# a card between two people (下达, 提交验收, 通过 / 打回, 作废, 截止改了, 改派) is said in their one-to-one chat by the
+# one who did it, as a card (head tdh_card) the chat page draws; TDH 助手 does not read it as words. Cards one gives
+# oneself say nothing; TDH 助手's own cards (made from the chat, said there already) do not come through here.
+# TDH_CARD_CHAT=0: off.
+CARD_CHAT_ACTIONS = ("issue", "submit", "verdict", "cancel", "set-due", "reassign")
+
+
+def card_chat_words(action: str, card: dict, people: dict) -> tuple:
+    """(the words, the head) of one card event, for the chat."""
+    name = lambda x: (people.get(x) or {}).get("name") or x
+    title = str(card.get("title") or "")
+    due_ms = int(card.get("due") or 0)
+    due = ticket_board.fmt_ms(due_ms) if due_ms else ""
+    if action in ("issue", "reassign"):
+        event = "issued"
+        note = str(card.get("assignment") or "")
+        note = "" if note.strip() == title.strip() else note[:300]
+        text = "【任务卡】%s\n负责人：%s%s%s" % (title, name(card.get("to")), ("　截止：" + due) if due else "", ("\n" + note) if note else "")
+    elif action == "submit":
+        event, note = "submitted", str(card.get("summary") or "")[:300]
+        text = "【任务卡】%s：提交验收%s" % (title, ("\n" + note) if note else "")
+    elif action == "verdict":
+        passed = card.get("state") == "已通过"
+        event, note = ("passed", "") if passed else ("returned", str(card.get("verdict") or "")[:300])
+        text = "【任务卡】%s：%s" % (title, "验收通过" if passed else "打回，" + note)
+    elif action == "cancel":
+        event, note = "cancelled", str(card.get("verdict") or "")[:300]
+        text = "【任务卡】%s：作废，%s" % (title, note)
+    else:
+        event, note = "due", ""
+        text = "【任务卡】%s：%s" % (title, ("截止改为 " + due) if due else "取消了截止时间")
+    head = {"tdh_card": {"v": 1, "id": str(card.get("id") or ""), "event": event, "title": title, "from": name(card.get("from")),
+                         "to": name(card.get("to")), "due": due_ms, "state": card.get("state") or "", "note": note}}
+    return text, head
+
+
+def card_to_chat(action: str, actor: str, card: dict, people: dict) -> threading.Thread | None:
+    """Says one card event in the chat of its two people, by `actor`, after the answer (a thread of its own)."""
+    if os.environ.get("TDH_CARD_CHAT", "1") == "0" or action not in CARD_CHAT_ACTIONS or not card:
+        return None
+    frm, to = card.get("from"), card.get("to")
+    if not frm or not to or frm == to or actor not in (frm, to):
+        return None
+    other = to if actor == frm else frm
+    links = _tinode_links()
+    if not links.get(other) or not links.get(actor):
+        return None
+    text, head = card_chat_words(action, card, people)
+
+    def post() -> None:
+        try:
+            r = chat_post(actor, "usr" + links[other], text, head, ua="TDH-cards/1.0")
+        except Exception as e:  # noqa: BLE001 - the card is made; only its word in the chat is missed
+            r = {"ok": False, "why": type(e).__name__}
+        sys.stderr.write("people-api card-chat %s %s %s\n" % (action, head["tdh_card"]["id"], "ok" if r.get("ok") else r.get("why")))
+
+    t = threading.Thread(target=post, daemon=True)
+    t.start()
+    return t
 
 
 ERP_ONCE = erp_sso.Once()

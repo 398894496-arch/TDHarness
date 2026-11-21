@@ -180,6 +180,29 @@ async function render(me, list) {
   assert.ok(!v.box.querySelector('.m.ai button') && !v.box.querySelector('.m.ai .ai-foot'), 'nothing to confirm');
   v.root.unmount();
 
+  // company-chat-cards-v1: a task card 田总 gave 郭迎, said by 田总 in their chat: a card in his bubble.
+  const due = Date.UTC(2026, 10, 22, 10, 0);
+  const tc = { seq: 20, from: BOSS, ts: ts(9), head: { tdh_card: { v: 1, id: 't-1', event: 'issued', title: '给蔚蓝酒店付住宿费', from: '田总', to: '郭迎',
+    due, state: '待提交', note: '三晚住宿费 594 元，今天付' } }, content: '【任务卡】给蔚蓝酒店付住宿费\n负责人：郭迎' };
+  v = await render(FIN, [tc]);
+  const tcard = v.box.querySelector('.m .tcard');
+  assert.ok(tcard && !v.box.querySelector('.m.ai'), 'a task card, not a TDH 助手 message');
+  assert.ok(!tcard.closest('.m').classList.contains('me'), 'in 田总\'s bubble for 郭迎');
+  assert.strictEqual(tcard.querySelector('.tc-title').textContent, '给蔚蓝酒店付住宿费');
+  assert.strictEqual(tcard.querySelector('.tc-ev').textContent, '下达了任务卡');
+  const dd = new Date(due);
+  assert.strictEqual(tcard.querySelector('.tc-meta').textContent, '负责人 郭迎 · 截止 ' + (dd.getMonth() + 1) + '月' + dd.getDate() + '日 ' + String(dd.getHours()).padStart(2, '0') + ':00');
+  assert.strictEqual(tcard.querySelector('.tc-note').textContent, '三晚住宿费 594 元，今天付');
+  assert.ok(/左栏「任务」/.test(tcard.querySelector('.tc-foot').textContent));
+  v.root.unmount();
+  v = await render(BOSS, [{ seq: 21, from: FIN, ts: ts(10), head: { tdh_card: { v: 1, id: 't-1', event: 'submitted', title: '给蔚蓝酒店付住宿费', to: '郭迎' } },
+    content: '【任务卡】给蔚蓝酒店付住宿费：提交验收' }, { seq: 22, from: BOSS, ts: ts(11), head: { tdh_card: { v: 1, id: 't-1', event: 'returned',
+    title: '给蔚蓝酒店付住宿费', to: '郭迎', note: '回单不清楚' } }, content: '【任务卡】给蔚蓝酒店付住宿费：打回，回单不清楚' }]);
+  const cards = Array.from(v.box.querySelectorAll('.tcard'));
+  assert.deepStrictEqual(cards.map((c) => c.querySelector('.tc-ev').textContent), ['提交验收', '打回了']);
+  assert.ok(cards[1].closest('.m').classList.contains('me') && cards[1].classList.contains('returned'), '田总\'s own: his side');
+  v.root.unmount();
+
   // An ordinary message stays ordinary.
   assert.strictEqual(F.aiOf(question), null);
   assert.ok(/assist-note/.test(src) && /TDH 助手会读公司聊天/.test(src), 'the chat list says the chat is read');
