@@ -14,7 +14,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -24,6 +24,7 @@ import daily_report  # noqa: E402
 import notify  # noqa: E402
 import chat_read  # noqa: E402
 import chat_assist  # noqa: E402
+import erp_sso  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
 ROSTER = Path(os.environ.get("TDH_ROSTER") or str(ROOT / "runtime" / "roster.json"))
@@ -827,6 +828,14 @@ def check_login(username: str, password: str) -> dict | None:
     }
 
 
+def password_ok(username: str, password: str) -> bool:
+    """An active person's TDH password, and nothing more (company-erp-sso-v1): unlike check_login, no desk token is
+    minted and no share credentials are handed out; ERPNext's TDH login only needs to know who it is."""
+    login = str(username or "").strip().lower()
+    row = person(login) if login else None
+    return bool(password and row and row.get("status") == "active" and verify_password(pass_map().get(login), password))
+
+
 def run_lease(login: str, device_id: str, action: str) -> tuple[int, dict]:
     path = desk_lease.lease_path(login)
     with LEASE_MU:
@@ -1185,7 +1194,9 @@ def json_bytes(obj: dict, status: int = 200) -> tuple[int, bytes]:
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
-        sys.stderr.write("people-api " + (fmt % args) + "\n")
+        # The ERPNext login's one-time values ride in addresses (company-erp-sso-v1): never in the log.
+        line = re.sub(r"([?&](?:t|code|state|access_token|client_secret|password)=)[^&\s\"]+", r"\1***", fmt % args)
+        sys.stderr.write("people-api " + line + "\n")
 
     def _token(self) -> str:
         h = (self.headers.get("Authorization") or "").strip()
@@ -1491,10 +1502,150 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(*json_bytes({"ok": False, "error": "action-unknown"}, 400))
 
+    # -- company-erp-sso-v1: TDH's login for ERPNext (server/erp_sso.py), reached at /tdh-sso/* through Tailscale Serve.
+    def _html(self, status: int, raw: bytes, cookie: str = "") -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _redirect(self, location: str, cookie: str = "") -> None:
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Cache-Control", "no-store")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def _note(self, status: int, text: str) -> None:
+        page = ("<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>ERPNext</title></head>"
+                "<body style=\"font:15px -apple-system,'PingFang SC','Microsoft YaHei',sans-serif;padding:40px;color:#0f1115\">"
+                "<p>%s</p></body></html>") % _html_escape(text)
+        self._html(status, page.encode("utf-8"))
+
+    def _src(self) -> str:
+        return (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or self.client_address[0]
+
+    def _sso_cookie(self, cfg: dict, login: str) -> str:
+        return "%s=%s; Path=%s; Max-Age=%d; HttpOnly; Secure; SameSite=Lax" % (
+            erp_sso.COOKIE, erp_sso.sign(cfg["cookie_key"], login), erp_sso.PUBLIC, erp_sso.COOKIE_S)
+
+    def _sso_code(self, cfg: dict, login: str, q: dict, cookie: str = "") -> None:
+        code = ERP_ONCE.put({"kind": "code", "login": login, "client_id": q.get("client_id", ""),
+                             "redirect_uri": q.get("redirect_uri", "")}, erp_sso.CODE_S, "c-")
+        sys.stderr.write("people-api erp-sso code %s\n" % login)
+        self._redirect(erp_sso.with_query(q["redirect_uri"], code=code, state=q.get("state", "")), cookie)
+
+    def _sso(self, method: str, sub: str) -> None:
+        cfg = erp_sso.load_config(TOKEN_STORE.parent)
+        if not cfg:
+            self._send(*json_bytes({"ok": False, "error": "erp-off"}, 404))
+            return
+        url = urlparse(self.path)
+        if sub == "health":
+            self._send(*json_bytes({"ok": True}))
+            return
+        if sub == "start" and method == "GET":
+            t = ERP_ONCE.take((parse_qs(url.query).get("t") or [""])[0])
+            row = person(str((t or {}).get("login") or "")) if t and t.get("kind") == "ticket" else None
+            if not row or row.get("status", "active") != "active":
+                self._note(403, "这个链接已经用过或过期了。请回到 TDH，再点一次左边的 ERPNext。")
+                return
+            link = erp_sso.erp_login_link(cfg) or cfg["base"] + "/login?redirect-to=%2Fapp"
+            self._redirect(link, self._sso_cookie(cfg, row["login"]))
+            return
+        if sub == "authorize":
+            if method == "POST":
+                q = self._form()
+                if q is None:
+                    self._note(400, "请求不完整。")
+                    return
+            else:
+                q = {k: v[0] for k, v in parse_qs(url.query).items()}
+            if q.get("response_type", "code") != "code" or not erp_sso.redirect_ok(cfg, q.get("client_id", ""), q.get("redirect_uri", "")):
+                self._note(400, "这个登录请求不是 ERPNext 发来的。")
+                return
+            if method == "GET":
+                login = erp_sso.unsign(cfg["cookie_key"], erp_sso.cookie_of(self.headers.get("Cookie")))
+                row = person(login) if login else None
+                if row and row.get("status", "active") == "active":
+                    self._sso_code(cfg, login, q)
+                    return
+                self._html(200, erp_sso.login_page(q))
+                return
+            name = str(q.get("username") or "").strip().lower()
+            src = "erp:" + self._src()
+            if login_blocked(name, src):
+                self._html(429, erp_sso.login_page(q, "登录失败次数太多，请 15 分钟后再试，或找管理员。"))
+                return
+            row = person(name) if password_ok(name, str(q.get("password") or "")) else None
+            if not row or row.get("status", "active") != "active":
+                login_failed(name, src)
+                self._html(401, erp_sso.login_page(q, "账号或密码不对。"))
+                return
+            login_succeeded(name, src)
+            self._sso_code(cfg, name, q, self._sso_cookie(cfg, name))
+            return
+        if sub == "token" and method == "POST":
+            q = self._form() or {}
+            cid, csec = q.get("client_id", ""), q.get("client_secret", "")
+            auth = self.headers.get("Authorization") or ""
+            if auth.lower().startswith("basic "):
+                try:
+                    cid, _, csec = base64.b64decode(auth[6:].strip()).decode("utf-8").partition(":")
+                except (ValueError, UnicodeDecodeError):
+                    pass
+            if not (hmac.compare_digest(str(cid), cfg["client_id"]) and hmac.compare_digest(str(csec), cfg["client_secret"])):
+                self._send(*json_bytes({"error": "invalid_client"}, 401))
+                return
+            c = ERP_ONCE.take(q.get("code", ""))
+            if (not c or c.get("kind") != "code" or q.get("grant_type") != "authorization_code"
+                    or c.get("redirect_uri") != q.get("redirect_uri") or c.get("client_id") != cid):
+                self._send(*json_bytes({"error": "invalid_grant"}, 400))
+                return
+            tok = ERP_ONCE.put({"kind": "token", "login": c["login"]}, erp_sso.TOKEN_S, "a-")
+            self._send(*json_bytes({"access_token": tok, "token_type": "Bearer", "expires_in": erp_sso.TOKEN_S}))
+            return
+        if sub == "userinfo" and method == "GET":
+            tok = (parse_qs(url.query).get("access_token") or [""])[0]
+            auth = self.headers.get("Authorization") or ""
+            if auth.lower().startswith("bearer "):
+                tok = auth[7:].strip()
+            t = ERP_ONCE.peek(tok)
+            row = person(str((t or {}).get("login") or "")) if t and t.get("kind") == "token" else None
+            if not row or row.get("status", "active") != "active":
+                self._send(*json_bytes({"error": "invalid_token"}, 401))
+                return
+            self._send(*json_bytes(erp_sso.userinfo(row, cfg["email_domain"])))
+            return
+        self._send(*json_bytes({"ok": False, "error": "not-found"}, 404))
+
+    def _form(self) -> dict | None:
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return None
+        if n < 0 or n > 16384:
+            return None
+        try:
+            return {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode("utf-8")).items()}
+        except UnicodeDecodeError:
+            return None
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/health":
             self._send(*json_bytes({"ok": True}))
+            return
+        if path.startswith("/company/sso/"):
+            self._sso("GET", path[len("/company/sso/"):].strip("/"))
             return
         if path.startswith("/company/people"):
             self._send(*json_bytes({"ok": True, "people": public_people(), "depts": public_depts()}))
@@ -1508,6 +1659,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         self._too_large = False
+        if path.startswith("/company/sso/"):
+            self._sso("POST", path[len("/company/sso/"):].strip("/"))      # forms, not JSON (OAuth 2)
+            return
         payload = self._read_json()
         if payload is None:
             if self._too_large:
@@ -1550,6 +1704,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/company/people":
             self._people(payload)
+            return
+        if path == "/company/ext/erp/ticket":
+            # company-erp-sso-v1: the desk's ERPNext entry: a one-time link that logs this person in to ERPNext.
+            login = login_from_token(self._token())
+            row = person(login) if login else None
+            cfg = erp_sso.load_config(TOKEN_STORE.parent)
+            if not row or row.get("status", "active") != "active":
+                self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
+                return
+            if not cfg:
+                self._send(*json_bytes({"ok": False, "error": "erp-off"}, 404))
+                return
+            t = ERP_ONCE.put({"kind": "ticket", "login": login}, erp_sso.TICKET_S, "t-")
+            self._send(*json_bytes({"ok": True, "url": cfg["base"] + erp_sso.PUBLIC + "/start?t=" + t}))
             return
         if path.startswith("/company/ext/chat/"):
             # company-chat-read-v1: a person's own chats, for their own agent (Caddy: /company/ext/chat/* here).
@@ -1747,6 +1915,45 @@ def chat_post(sender: str, topic: str, content, head: dict | None = None, ua: st
     p = lp.send({"pub": pub})
     lp.send({"leave": {"topic": topic}})
     return {"ok": bool(p) and int(p.get("code") or 500) < 300, "seq": ((p or {}).get("params") or {}).get("seq")}
+
+
+ERP_ONCE = erp_sso.Once()
+
+
+def _html_escape(text: str) -> str:
+    import html as _h
+    return _h.escape(str(text))
+
+
+def erp_sync_once() -> dict:
+    """company-erp-sso-v1: TDH's roster onto ERPNext's users (server/erp_sso.py sync)."""
+    runtime = TOKEN_STORE.parent
+    cfg = erp_sso.load_config(runtime)
+    if not cfg or not cfg.get("api_key") or not cfg.get("api_secret"):
+        return {"ok": True, "off": True}
+    depts = {d.get("id"): d.get("name") for d in (load_roster().get("depts") or []) if isinstance(d, dict)}
+    out = erp_sso.sync(cfg, people_by_login(), depts, erp_sso.load_roles(runtime))
+    if not out.get("ok") or any(out.get(k) for k in ("created", "enabled", "disabled", "renamed", "failed")):
+        line = json.dumps(out, ensure_ascii=False)
+        sys.stderr.write("people-api erp-sync %s\n" % line)
+        try:
+            (ROOT / "logs").mkdir(parents=True, exist_ok=True)
+            with (ROOT / "logs" / "erp-sync.log").open("a", encoding="utf-8") as fh:
+                fh.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), line))
+        except OSError:
+            pass
+    return out
+
+
+def erp_sync_loop() -> None:
+    time.sleep(float(os.environ.get("TDH_ERP_SYNC_DELAY") or 30))
+    every = float(os.environ.get("TDH_ERP_SYNC_EVERY") or 600)
+    while True:
+        try:
+            erp_sync_once()
+        except Exception as exc:  # noqa: BLE001 - ERPNext may be down; the next round tries again
+            sys.stderr.write("people-api erp-sync failed %s\n" % type(exc).__name__)
+        time.sleep(every)
 
 
 _ASSIST_MU = threading.Lock()
@@ -2070,6 +2277,8 @@ def main() -> None:
         threading.Thread(target=daily_report_loop, name="daily-report", daemon=True).start()
     if os.environ.get("TDH_CHAT_ASSIST", "1") != "0":
         threading.Thread(target=chat_assist_loop, name="chat-assist", daemon=True).start()
+    if os.environ.get("TDH_ERP_SYNC", "1") != "0":
+        threading.Thread(target=erp_sync_loop, name="erp-sync", daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     sys.stdout.write("LISTEN=%s:%s\n" % (HOST, PORT))
     sys.stdout.flush()

@@ -171,6 +171,11 @@ jobs:
       - name: TDH 助手 in the chat (company-chat-assist-v1; the gate, who may see what, answers in the chat)
         if: runner.os == 'Linux'
         run: python3 scripts/prove-chat-assist.py
+      - name: TDH's login for ERPNext and the roster sync (company-erp-sso-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-erp-sso.py
+      - name: The desk's ERPNext entry (company-erp-desk-v1)
+        run: node scripts/prove-erp-desk.mjs
       - name: Chat page logic, its input boxes with a Chinese input method, TDH 助手's cards (company-chat-client-v1, company-chat-ime-v1, company-chat-assist-v1; tinode-sdk 0.25.3, as the server runs)
         if: runner.os == 'Linux'
         run: |
