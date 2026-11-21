@@ -192,6 +192,9 @@ jobs:
       - name: People's own folders into the knowledge base by themselves (company-kb-organize-v1)
         if: runner.os == 'Linux'
         run: python3 scripts/prove-kb-organize.py
+      - name: Who opened the mould drawings, for the morning report (company-drawing-watch-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-drawing-watch.py
       - name: The desk's ERPNext entry (company-erp-desk-v1)
         run: node scripts/prove-erp-desk.mjs
       - name: Chat page logic, its input boxes with a Chinese input method, TDH 助手's cards (company-chat-client-v1, company-chat-ime-v1, company-chat-assist-v1; tinode-sdk 0.25.3, as the server runs)
