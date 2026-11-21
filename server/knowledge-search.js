@@ -503,7 +503,9 @@ function kbAudience(zone) {
     const d = zone.slice(5);
     readers = people.filter((p) => safe(p.dept || '') === d).map(name);
   } else readers = [];
-  const note = zone === 'company' ? '全公司都能看、能改。' : '能看到的人：' + (readers.join('、') || '（本区没有成员）') + '；管理员（' + admins.join('、') + '）能看所有区，这是公司规定。';
+  const note = zone === 'company' ? '全公司都能看、能改。' : '能看到的人：' + (readers.join('、') || '（本区没有成员）') + '；管理员（' + admins.join('、') + '）能看所有区，这是公司规定。' +
+    // 2026-11-21: 郭迎's agent would not file customs papers for 郭迎、田总、小潘 only, unsure who else's AI could read them.
+    '知识库搜索和 AI 也按这个范围：只有这些人搜得到、只有他们的 TDH（AI）读得到，别人的 AI 搜不到。要求「只给这几个人（AI 也只给他们用）」而这几个人正是本区成员时，就放这个区。';
   return { readers, admins, note };
 }
 function kbFolders(dir) {
