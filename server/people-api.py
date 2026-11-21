@@ -1631,7 +1631,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._note(403, "这个链接已经用过或过期了。请回到 TDH，再点一次左边的 ERPNext。")
                 return
             depts = {d.get("id"): d.get("name") for d in (load_roster().get("depts") or []) if isinstance(d, dict)}
-            home = erp_sso.home_of(row, depts.get(row.get("dept"), ""))
+            home = erp_sso.home_of(row, depts.get(row.get("dept"), ""), erp_sso.load_roles(TOKEN_STORE.parent))
             link = erp_sso.erp_login_link(cfg, home=home) or cfg["base"] + "/login?redirect-to=" + home.replace("/", "%2F")
             self._redirect(link, self._sso_cookie(cfg, row["login"]))
             return
