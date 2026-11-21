@@ -39,7 +39,8 @@ FORBIDDEN = {
     **ONE_COMPANY,
     "a site's city": r"珠海",
     "a LAN address": r"\b192\.168\.\d+\.\d+\b",
-    "a Tailscale address": r"\b100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+\b",
+    # 100.100.100.100 is Tailscale's DNS resolver, the same on every tailnet: not a site's address.
+    "a Tailscale address": r"\b100\.(?!100\.100\.100\b)(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+\b",
     "a maintainer path": r"dsh-saas|/Users/(?!x/)[A-Za-z0-9._-]+/|Users-(?!x-)[A-Za-z0-9]+-",
     "a site login": r"\b(bosshome|zhangzhang\d*|xiaoman|laoyang\d*|hengge|quan|fe1)\b",
     "a site's server name": r"desktop-269841[8]",
@@ -137,6 +138,13 @@ def main():
                 zi.external_attr = 0o100755 << 16
                 zz.writestr(zi, "old")
                 zz.writestr("CompanyDesk/plugins/dsh-artifact/package.json", "{}")
+                if plat == "mac":
+                    # As a publish on the Windows server wrote it before company-zip-unix-mode-v1:
+                    # "made by MS-DOS", so unzip on a Mac ignored the 755.
+                    dos = zipfile.ZipInfo("CompanyDesk/mac-join-off-lan.sh")
+                    dos.create_system = 0
+                    dos.external_attr = 0o755 << 16
+                    zz.writestr(dos, "old")
                 zz.writestr("CompanyDesk/skills/skills/company-web/SKILL.md", "stale nested copy")
                 for home in ("CompanyDesk/plugins/", "CompanyDesk/home/profiles/web/node_modules/"):
                     for n in names:
@@ -165,6 +173,12 @@ def main():
                     fail("overlay put the other platform's files in the %s pack: %s" % (plat, sorted(other & got)[:3]))
                 if (zz.getinfo("CompanyDesk/" + starter).external_attr >> 16) != 0o100755:
                     fail("overlay lost the mode bits of " + starter)
+                for i in zz.infolist():
+                    if (i.filename.endswith((".sh", ".command")) and i.filename.count("/") == 1) or (
+                            i.filename.startswith("CompanyDesk/bin/") and not i.filename.endswith("/")):
+                        if i.create_system != 3 or (i.external_attr >> 16) != 0o100755:
+                            fail("%s is not a Unix 755 file in the %s pack (system %d, mode %o): a Mac drops the execute bit"
+                                 % (i.filename, plat, i.create_system, i.external_attr >> 16))
                 shell = zz.read("CompanyDesk/plugins/company-shell/lib/index.js")
                 if b"{{TDH_HOST}}" in shell or b"proof.local" not in shell:
                     fail("overlay did not write the site address into company-shell")

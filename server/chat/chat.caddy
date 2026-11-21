@@ -1,0 +1,24 @@
+# company-chat-tinode-v1: the company chat (Tinode, 127.0.0.1:6060). install-chat.ps1 copies this file to
+# D:\dsh\runtime\caddy\ext\ (imported inside the site, so it shares the site's TLS and address).
+#   /chat/  its web page (the static files Tinode serves at /)
+#   /v0/    its API: websocket, long polling, uploads and downloads
+#   /company/ext/chat/  a person's own chats for their own agent (company-chat-read-v1, company_ext pack "chat"),
+#           answered by the people service with their login token
+redir /chat /chat/
+handle_path /chat/* {
+	reverse_proxy 127.0.0.1:6060 {
+		flush_interval -1
+	}
+}
+handle /v0/* {
+	reverse_proxy 127.0.0.1:6060 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+}
+handle /company/ext/chat/* {
+	reverse_proxy 127.0.0.1:4181
+}

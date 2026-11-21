@@ -2,7 +2,6 @@
 name: company-web
 description: How this complete agent splits public pages and OpenCLI click.
 whenToUse: 公开网, 打开网址, 浏览器.
-disable-model-invocation: true
 ---
 
 # company-web
@@ -39,7 +38,11 @@ disable-model-invocation: true
 
 1. `opencli` `action=ensure`：客户端自带 OpenCLI 2.0.3，一般直接就有；格子里没有才 `npm install @jackwener/opencli@2.0.3`（`OPENCLI_BIN` 可覆盖）
 2. `opencli` `action=doctor`（格子里等同 `opencli doctor`）
-3. Chrome 扩展不能静默装：打开 `https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk`，请人点一次「添加」
+3. Chrome 扩展不能静默装，要员工点一次。先用客户端自带的扩展，不依赖能不能上 Google（国内多数电脑打不开应用商店）：
+   - `doctor` 结果里的 `extensionDir` 就是自带扩展的文件夹（客户端安装目录下的 `opencli/extension`），把这个路径原样发给员工；
+   - 请员工在 Chrome（或 Edge）地址栏打开 `chrome://extensions`（Edge 是 `edge://extensions`），打开右上角「开发者模式」，点「加载已解压的扩展程序」，选这个文件夹；
+   - 能打开 Google 的电脑也可以直接装商店版：`https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk`，点「添加」。
+   装好后再跑一次 `doctor`，看到扩展已连接（`extensionConnected` 为真）才算好。
 4. 关桌，开新会话。之后用 `opencli browser --session <名字> <命令>`（bash / 侧栏终端）。2.0 的结果都是 JSON：`{"ok":true,"data":…}`，失败是 `{"ok":false,"error":…}`。
 5. `doctor` 说扩展版本旧了（`extension-outdated`）：客户端更新换了新扩展，请员工在 `chrome://extensions` 里点 OpenCLI 的刷新按钮
 

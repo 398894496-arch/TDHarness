@@ -6,6 +6,9 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
 		const React = require("react");
+		// The host's static modules include react-dom (createPortal): 聊天's own column at the window's right
+		// edge is drawn on document.body, outside the kernel's frame (company-chat-dock-v1).
+		const ReactDOM = require("react-dom");
 		// Verified live on the desk (2026-08-21): the host's per-plugin require
 		// resolves this to the same icon/primitive set the shipped rows use —
 		// real SVG icon components (IconPanelLeftOutline16, IconCloseOutline16,
@@ -75,6 +78,11 @@ window.__ModuleLoader__.load({
 		// fails at import time with "cannot access before initialization", which
 		// takes the whole frame with it now that the shipped sidebar row is off.
 		const ANIM = "var(--ds-transition-duration-slow, 240ms) var(--ds-ease-in-out, ease-in-out)";
+		// company-chat-dock-v1: 聊天's own column at the right edge, from this window width up (the CSS and
+		// ChatDock read the same query), and how wide it is (300px is the right sidebar's own minimum; the chat
+		// page goes to one column at a time under 640px).
+		const CHAT_DOCK_MEDIA = "(min-width: 1100px)";
+		const CHAT_DOCK_WIDTH = "clamp(300px, 26vw, 400px)";
 		// Layout hard-codes the collapsed track at 56. We paint a 48px rail and
 		// override the frame's first grid track when the sidebar is collapsed
 		// (see [data-sidebar-collapsed] below). Keep the two numbers in lockstep.
@@ -704,6 +712,13 @@ window.__ModuleLoader__.load({
 			"  text-overflow: ellipsis; white-space: nowrap;",
 			"  font-size: 12px; font-weight: 400;",
 			"}",
+			".cs-restore {",
+			"  flex: none; height: 22px; padding: 0 8px; border-radius: 999px; cursor: pointer;",
+			"  border: 1px solid " + tint(T.brand, 45) + "; background: transparent; color: " + T.brand + ";",
+			"  font-size: 12px; line-height: 20px;",
+			"}",
+			".cs-restore:hover { background: " + tint(T.brand, 12) + "; }",
+			".cs-restore:disabled { opacity: .5; cursor: default; }",
 			".cs-row-m {",
 			"  margin-top: 2px; font-size: 11px; font-weight: 400; line-height: 1.4;",
 			"  color: " + T.label2 + ";",
@@ -928,7 +943,22 @@ window.__ModuleLoader__.load({
 			".cs-cat { display: flex; flex-direction: column; gap: 8px; width: 100%; }",
 			".cs-cat-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }",
 			".cs-cat input[type=text], .cs-cat input[type=password] { height: 32px; min-width: 220px; border-radius: 8px; border: 0.5px solid var(--dsw-alias-border-l3, #ddd); padding: 0 8px; font: inherit; background: #fff; color: #111; }",
-			".cs-apply { height: 36px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 8px; background: #111; color: #fff; cursor: pointer; font: inherit; }"
+			".cs-apply { height: 36px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 8px; background: #111; color: #fff; cursor: pointer; font: inherit; }",
+			// company-chat-dock-v1 (see ChatDock): #root gives up the chat's width on the right, so the kernel's frame
+			// lays its three columns out in the rest; the chat column sits in that strip. A right sidebar shown
+			// fullscreen is 100vw wide and anchored at the frame's right edge: it stops at the chat, as the kernel
+			// stops it at the sidebar on Windows' own title bar.
+			"@media " + CHAT_DOCK_MEDIA + " {",
+			"  html[data-company-chat-dock] { --company-chat-dock-width: " + CHAT_DOCK_WIDTH + "; }",
+			"  html[data-company-chat-dock] #root { box-sizing: border-box; padding-right: var(--company-chat-dock-width); }",
+			"  html[data-company-chat-dock] [data-sidebar-right-panel=fullscreen] { max-width: calc(100vw - var(--company-chat-dock-width)); }",
+			"}",
+			".cs-chat-dock {",
+			"  position: fixed; top: 0; right: 0; bottom: 0; z-index: 5;",
+			"  width: var(--company-chat-dock-width, 340px);",
+			"  box-sizing: border-box; display: flex; flex-direction: column; min-width: 0; min-height: 0;",
+			"  background: " + T.base + "; border-left: 0.5px solid var(--dsw-alias-border-l3);",
+			"}"
 		].join("\n") + "\n" + LOOK_CSS + "\n" + CARD_CSS;
 
 		function Style() {
@@ -1452,6 +1482,8 @@ window.__ModuleLoader__.load({
 		let clearSessionFn = function () {};
 		let sessionListFn = function () { return null; };
 		let workspaceListFn = function () { return null; };
+		// company-session-restore-v1 (the user, 2026-11-21: "归档后的窗口 你要给我一个还原按钮"): the archived list's 还原.
+		let unarchiveFn = function () { return Promise.reject(new Error("not-ready")); };
 		let insertDeskTextFn = function () { return false; };
 		// The session whose composer is on screen, as told by the composer's own
 		// slot. 0.2.x dropped `current` from the session list, so this is the only
@@ -1772,6 +1804,8 @@ window.__ModuleLoader__.load({
 			if (s.indexOf("no-such-person") >= 0) return "花名册里没有这个人";
 			if (s.indexOf("role-bad") >= 0) return "角色不对";
 			if (s.indexOf("password-bad") >= 0) return "密码里不能有换行";
+			if (s.indexOf("password-wrong") >= 0) return "旧密码不对";
+			if (s.indexOf("password-same") >= 0) return "新密码和旧密码一样，换一个";
 			if (s.indexOf("action-unknown") >= 0) return "服务器还不认这个操作，需要更新人员服务";
 			if (s.indexOf("password-too-short") >= 0) return "密码至少 6 位";
 			if (s.indexOf("forbidden") >= 0) return "只有老板和管理能改人员";
@@ -2382,8 +2416,9 @@ window.__ModuleLoader__.load({
 				}
 				return;
 			}
-			if (isTerminalTask(task)) return;
-			startCardSession(task);
+			// company-task-open-card-v1: a card with no session yet just opens as a card (what to do, files,
+			// report, hand-in). Starting a session closed the card and dropped the assignee into an empty
+			// chat (2026-11-19, TDH); that is the card's own 「新建会话处理」 button now.
 		}
 
 		function deskLogin() {
@@ -3020,6 +3055,12 @@ window.__ModuleLoader__.load({
 			const sessArchiveHook = React.useState(false);
 			const sessArchive = sessArchiveHook[0];
 			const setSessArchive = sessArchiveHook[1];
+			const restoringHook = React.useState({});
+			const restoring = restoringHook[0];
+			const setRestoring = restoringHook[1];
+			const restoredHook = React.useState({});
+			const restored = restoredHook[0];
+			const setRestored = restoredHook[1];
 			const taskArchiveHook = React.useState(false);
 			const taskArchive = taskArchiveHook[0];
 			const setTaskArchive = taskArchiveHook[1];
@@ -3071,8 +3112,10 @@ window.__ModuleLoader__.load({
 				function () { return props.panelInfo ? props.panelInfo.getSnapshot().activePanelId : null; }
 			);
 			// Plugins can switch whole parts of the desk off, so only the admin gets
-			// the entry, same as the models and version pages.
-			const shownPanels = shellRole === "admin" ? panels : [];
+			// that entry, same as the models and version pages; the rest are everyone's.
+			// 聊天 is not listed while it has its own column at the right edge.
+			const chatDock = React.useSyncExternalStore(chatDockSubscribe, chatDocked);
+			const shownPanels = panelsForDesk(shellRole, panels, chatDock);
 			function openFreshSession() {
 				if (props.selectPanel) props.selectPanel(null);
 				selectTask(null);
@@ -3263,7 +3306,7 @@ window.__ModuleLoader__.load({
 
 			function archivedSessionRows() {
 				const ws = workspaceListFn() || {};
-				const ids = ws.archivedSessionIds || [];
+				const ids = (ws.archivedSessionIds || []).filter(function (id) { return !restored[id]; });
 				const snap = sessionListFn() || {};
 				const byId = snap.byId || {};
 				if (!ids.length) {
@@ -3281,7 +3324,23 @@ window.__ModuleLoader__.load({
 						}
 					},
 						React.createElement("div", { className: "cs-row-t" },
-							React.createElement("span", { className: "cs-row-t-name" }, title)
+							React.createElement("span", { className: "cs-row-t-name" }, title),
+							React.createElement("button", {
+								type: "button",
+								className: "cs-restore",
+								title: "放回会话列表",
+								disabled: restoring[id] === true,
+								onClick: function (event) {
+									event.stopPropagation();
+									const mark = function (v) { return function (prev) { const next = Object.assign({}, prev); next[id] = v; return next; }; };
+									setRestoring(mark(true));
+									Promise.resolve().then(function () { return unarchiveFn(id); }).then(function () {
+										setRestored(mark(true));
+									}).catch(function () {
+										setRestoring(mark("failed"));
+									});
+								}
+							}, restoring[id] === "failed" ? "没还原，再点一次" : "还原")
 						),
 						React.createElement("div", { className: "cs-row-m" }, id)
 					);
@@ -4731,25 +4790,35 @@ window.__ModuleLoader__.load({
 			if (!q || !q.loaded) return "正在读取…";
 			if (quotaUnderOne(q)) {
 				const w = quotaWhen(q.resetsAt);
-				return (q.plan ? String(q.plan) + " · " : "") + "本周已用不到 1%（OpenAI 按整数报）" + (w ? " · " + w + " 刷新" : "");
+				return (q.plan ? String(q.plan) + " · " : "") + "本周已用不到 1%（OpenAI 按整数报）" + (w ? " · " + w + " 重置" : "") + quotaAt(q);
 			}
 			if (q.err) return "额度接口没接通";
 			if (q.kind === "key" && quotaPercent(q) == null) return "走 API key，没有订阅额度";
 			if (quotaPercent(q) == null) return "订阅没有返回额度数据";
 			const kind = q.kind === "weekly" ? "本周" : (q.kind === "monthly" ? "本月" : "本期");
 			const when = quotaWhen(q.resetsAt);
-			return (q.plan ? String(q.plan) + " · " : "") + kind + (when ? " · " + when + " 刷新" : "");
+			return (q.plan ? String(q.plan) + " · " : "") + kind + (when ? " · " + when + " 重置" : "") + quotaAt(q);
+		}
+		function quotaAt(q) {
+			const n = Date.parse((q && q.fetchedAt) || "");
+			if (!n) return "";
+			try { return " · " + new Date(n).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) + " 读的"; } catch (err) { return ""; }
 		}
 		function meter(pct) {
 			if (pct == null) return null;
 			const tone = pct < 10 ? " cs-meter-err" : (pct < 30 ? " cs-meter-warn" : "");
 			return el("div", { className: "cs-meter" + tone }, el("i", { style: { width: pct + "%" } }));
 		}
+		// company-quota-refresh-v1: q.reload() asks for a reading taken now (the 刷新 button);
+		// q.fetchedAt says when the shown one was taken.
 		function useQuota() {
 			const qHook = React.useState({ loaded: false, usedPercent: null, remainingPercent: null, plan: "", kind: "", resetsAt: "", err: "" });
-			React.useEffect(function () {
-				fetchQuota().then(function (out) {
+			const busyHook = React.useState(false);
+			function load(fresh) {
+				busyHook[1](true);
+				fetchQuota(fresh).then(function (out) {
 					const j = out.j || {};
+					busyHook[1](false);
 					qHook[1]({
 						loaded: true,
 						usedPercent: out.ok ? j.usedPercent : null,
@@ -4757,12 +4826,18 @@ window.__ModuleLoader__.load({
 						plan: (out.ok && j.plan) || "",
 						kind: (out.ok && j.kind) || "",
 						resetsAt: (out.ok && j.resetsAt) || "",
+						fetchedAt: (out.ok && j.fetchedAt) || "",
 						vendor: (out.ok && j.vendor) || "grok",
-						err: out.ok ? "" : ((j.error && j.error.message) || j.error || ("http-" + out.status))
+						err: out.ok ? (j.quotaError || "") : ((j.error && j.error.message) || j.error || ("http-" + out.status))
 					});
 				});
-			}, []);
-			return qHook[0];
+			}
+			React.useEffect(function () { load(false); }, []);
+			return Object.assign({}, qHook[0], { busy: busyHook[0], reload: function () { load(true); } });
+		}
+		function quotaRefresh(q) {
+			if (!q || typeof q.reload !== "function") return null;
+			return el("button", { type: "button", className: "cs-chip", disabled: !!q.busy, title: "向 OpenAI 要一次最新的额度", onClick: function () { q.reload(); } }, q.busy ? "刷新中…" : "刷新");
 		}
 		function contextText(n) {
 			n = Number(n) || 0;
@@ -5061,6 +5136,10 @@ window.__ModuleLoader__.load({
 			const busyHook = React.useState(false);
 			const doneHook = React.useState(false);
 			const editHook = React.useState(null);
+			// company-self-password-v1: everyone changes their own sign-in password here (people-api
+			// action self: the old one is checked, the new one is at least 6 characters). The share
+			// account has its own password, so the company drive is not affected.
+			const pwHook = React.useState(null);
 			const armHook = useArm();
 			const fileRef = React.useRef(null);
 			React.useEffect(function () {
@@ -5176,6 +5255,46 @@ window.__ModuleLoader__.load({
 						desc: "会显示在同事、人员页和侧边栏。",
 						side: btn("移除头像", { small: true, tone: "ghost", disabled: busyHook[0], onClick: function () { saveSelf({ avatar: "" }, "头像已移除。"); } })
 					}) : null,
+					pwHook[0] === null ? setRow("password", {
+						title: "登录密码",
+						desc: "改成只有你自己知道的密码。改完这台电脑不用重新登录，下次登录用新密码。",
+						side: btn("修改密码", { small: true, tone: "ghost", disabled: busyHook[0], onClick: function () { noteHook[1](""); pwHook[1]({ old: "", next: "", again: "" }); } })
+					}) : el("div", { className: "cs-set-row", key: "password" },
+						el("div", { className: "cs-set-main" },
+							el("div", { className: "cs-set-rt" }, el("span", null, "修改登录密码")),
+							el("form", {
+								className: "cs-form",
+								"data-mark": "company-self-password-v1",
+								style: { marginTop: 8 },
+								onSubmit: function (ev) {
+									ev.preventDefault();
+									const f = pwHook[0];
+									if (!f.old) { noteHook[1]("先填旧密码。"); return; }
+									if (f.next.length < 6) { noteHook[1]("新密码至少 6 位，现在是 " + f.next.length + " 位。"); return; }
+									if (f.next !== f.again) { noteHook[1]("两次输入的新密码不一样。"); return; }
+									if (f.next === f.old) { noteHook[1]("新密码和旧密码一样，换一个。"); return; }
+									saveSelf({ password_old: f.old, password_new: f.next }, "密码已改好。下次登录用新密码。").then(function (ok) { if (ok) pwHook[1](null); });
+								}
+							},
+								[["old", "旧密码", "current-password"], ["next", "新密码（至少 6 位）", "new-password"], ["again", "再输一次新密码", "new-password"]].map(function (x) {
+									return el("label", { className: "cs-field", key: x[0] }, el("span", null, x[1]),
+										el("input", {
+											className: "cs-input",
+											type: "password",
+											autoComplete: x[2],
+											value: pwHook[0][x[0]],
+											disabled: busyHook[0],
+											onChange: function (e) { const n = Object.assign({}, pwHook[0]); n[x[0]] = e.target.value; pwHook[1](n); }
+										}));
+								}),
+								el("div", { className: "cs-set-foot", style: { gridColumn: "1 / -1" } },
+									el("p", { className: "cs-set-note" }, "忘了旧密码就找管理员在「人员」里重设。"),
+									el("div", { style: { display: "flex", gap: 8 } },
+										btn("取消", { small: true, tone: "ghost", onClick: function () { pwHook[1](null); noteHook[1](""); } }),
+										btn(busyHook[0] ? "正在保存…" : "保存新密码", { submit: true, small: true, tone: "primary", disabled: busyHook[0] })))
+							)
+						)
+					),
 					setRow("logout", {
 						title: "退出登录",
 						desc: "本机账号会立刻清掉，窗口回到登录。",
@@ -5200,10 +5319,12 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		function fetchQuota() {
+		function fetchQuota(fresh) {
+			const h = { "Accept": "application/json" };
+			if (fresh) h["X-Company-Fresh"] = "1";
 			return fetch("/company/grok-quota", {
 				credentials: "same-origin",
-				headers: { "Accept": "application/json" }
+				headers: h
 			}).then(function (res) {
 				return res.json().then(function (j) {
 					return { ok: !!(res.ok && j && j.ok !== false), j: j || {}, status: res.status };
@@ -5325,6 +5446,94 @@ window.__ModuleLoader__.load({
 
 		// company-server-key-v1: the vendor keys live in the server's gateway.env, never on a desk.
 		// The desk's own key box is hidden (company-no-add-key); this is where an admin types one.
+		// company-key-models-v1: which of a key vendor's models everyone sees. None ticked (the
+		// default) = the vendor's whole live list, so a model it adds shows up by itself.
+		function KeyModelPicker(props) {
+			const vendors = props.vendors || [];
+			const curHook = React.useState(vendors[0] ? vendors[0].vendor : "");
+			const listHook = React.useState({ loaded: false, rows: [], err: "" });
+			const pickHook = React.useState({});
+			const allHook = React.useState(true);
+			const noteHook = React.useState("");
+			const toneHook = React.useState("");
+			const busyHook = React.useState(false);
+			const cur = vendors.some(function (v) { return v.vendor === curHook[0]; }) ? curHook[0] : (vendors[0] ? vendors[0].vendor : "");
+			function load(v) {
+				if (!v) return;
+				listHook[1]({ loaded: false, rows: [], err: "" });
+				noteHook[1]("");
+				Promise.all([postChannels({ action: "list-models", vendor: v }), postChannels({ action: "picked-models", vendor: v })]).then(function (r) {
+					if (!r[0].ok) { listHook[1]({ loaded: true, rows: [], err: channelsErr(r[0]) }); return; }
+					const picked = ((r[1].j && r[1].j.models) || []).map(function (m) { return m && m.id; }).filter(Boolean);
+					const bag = {};
+					picked.forEach(function (id) { bag[id] = true; });
+					pickHook[1](bag);
+					allHook[1](!picked.length);
+					listHook[1]({ loaded: true, rows: (r[0].j && r[0].j.models) || [], err: "" });
+				});
+			}
+			React.useEffect(function () { load(cur); }, [cur, props.stamp]);
+			if (!vendors.length) return null;
+			const rows = listHook[0].rows;
+			const label = (vendors.filter(function (v) { return v.vendor === cur; })[0] || {}).label || cur;
+			function apply() {
+				const ids = allHook[0] ? [] : rows.map(function (m) { return m.id; }).filter(function (id) { return pickHook[0][id]; });
+				if (!allHook[0] && !ids.length) { toneHook[1]("err"); noteHook[1]("至少勾一个，或者选「全部开放」。"); return; }
+				busyHook[1](true);
+				postChannels({ action: "apply-models", vendor: cur, models: ids }).then(function (out) {
+					busyHook[1](false);
+					if (!out.ok) { toneHook[1]("err"); noteHook[1](channelsErr(out)); return; }
+					toneHook[1]("");
+					noteHook[1]((ids.length ? "已开放 " + ids.length + " 个 " + label + " 模型。" : "已开放 " + label + " 的全部模型，以后它出新模型会自动出现。")
+						+ (out.j && out.j.live ? "这台电脑的模型菜单已经更新；" : "") + "其他人下次登录时更新。");
+				});
+			}
+			function toggle(id) {
+				const next = Object.assign({}, pickHook[0]);
+				if (next[id]) delete next[id]; else next[id] = true;
+				pickHook[1](next);
+			}
+			const list = !listHook[0].loaded
+				? el("div", { className: "cs-vendor-msg" }, "正在向 " + label + " 要模型列表…")
+				: listHook[0].err
+					? el("div", { className: "cs-vendor-msg" }, listHook[0].err)
+					: el("div", { className: "cs-mlist" }, rows.map(function (m) {
+						const on = allHook[0] || !!pickHook[0][m.id];
+						return el("div", { className: "cs-mrow" + (on ? "" : " cs-mrow-off"), key: m.id },
+							el("button", {
+								type: "button",
+								role: "checkbox",
+								"aria-checked": on,
+								"aria-label": m.id,
+								disabled: allHook[0] || busyHook[0],
+								className: "cs-tick" + (on ? " is-on" : ""),
+								onClick: function () { toggle(m.id); }
+							}, TICK_SVG),
+							el("div", { className: "cs-mrow-name" }, el("span", null, m.id), m.image ? badge("识图") : null)
+						);
+					}));
+			return el("div", { className: "cs-set-card", "data-mark": "company-key-models-v1", style: { marginTop: 12 } },
+				el("div", { className: "cs-form" },
+					el("label", { className: "cs-field" }, el("span", null, "开放给大家的模型"),
+						selectBox(cur, vendors.map(function (v) { return { value: v.vendor, label: v.label }; }), function (v) { curHook[1](v); }, busyHook[0])),
+					el("div", { className: "cs-field" }, el("span", null, "范围"),
+						el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+							el("button", { type: "button", className: "cs-chip" + (allHook[0] ? " is-on" : ""), "aria-pressed": allHook[0], disabled: busyHook[0], onClick: function () { allHook[1](true); } }, "全部开放（跟着厂商更新）"),
+							el("button", { type: "button", className: "cs-chip" + (!allHook[0] ? " is-on" : ""), "aria-pressed": !allHook[0], disabled: busyHook[0], onClick: function () {
+								if (allHook[0]) { const bag = {}; rows.forEach(function (m) { bag[m.id] = true; }); pickHook[1](bag); }
+								allHook[1](false);
+							} }, "只开放勾选的"))),
+					el("div", { style: { gridColumn: "1 / -1" } }, list),
+					el("div", { className: "cs-set-foot", style: { gridColumn: "1 / -1" } },
+						el("p", { className: "cs-set-note" }, allHook[0]
+							? "模型列表每次从 " + label + " 实时取，它上新模型不用改这里。"
+							: "只有勾选的出现在大家的模型菜单里；" + label + " 上的新模型要回来勾上。"),
+						btn(busyHook[0] ? "正在保存…" : "保存给全公司", { tone: "primary", disabled: busyHook[0] || !listHook[0].loaded || !!listHook[0].err, onClick: apply }))
+				),
+				setNote(noteHook[0], toneHook[0])
+			);
+		}
+
 		function ServerKeyForm() {
 			useShellPulse();
 			const presetHook = React.useState("deepseek");
@@ -5334,6 +5543,7 @@ window.__ModuleLoader__.load({
 			const toneHook = React.useState("");
 			const busyHook = React.useState(false);
 			const boundHook = React.useState({});
+			const stampHook = React.useState(0);
 			function load() {
 				fetchChannels().then(function (out) {
 					const next = {};
@@ -5344,11 +5554,11 @@ window.__ModuleLoader__.load({
 			React.useEffect(load, []);
 			if (shellRole !== "admin") return null;
 			const presets = [
-				{ value: "deepseek", label: "DeepSeek", id: "deepseek" },
+				{ value: "deepseek", label: "DeepSeek", id: "deepseek", vendor: "deepseek" },
 				{ value: "openai", label: "OpenAI / GPT（API key）", id: "gpt" },
-				{ value: "anthropic", label: "Anthropic / Claude", id: "opus" },
-				{ value: "kimi", label: "Kimi", id: "kimi" },
-				{ value: "glm", label: "智谱 GLM", id: "glm" },
+				{ value: "anthropic", label: "Anthropic / Claude", id: "opus", vendor: "claude" },
+				{ value: "kimi", label: "Kimi", id: "kimi", vendor: "kimi" },
+				{ value: "glm", label: "智谱 GLM", id: "glm", vendor: "glm" },
 				{ value: "xai", label: "xAI / Grok（API key）", id: "grok-key" }
 			];
 			const cur = presets.filter(function (x) { return x.value === presetHook[0]; })[0] || presets[0];
@@ -5365,8 +5575,9 @@ window.__ModuleLoader__.load({
 					if (!out.ok) { toneHook[1]("err"); noteHook[1](channelsErr(out)); return; }
 					keyHook[1]("");
 					toneHook[1]("");
-					noteHook[1]("已存到服务器：" + cur.label + "。对话框的模型菜单下次打开时就有它的模型。");
+					noteHook[1]("已存到服务器：" + cur.label + "。" + (out.j && out.j.live ? "这台电脑的模型菜单已经有它的模型，" : "") + "其他人下次登录时就有。要只开放其中几个，在下面选。");
 					load();
+					stampHook[1](stampHook[0] + 1);
 				});
 			}
 			const stored = presets.filter(function (x) { return boundHook[0][x.id]; }).map(function (x) { return x.label; });
@@ -5386,7 +5597,8 @@ window.__ModuleLoader__.load({
 							btn(busyHook[0] ? "正在保存…" : "保存到服务器", { submit: true, tone: "primary", disabled: busyHook[0] }))
 					)
 				),
-				setNote(noteHook[0], toneHook[0])
+				setNote(noteHook[0], toneHook[0]),
+				el(KeyModelPicker, { stamp: stampHook[0], vendors: presets.filter(function (x) { return x.vendor && boundHook[0][x.id]; }).map(function (x) { return { vendor: x.vendor, label: x.label }; }) })
 			);
 		}
 
@@ -5628,7 +5840,8 @@ window.__ModuleLoader__.load({
 			return el("div", { className: "cs-set", "data-mark": "company-proxy-fold-v1" },
 				el("div", { className: "cs-quota" },
 					el("div", { className: "cs-quota-main" },
-						el("div", { className: "cs-quota-k" }, (q.vendor === "gpt" ? "GPT" : "Grok") + " 订阅剩余额度"),
+						el("div", { className: "cs-quota-k", style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
+							el("span", null, (q.vendor === "gpt" ? "GPT" : "Grok") + " 订阅剩余额度"), quotaRefresh(q)),
 						el("div", { className: "cs-quota-v" }, pct == null ? "—" : quotaPctText(q, pct) + "%", el("small", null, quotaSub(q))),
 						meter(pct)
 					)
@@ -6021,7 +6234,8 @@ window.__ModuleLoader__.load({
 			return setPage("同事", "谁在线、最近用了多少 token。用量来自服务器网关，经网关的模型调用都算在内。",
 				el("div", { className: "cs-stats" },
 					el("div", { className: "cs-stat" },
-						el("div", { className: "cs-stat-k" }, q.vendor === "gpt" ? "GPT 订阅剩余" : "订阅剩余"),
+						el("div", { className: "cs-stat-k", style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
+							el("span", null, q.vendor === "gpt" ? "GPT 订阅剩余" : "订阅剩余"), quotaRefresh(q)),
 						el("div", { className: "cs-stat-v" }, pct == null ? "—" : quotaPctText(q, pct), pct == null ? null : el("small", null, "%")),
 						meter(pct),
 						el("div", { className: "cs-stat-s" }, quotaSub(q))
@@ -6761,6 +6975,479 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		// company-chat-desk-v1 ------------------------------------------------------------
+		const CHAT_PANEL = "company-chat";
+		const CHAT_TAB = "company-chat";
+		let chatWhere = null;
+		function chatUrl() {
+			if (!chatWhere) {
+				chatWhere = fetch("/company/chat/where", {
+					credentials: "same-origin",
+					headers: { "Accept": "application/json" }
+				}).then(function (res) {
+					return res.json().then(function (j) {
+						if (res.ok && j && j.ok && j.url) return String(j.url);
+						throw new Error("relay");
+					});
+				}).catch(function (err) {
+					chatWhere = null;
+					throw err;
+				});
+			}
+			return chatWhere;
+		}
+		// company-chat-notify-v1: the unread count (badge on 聊天), a popup in the window when a message comes while
+		// the chat is not on screen, and the system's notification while the window is in the background. The desk's
+		// host watches the chat (chat-relay.js); this page asks it every few seconds.
+		let chatSnap = { count: 0, toast: null };
+		const chatSubs = new Set();
+		const chatStore = {
+			subscribe: function (fn) { chatSubs.add(fn); return function () { chatSubs.delete(fn); }; },
+			getSnapshot: function () { return chatSnap; }
+		};
+		function setChatSnap(next) {
+			chatSnap = next;
+			chatSubs.forEach(function (fn) { fn(); });
+		}
+		// The chat frames on screen (its column at the right edge, the left panel, an old right-sidebar tab); a hidden
+		// kept-mounted tab has no box.
+		const chatBoxes = new Set();
+		function chatOnScreen() {
+			try {
+				if (document.visibilityState && document.visibilityState !== "visible") return false;
+				let seen = false;
+				chatBoxes.forEach(function (el) { if (el && el.isConnected && el.getClientRects().length > 0) seen = true; });
+				return seen;
+			} catch (err) {
+				return false;
+			}
+		}
+		function chatHeaders() {
+			return { "Accept": "application/json", "X-TDH-Chat": "1" };
+		}
+		let chatPolling = false;
+		function startChatPoll() {
+			if (chatPolling) return;
+			chatPolling = true;
+			let since = -1;
+			function tick() {
+				fetch("/company/chat/unread?since=" + Math.max(0, since), { credentials: "same-origin", headers: chatHeaders() })
+					.then(function (res) { return res.json(); })
+					.then(function (j) {
+						if (!j || !j.ok) return;
+						const fresh = since < 0 ? [] : (j.events || []);
+						since = Number(j.seq) || 0;
+						let toast = chatSnap.toast;
+						if (fresh.length) {
+							const last = fresh[fresh.length - 1];
+							const text = (last.group ? "「" + (last.from || "群聊") + "」有新消息" : (last.from || "同事") + " 发来新消息") +
+								(fresh.length > 1 ? "（共 " + fresh.length + " 条）" : "");
+							// The chat's own column is always there: its list shows what is new, no popup over it.
+							if (!chatOnScreen() && !chatDocked()) toast = { id: last.id, text: text };
+							let focused = true;
+							try { focused = document.hasFocus(); } catch (err) {}
+							if (!focused) {
+								fetch("/company/chat/notify", {
+									method: "POST",
+									credentials: "same-origin",
+									headers: Object.assign({ "Content-Type": "application/json" }, chatHeaders()),
+									body: JSON.stringify({ title: "TDH 聊天", body: text })
+								}).catch(function () {});
+							}
+						}
+						const count = Number(j.count) || 0;
+						if (count !== chatSnap.count || toast !== chatSnap.toast) setChatSnap({ count: count, toast: toast });
+					})
+					.catch(function () {});
+			}
+			tick();
+			setInterval(tick, 4000);
+		}
+		function ChatIcon(props) {
+			const snap = React.useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+			const glyph = React.createElement(ChatGlyph, props);
+			const n = snap.count;
+			if (!n) return glyph;
+			return React.createElement("span", { style: { position: "relative", display: "inline-flex" }, "data-company-chat-unread": String(n) },
+				glyph,
+				React.createElement("span", {
+					style: {
+						position: "absolute", top: -6, right: -9, minWidth: 15, height: 15, padding: "0 4px", boxSizing: "border-box",
+						borderRadius: 8, background: T.err, color: "#fff", fontSize: 10, lineHeight: "15px", fontWeight: 600,
+						textAlign: "center", fontFamily: FONT, pointerEvents: "none"
+					}
+				}, n > 99 ? "99+" : String(n))
+			);
+		}
+		function ChatToast(props) {
+			const snap = React.useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+			const toast = snap.toast;
+			React.useEffect(function () {
+				if (!toast) return undefined;
+				const timer = setTimeout(function () {
+					if (chatSnap.toast === toast) setChatSnap({ count: chatSnap.count, toast: null });
+				}, 8000);
+				return function () { clearTimeout(timer); };
+			}, [toast]);
+			if (!toast) return null;
+			function close() {
+				if (chatSnap.toast === toast) setChatSnap({ count: chatSnap.count, toast: null });
+			}
+			return React.createElement("div", {
+				role: "status",
+				"data-company-chat-toast": "1",
+				style: {
+					position: "fixed", right: 20, bottom: 20, zIndex: 1000, display: "flex", alignItems: "center", gap: 10,
+					maxWidth: 380, padding: "10px 10px 10px 14px", borderRadius: 10, background: T.base,
+					border: "1px solid " + T.border2, boxShadow: "0 6px 24px rgba(0,0,0,.18)", fontFamily: FONT, fontSize: 13, color: T.label
+				}
+			},
+				React.createElement(ChatGlyph, { size: 16 }),
+				React.createElement("span", { style: { flex: 1, minWidth: 0 } }, toast.text),
+				React.createElement(P.Button, {
+					variant: "outline",
+					size: "sm",
+					type: "button",
+					onClick: function () { close(); if (props && props.openChat) props.openChat(); }
+				}, "打开"),
+				React.createElement("button", {
+					type: "button",
+					"aria-label": "关闭",
+					onClick: close,
+					style: { border: 0, background: "transparent", color: T.label2, cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "2px 4px" }
+				}, "×")
+			);
+		}
+		function ChatGlyph(props) {
+			const size = (props && props.size) || 16;
+			return React.createElement("svg", {
+				width: size,
+				height: size,
+				viewBox: "0 0 16 16",
+				fill: "none",
+				stroke: "currentColor",
+				strokeWidth: 1.3,
+				strokeLinejoin: "round",
+				strokeLinecap: "round",
+				"aria-hidden": true
+			},
+				React.createElement("path", { d: "M2.5 3.5h7a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H6l-2.5 2v-2h-1a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z" }),
+				React.createElement("path", { d: "M10.5 6h3a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-1v2l-2.5-2H8a1 1 0 0 1-1-1v-.5" })
+			);
+		}
+		function chatBoxRef(el) {
+			// React calls this with the box, then with null when it goes: forget boxes that left the page.
+			if (el) chatBoxes.add(el);
+			chatBoxes.forEach(function (b) { if (!b.isConnected) chatBoxes.delete(b); });
+		}
+		// company-chat-theme-v1: the chat page wears the desk's light or dark (body[data-ds-dark-theme], as the
+		// artifact frame reads it): in its address when it opens, and as a message whenever the desk changes.
+		function deskTheme() {
+			try { return document.body && document.body.hasAttribute("data-ds-dark-theme") ? "dark" : "light"; } catch (err) { return "light"; }
+		}
+		function themed(u) { return u ? u + (u.indexOf("?") < 0 ? "?" : "&") + "theme=" + deskTheme() : u; }
+		function ChatFrame() {
+			const [url, setUrl] = React.useState("");
+			const frame = React.useRef(null);
+			React.useEffect(function () {
+				if (!url || typeof MutationObserver === "undefined" || !document.body) return undefined;
+				let origin = "*";
+				try { origin = new URL(url).origin; } catch (err) {}
+				const tell = function () {
+					try { if (frame.current && frame.current.contentWindow) frame.current.contentWindow.postMessage({ type: "tdh-theme", theme: deskTheme() }, origin); } catch (err) {}
+				};
+				const mo = new MutationObserver(tell);
+				mo.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+				return function () { mo.disconnect(); };
+			}, [url]);
+			const [failed, setFailed] = React.useState(false);
+			const [round, setRound] = React.useState(0);
+			React.useEffect(function () {
+				let live = true;
+				setFailed(false);
+				chatUrl().then(function (u) {
+					if (live) setUrl(u);
+				}, function () {
+					if (live) setFailed(true);
+				});
+				return function () { live = false; };
+			}, [round]);
+			const box = {
+				width: "100%",
+				height: "100%",
+				minWidth: 0,
+				minHeight: 0,
+				display: "flex",
+				flexDirection: "column",
+				overflow: "hidden",
+				background: T.base,
+				fontFamily: FONT
+			};
+			if (url) {
+				return React.createElement("div", { style: box, "data-company-chat": "1", ref: chatBoxRef },
+					React.createElement("iframe", {
+						ref: frame,
+						src: themed(url),
+						title: "聊天",
+						style: { flex: 1, width: "100%", minHeight: 0, border: 0, display: "block" },
+						allow: "clipboard-read; clipboard-write; microphone; camera; autoplay; fullscreen"
+					})
+				);
+			}
+			return React.createElement("div", { style: Object.assign({}, box, { alignItems: "center", justifyContent: "center", gap: 10, color: T.label2, fontSize: 13 }) },
+				React.createElement("div", null, failed ? "聊天没打开：本机的聊天转发没起来。" : "正在打开聊天…"),
+				failed ? React.createElement(P.Button, {
+					variant: "outline",
+					size: "sm",
+					type: "button",
+					onClick: function () { setRound(round + 1); }
+				}, "重试") : null
+			);
+		}
+		function ChatPage() {
+			return React.createElement(ChatFrame);
+		}
+
+		// company-chat-dock-v1 ------------------------------------------------------------
+		// 聊天 locked in a column of its own at the window's right edge (the user, 2026-11-20): 工作区 | AI 对话 |
+		// 侧边栏 (files, browser, terminal: opened when needed, closed by default) | 聊天, always there. The kernel's
+		// frame has three columns and no seat for a fourth, but it lays itself out from its own measured width:
+		// #root gives up the chat's width on the right (CSS above), the frame and all its rules (the right
+		// sidebar's share, the 400px kept for the conversation, the workspace folding under 1024px) work in the
+		// rest, and the chat sits in that strip, a portal on document.body under the kernel's menus and dialogs.
+		// It is one chat for the whole desk, whatever session or page is shown, and the only one: while it is
+		// there the left column does not list 聊天 and an old right-sidebar 聊天 tab closes itself. A window
+		// narrower than CHAT_DOCK_MEDIA has no such column; 聊天 is back in the left column then.
+		let chatDockMq;
+		let chatDockHolders = 0;
+		const chatDockSubs = new Set();
+		function chatDockQuery() {
+			if (chatDockMq === undefined) {
+				chatDockMq = null;
+				try {
+					if (typeof window.matchMedia === "function") chatDockMq = window.matchMedia(CHAT_DOCK_MEDIA);
+				} catch (err) {}
+				if (chatDockMq) {
+					try {
+						if (typeof chatDockMq.addEventListener === "function") chatDockMq.addEventListener("change", chatDockPing);
+						else if (typeof chatDockMq.addListener === "function") chatDockMq.addListener(chatDockPing);
+					} catch (err) {}
+				}
+			}
+			return chatDockMq;
+		}
+		function chatDockPing() {
+			chatDockSubs.forEach(function (fn) { fn(); });
+		}
+		function chatDockSubscribe(fn) {
+			chatDockQuery();
+			chatDockSubs.add(fn);
+			return function () { chatDockSubs.delete(fn); };
+		}
+		// The window is wide enough for the column.
+		function chatDockWide() {
+			const mq = chatDockQuery();
+			return !!(mq && mq.matches) && typeof ReactDOM.createPortal === "function";
+		}
+		// The column is on screen (wide enough, and drawn).
+		function chatDocked() {
+			return chatDockHolders > 0 && chatDockWide();
+		}
+		// The frame folds the workspace away under 1024px of its own width. Take the chat's column out of a 1280px
+		// window (the Mac app opens at that size) and the frame is about 950px: the workspace would fold although
+		// the window has room for it. So each time the frame goes narrow, once, the shell opens it with the kernel's
+		// own toggle (in a narrow frame that is the kernel's "open anyway", which the kernel drops by itself when the
+		// right sidebar opens). One the person folded while the frame was wide stays folded; one they fold while
+		// it is narrow, too. The kernel collapses it a moment after the frame narrows: a narrow frame that is
+		// still open is waited out.
+		function workspaceKeeper(toggle) {
+			let side = "";
+			let wideFolded = false;
+			return function (frameWidth, folded) {
+				if (!(frameWidth > 0)) return;
+				if (frameWidth >= 1024) {
+					side = "wide";
+					wideFolded = folded;
+					return;
+				}
+				if (side === "narrow" || !folded) return;
+				side = "narrow";
+				if (!wideFolded && typeof toggle === "function") toggle();
+			};
+		}
+		function keepWorkspaceOpen(toggle) {
+			const look = workspaceKeeper(toggle);
+			let frame = null;
+			let ro = null;
+			let mo = null;
+			let timer = 0;
+			let tries = 0;
+			function check() {
+				try {
+					if (frame && frame.isConnected) look(frame.getBoundingClientRect().width, frame.hasAttribute("data-sidebar-collapsed"));
+				} catch (err) {}
+			}
+			function find() {
+				timer = 0;
+				// The frame is the element that holds the kernel's overlay layer.
+				const overlay = document.querySelector("[data-shell-overlay]");
+				frame = overlay ? overlay.parentElement : null;
+				if (!frame) {
+					if (++tries < 20) timer = setTimeout(find, 250);
+					return;
+				}
+				if (typeof ResizeObserver !== "undefined") {
+					ro = new ResizeObserver(check);
+					ro.observe(frame);
+				}
+				if (typeof MutationObserver !== "undefined") {
+					mo = new MutationObserver(check);
+					mo.observe(frame, { attributes: true, attributeFilter: ["data-sidebar-collapsed"] });
+				}
+				check();
+			}
+			find();
+			return function () {
+				if (timer) clearTimeout(timer);
+				if (ro) ro.disconnect();
+				if (mo) mo.disconnect();
+			};
+		}
+		function ChatDock(props) {
+			const wide = React.useSyncExternalStore(chatDockSubscribe, chatDockWide);
+			React.useEffect(function () {
+				if (!wide) return undefined;
+				const root = document.documentElement;
+				chatDockHolders++;
+				root.setAttribute("data-company-chat-dock", "1");
+				chatDockPing();
+				// The chat is in its column now: the same chat in the main area would be a second one.
+				try {
+					if (props.panelInfo && props.panelInfo.getSnapshot().activePanelId === CHAT_PANEL && props.selectPanel) props.selectPanel(null);
+				} catch (err) {}
+				const stopKeeping = keepWorkspaceOpen(props.toggleSidebar);
+				return function () {
+					stopKeeping();
+					chatDockHolders = Math.max(0, chatDockHolders - 1);
+					if (!chatDockHolders) root.removeAttribute("data-company-chat-dock");
+					chatDockPing();
+				};
+			}, [wide]);
+			if (!wide || !document.body) return null;
+			return ReactDOM.createPortal(
+				React.createElement("aside", { className: "cs-chat-dock", "data-company-chat-dock": "1", "aria-label": "聊天" },
+					React.createElement(ChatFrame)
+				),
+				document.body
+			);
+		}
+
+		// company-erp-desk-v1: ERPNext (on the company server, the tailnet only) under 聊天 in the left column.
+		// company-erp-desk-v2 (the user, 2026-11-21: "能不能直接在TDH里打开"): in this page, through this desk's host's
+		// relay (erp-relay.js, as the chat's): the relay's address for a one-time link that logs the person in with
+		// their TDH account. No button for the browser (the user, same day: "不要这个按钮").
+		const ERP_PANEL = "company-erp";
+		const ERP_WHY = {
+			"erp-off": "ERPNext 还没接好，请找管理员。",
+			"bad-token": "TDH 的登录过期了，请重新打开 TDH 再试。",
+			"header": "这个页面不能打开 ERPNext。",
+			"relay": "本机的 ERPNext 转发没起来，请重启 TDH 再试。",
+		};
+		function erpWhere() {
+			return fetch("/company/erp/where", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Accept": "application/json", "X-TDH-ERP": "1" }
+			}).then(function (res) {
+				return res.json().then(function (j) {
+					if (res.ok && j && j.ok && j.url) return String(j.url);
+					throw new Error((j && j.error) || "open");
+				});
+			});
+		}
+		function erpOpen() {
+			return fetch("/company/erp/open", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Accept": "application/json", "X-TDH-ERP": "1" }
+			}).then(function (res) {
+				return res.json().then(function (j) {
+					if (res.ok && j && j.ok) return true;
+					throw new Error((j && j.error) || "open");
+				});
+			});
+		}
+		function ErpGlyph(props) {
+			const size = (props && props.size) || 16;
+			return React.createElement("svg", {
+				width: size, height: size, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3,
+				strokeLinejoin: "round", strokeLinecap: "round", "aria-hidden": true
+			},
+				React.createElement("rect", { x: 2, y: 2.5, width: 12, height: 11, rx: 1.5 }),
+				React.createElement("path", { d: "M2 6h12M6 6v7.5M8.5 8.5h3M8.5 11h3" })
+			);
+		}
+		function ErpPage() {
+			const [url, setUrl] = React.useState("");
+			const [why, setWhy] = React.useState("");
+			const [round, setRound] = React.useState(0);
+			React.useEffect(function () {
+				let live = true;
+				setUrl("");
+				setWhy("");
+				erpWhere().then(function (u) {
+					if (live) setUrl(u);
+				}, function (err) {
+					if (live) setWhy(ERP_WHY[String((err && err.message) || "")] || "没打开：这台电脑连不上公司服务器，或 ERPNext 没在运行。");
+				});
+				return function () { live = false; };
+			}, [round]);
+			const bar = React.createElement("div", {
+				style: {
+					height: 36, flex: "none", display: "flex", alignItems: "center", gap: 8, padding: "0 10px",
+					borderBottom: "0.5px solid " + T.border1, color: T.label2, fontSize: 12, boxSizing: "border-box"
+				}
+			},
+				React.createElement(ErpGlyph, { size: 14 }),
+				React.createElement("span", { style: { color: T.label, fontWeight: 600, fontSize: 13 } }, "ERPNext"),
+				React.createElement("span", { style: { flex: 1 } }),
+				React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: function () { setRound(round + 1); } }, "重新打开")
+			);
+			const box = { width: "100%", height: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+				background: T.base, fontFamily: FONT };
+			return React.createElement("div", { "data-company-erp": url ? "framed" : why ? "failed" : "opening", style: box },
+				bar,
+				url ? React.createElement("iframe", {
+					key: url,
+					src: url,
+					title: "ERPNext",
+					style: { flex: 1, width: "100%", minHeight: 0, border: 0, display: "block", background: "#fff" },
+					allow: "clipboard-read; clipboard-write; fullscreen"
+				}) : React.createElement("div", {
+					style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
+						color: T.label2, fontSize: 13, textAlign: "center", padding: 24, boxSizing: "border-box" }
+				},
+					React.createElement(ErpGlyph, { size: 28 }),
+					React.createElement("div", null, why || "正在用你的 TDH 账号打开 ERPNext…"),
+					why ? React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: function () { setRound(round + 1); } }, "重试") : null
+				)
+			);
+		}
+		// company-chat-dock-v1: the right sidebar no longer offers 聊天 (it has its own column). A 聊天 tab a desk
+		// saved before that still comes back with the session's layout: while the column is there, the tab closes
+		// itself (the last tab closes the sidebar with it); in a window too narrow for the column it is the chat.
+		function ChatTab(props) {
+			const info = props && typeof props.useTabInfo === "function" ? props.useTabInfo() : null;
+			const docked = React.useSyncExternalStore(chatDockSubscribe, chatDocked);
+			const actions = info && info.tab ? info.tab.actions : null;
+			React.useEffect(function () {
+				if (!docked || !actions || typeof actions.close !== "function") return;
+				try { actions.close(); } catch (err) {}
+			}, [docked, actions]);
+			if (docked) return null;
+			return React.createElement(ChatFrame);
+		}
+
 		function apply(ctx) {
 			shellRole = readDeskRole();
 			fetchLoginRole();
@@ -6829,6 +7516,10 @@ window.__ModuleLoader__.load({
 					return null;
 				}
 			};
+			unarchiveFn = function (sessionId) {
+				if (!ctx.workspaces || typeof ctx.workspaces.unarchiveSession !== "function") return Promise.reject(new Error("no-unarchive"));
+				return ctx.workspaces.unarchiveSession(sessionId);
+			};
 			try {
 				const remote = typeof ctx.get === "function" ? ctx.get("remote.artifact") : undefined;
 				if (remote && typeof remote.listArtifacts === "function") {
@@ -6846,10 +7537,92 @@ window.__ModuleLoader__.load({
 				ctx.workspaces.list.subscribe(function () { pulse(); });
 			}
 
+			// company-erp-desk-v1: ERPNext under 聊天 (opens in the browser, logged in with the TDH account).
+			ctx.slots.inject("main", function () {
+				return ctx.slots.register({
+					name: "main",
+					key: ERP_PANEL
+				}, ErpPage);
+			});
+			ctx.slots.inject("sidebar.panellist", function () {
+				return ctx.slots.register({
+					name: "sidebar.panellist",
+					id: ERP_PANEL,
+					order: 31,
+					label: function () { return "ERPNext"; }
+				}, ErpGlyph);
+			});
+
+			// company-chat-desk-v1: 聊天, the company chat (Tinode on the site). company-chat-dock-v1: in a column of
+			// its own at the window's right edge, always there (ChatDock); in a window too narrow for that column, as
+			// a panel in the left column. Both show the chat page this desk's host relays (chat-relay.js), on a port
+			// of its own: a separate origin from this page, already logged in as the person at this desk.
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
+					id: "company-chat-dock",
+					order: 29,
+					inject: function () {
+						return {
+							panelInfo: ctx.layout.panelInfo,
+							selectPanel: function (id) { try { ctx.layout.selectPanel(id); } catch (err) {} },
+							toggleSidebar: function () { try { ctx.layout.toggleSidebar(); } catch (err) {} }
+						};
+					}
+				}, ChatDock);
+			});
+			ctx.slots.inject("main", function () {
+				return ctx.slots.register({
+					name: "main",
+					key: CHAT_PANEL
+				}, ChatPage);
+			});
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
+					id: "company-chat-toast",
+					order: 30,
+					inject: function () {
+						// With its column on screen the chat is already open there.
+						return { openChat: function () { if (chatDocked()) return; try { ctx.layout.selectPanel(CHAT_PANEL); } catch (err) {} } };
+					}
+				}, ChatToast);
+			});
+			startChatPoll();
+			ctx.slots.inject("sidebar.panellist", function () {
+				return ctx.slots.register({
+					name: "sidebar.panellist",
+					id: CHAT_PANEL,
+					order: 30,
+					label: function () { return "聊天"; }
+				}, ChatIcon);
+			});
+			if (typeof ctx.inject === "function") {
+				ctx.inject(["slots", "sidebarRightTabs"], function (rctx) {
+					rctx.effect(function () {
+						// No guide entry (company-chat-dock-v1): the right sidebar's start page offers files, browser
+						// and terminal; the type stays for a 聊天 tab a desk saved before (see ChatTab).
+						return rctx.sidebarRightTabs.register({
+							id: CHAT_TAB,
+							kind: CHAT_TAB,
+							priority: "extension",
+							keepMounted: true,
+							title: function () { return "聊天"; }
+						});
+					}, "company-shell: chat tab type");
+					rctx.slots.inject("sidebar.right.pane.tab", function () {
+						return rctx.slots.register({
+							name: "sidebar.right.pane.tab",
+							key: CHAT_TAB
+						}, ChatTab);
+					});
+				});
+			}
+
 			// Global panels (the official plugin manager registers "plugins" here).
 			// The shipped sidebar row used to list them; ours does now, above the
 			// workspaces, the same way.
-			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务" };
+			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务", "company-chat": "聊天", "company-erp": "ERPNext" };
 			const panelSubs = new Set();
 			let panelRows = [];
 			function syncPanels() {
@@ -6998,6 +7771,22 @@ window.__ModuleLoader__.load({
 			});
 		}
 
+		// company-panels-for-all-v1: the left column's panels for this person. 插件 can switch whole parts of the
+		// desk off, so it stays the admin's; 工件、定时任务、聊天 are everyone's. Until 2026-11-20 the whole row was the
+		// admin's, and an employee's desk (seen on Windows) had no 聊天 in the left column at all.
+		function panelsForRole(role, panels) {
+			const list = Array.isArray(panels) ? panels : [];
+			return role === "admin" ? list : list.filter(function (p) { return p && p.id !== "plugins"; });
+		}
+		// company-chat-dock-v1: and while 聊天 has its own column at the right edge, the left column does not list it
+		// a second time.
+		function panelsForDesk(role, panels, chatDock) {
+			const list = panelsForRole(role, panels);
+			return chatDock ? list.filter(function (p) { return p && p.id !== CHAT_PANEL; }) : list;
+		}
+		exports.panelsForRole = panelsForRole;
+		exports.panelsForDesk = panelsForDesk;
+		exports.workspaceKeeper = workspaceKeeper;
 		exports.apply = apply;
 		exports.inject = inject;
 		return module.exports;

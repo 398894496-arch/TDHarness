@@ -6,12 +6,14 @@ $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
 if ($env:TDH_REPO) { $Repo = $env:TDH_REPO }
 $Server = Join-Path $Repo 'server'
-$Dist = 'D:\dsh\client-dist'
+# The publish works in a staging folder (company-publish-staged-v1) and names it in TDH_DIST.
+$Dist = if ($env:TDH_DIST) { $env:TDH_DIST } else { 'D:\dsh\client-dist' }
 $SiteYml = if ($env:TDH_SITE) { $env:TDH_SITE } else { 'D:\dsh\site.yml' }
 $Zip = Join-Path $Dist 'CompanyDesk-win.zip'
 $AppCs = Join-Path $Server 'AppHost.cs'
 $MountCs = Join-Path $Server 'ShareMount.cs'
 $TailnetCs = Join-Path $Server 'TailnetJoin.cs'
+$PrereqCs = Join-Path $Server 'DeskPrereq.cs'
 $Ico = Join-Path $Server 'tdharness.ico'
 $SitePy = Join-Path $Server 'site-cs.py'
 $Utf8NoBom = [Text.UTF8Encoding]::new($false)
@@ -70,7 +72,7 @@ $drawing = Join-Path $fw 'System.Drawing.dll'
 $AppExe = Join-Path $stage 'TDHarness.exe'
 $prev = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-& $Csc /nologo /platform:x64 /target:winexe /out:$AppExe /win32icon:$Ico /r:$winforms /r:$drawing /r:$coreDll /r:$formsDll $AppCs $MountCs $TailnetCs $StampCs $SiteCs
+& $Csc /nologo /platform:x64 /target:winexe /out:$AppExe /win32icon:$Ico /r:$winforms /r:$drawing /r:$coreDll /r:$formsDll $AppCs $MountCs $TailnetCs $PrereqCs $StampCs $SiteCs
 $rc = $LASTEXITCODE
 $ErrorActionPreference = $prev
 if ($rc -ne 0 -or -not (Test-Path -LiteralPath $AppExe)) { throw 'apphost-csc-failed' }

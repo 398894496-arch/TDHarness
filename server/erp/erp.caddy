@@ -1,0 +1,23 @@
+# company-erp-sso-v1: the desk's ERPNext entry asks the people service for a one-time login link (its other routes,
+# the login itself, are reached at https://<erp host>/tdh-sso/ through Tailscale Serve, not here).
+# company-erp-data-v1: and the agent's reads and writes of ERPNext as the person (list, get, count, report, create,
+# update, submit), the same way.
+handle /company/ext/erp/* {
+	reverse_proxy 127.0.0.1:4181
+}
+
+# company-erp-desk-v2: ERPNext inside the desk's window, through the desk's relay (desk/plugins/company-shell/lib/
+# erp-relay.js): the tailnet lets employees' devices reach 8443, not ERPNext's 443. /erp/tdh-sso/* is TDH's login for
+# ERPNext (the people service's /company/sso/*, as Tailscale Serve's /tdh-sso/* is); the rest of /erp/* is ERPNext,
+# told it is at its own address (its site is fixed in its frontend; its links and cookies are its own address's).
+handle_path /erp/tdh-sso/* {
+	rewrite * /company/sso{path}
+	reverse_proxy 127.0.0.1:4181
+}
+handle_path /erp/* {
+	reverse_proxy 127.0.0.1:18080 {
+		header_up Host tdharness.tail9c7cc7.ts.net
+		header_up X-Forwarded-Host tdharness.tail9c7cc7.ts.net
+		header_up X-Forwarded-Proto https
+	}
+}

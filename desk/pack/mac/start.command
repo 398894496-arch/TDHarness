@@ -2,8 +2,16 @@
 set -euo pipefail
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:$PATH"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+# company-shell-path-v1: the agent's shell finds this desk's own node and opencli by name.
+export PATH="$ROOT/bin:$ROOT/node/bin:$PATH"
 NODEBIN="$ROOT/node/bin/node"
 [[ -x "$NODEBIN" ]] || { echo "bundled-node-missing" >&2; exit 2; }
+# company-mac-offlan-resolve-v1: macOS finds {{TDH_HOST}} (a .local name) only on the office LAN. Every node of
+# this desk (update check, login, desk, kernel, hooks) loads mac-resolve.js first: away from the office it takes the
+# server's tailnet address from Tailscale instead. Before, nothing left the Mac and the login said "wrong password".
+if [ -f "$ROOT/mac-resolve.js" ]; then
+  export NODE_OPTIONS="--require \"$ROOT/mac-resolve.js\"${NODE_OPTIONS:+ $NODE_OPTIONS}"
+fi
 BOOT_STATUS="$HOME/.dsh-company-rc8/desk-boot.status"
 boot_status() {
   mkdir -p "$HOME/.dsh-company-rc8"
@@ -32,7 +40,10 @@ OV="$DSH_HOME/profiles/web/overlay.yml"
 if grep -q '__DESK_HOME__' "$OV" 2>/dev/null; then
   OV="$OV" DH="$DSH_HOME" "$NODEBIN" -e 'const fs=require("fs"); fs.writeFileSync(process.env.OV, fs.readFileSync(process.env.OV,"utf8").split("__DESK_HOME__").join(process.env.DH));'
 fi
-# Stale Error: lines here become the login-timeout dialog. Truncate every launch.
+# Stale Error: lines here become the login-timeout dialog. Truncate every launch, but keep
+# the last run's stderr as .prev first: a desk that died mid-turn left its reason here and the
+# relaunch wiped it (company-desk-err-keep-v1).
+if [[ -s "$DSH_HOME/web-runtime.err" ]]; then mv -f "$DSH_HOME/web-runtime.err" "$DSH_HOME/web-runtime.err.prev" || true; fi
 : > "$DSH_HOME/web-runtime.err"
 # Stays workspace-write, and this is MEASURED, not assumed (2026-08-26).
 #
@@ -69,7 +80,8 @@ TOKFILE="${HOME}/.dsh-company-rc8/gw.token"
 LOGIN_URL="https://{{TDH_HOST}}:8443/company/login"
 # JOIN_BEFORE_LOGIN=1
 # Off-LAN must be on 100.x before this POST hits the office login URL.
-if [ -x "$ROOT/mac-join-off-lan.sh" ]; then
+# Run with bash, so the file need not carry an execute bit (company-mac-tailnet-join-v1).
+if [ -f "$ROOT/mac-join-off-lan.sh" ]; then
   bash "$ROOT/mac-join-off-lan.sh" "$ROOT" || true
 fi
 # company-login-screen-update-v1
@@ -138,7 +150,11 @@ if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ "$DEEPSEEK_API_KEY" = "company-gateway" ]
   mkdir -p "$(dirname "$TOKFILE")"
   LOGIN_OK=0
   for _try in 1 2 3; do
-  USER="$(osascript -e 'text returned of (display dialog "账号（公司花名册里的账号，不是邮箱）" default answer "tdh" with title "TDHarness")' || true)"
+  # company-remember-login-v1: offer the last account that signed in on this Mac, not the seed admin.
+  # Under set -euo pipefail a missing file (the first sign-in on this Mac) must not end the script: it did,
+  # before the account dialog, and the window waited for the desk forever (2026-11-19).
+  LAST_USER="$( { head -1 "$HOME/.dsh-company-rc8/last.login" 2>/dev/null || true; } | tr -cd 'A-Za-z0-9._@-')"
+  USER="$(osascript -e "text returned of (display dialog \"账号（公司花名册里的账号，不是邮箱）\" default answer \"$LAST_USER\" with title \"TDHarness\")" || true)"
   PASS="$(osascript -e 'text returned of (display dialog "密码" default answer "" with hidden answer with title "TDHarness")' || true)"
   if [ -z "$USER" ] || [ -z "$PASS" ]; then
     printf '%s\n' "Error: 没输入账号或密码，已取消。" > "$DSH_HOME/web-runtime.err"
@@ -146,16 +162,25 @@ if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ "$DEEPSEEK_API_KEY" = "company-gateway" ]
     echo "BLOCKED=gw-token-required" >&2
     exit 2
   fi
-  if LOGIN_USER="$USER" LOGIN_PASS="$PASS" LOGIN_URL="$LOGIN_URL" TOKFILE="$TOKFILE" \
-    "$NODEBIN" "$ROOT/mac-company-login.js"; then
+  # company-mac-offlan-resolve-v1: say why it failed (mac-company-login.js exit code), not always "wrong password".
+  LOGIN_RC=0
+  LOGIN_USER="$USER" LOGIN_PASS="$PASS" LOGIN_URL="$LOGIN_URL" TOKFILE="$TOKFILE" \
+    "$NODEBIN" "$ROOT/mac-company-login.js" || LOGIN_RC=$?
+  if [ "$LOGIN_RC" = 0 ]; then
     LOGIN_OK=1
     break
   fi
-  osascript -e 'display dialog "账号或密码不对，再试一次。" buttons {"OK"} default button "OK" with title "TDHarness"' >/dev/null 2>&1 || true
+  case "$LOGIN_RC" in
+    3) LOGIN_WHY="连不上公司服务器。在公司请连公司的 Wi-Fi；不在公司请先打开右上角的 Tailscale，确认已连上，再试一次。" ;;
+    4) LOGIN_WHY="账号或密码不对，再试一次。" ;;
+    5) LOGIN_WHY="登录失败次数太多，请 15 分钟后再试，或找管理员。" ;;
+    *) LOGIN_WHY="服务器没有正常回应，请稍后再试；一直这样请找管理员。" ;;
+  esac
+  osascript -e "display dialog \"$LOGIN_WHY\" buttons {\"OK\"} default button \"OK\" with title \"TDHarness\"" >/dev/null 2>&1 || true
   done
   unset USER PASS LOGIN_USER LOGIN_PASS
   if [ "$LOGIN_OK" != 1 ]; then
-    printf '%s\n' "Error: 登录失败。花名册账号或密码不对。" > "$DSH_HOME/web-runtime.err"
+    printf '%s\n' "Error: 登录失败。${LOGIN_WHY:-花名册账号或密码不对。}" > "$DSH_HOME/web-runtime.err"
     boot_status fail
     echo "BLOCKED=gw-token-required" >&2
     exit 2

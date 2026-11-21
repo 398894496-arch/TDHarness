@@ -52,6 +52,12 @@ try {
   Set-Content -LiteralPath (Join-Path $Root 'runtime\gateway.env') -Value 'XAI_API_KEY=not-a-key'
   Set-Content -LiteralPath (Join-Path $Root 'brain\10-l0\day.md') -Value 'raw'
   Set-Content -LiteralPath (Join-Path $Company '_handbook\_company\rules.md') -Value 'rules'
+  # ops shares its handbook (the shared knowledge base); sales is kept apart (company-kb-zones-v1).
+  foreach ($d in 'ops', 'sales') {
+    New-Item -ItemType Directory -Force -Path (Join-Path $Company ('_handbook\' + $d)) | Out-Null
+    Set-Content -LiteralPath (Join-Path $Company ('_handbook\' + $d + '\page.md')) -Value $d
+  }
+  [IO.File]::WriteAllText((Join-Path $Root 'runtime\kb-zones.json'), '{"private":["sales"]}', [Text.UTF8Encoding]::new($false))
   $roster = @{ people = @() ; depts = @(@{ id = 'ops' }, @{ id = 'sales' }) }
   foreach ($p in $people) {
     $personal = Join-Path $Company ('emp-' + $p.login)

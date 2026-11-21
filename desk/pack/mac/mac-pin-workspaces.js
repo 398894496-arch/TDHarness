@@ -1,4 +1,4 @@
-// Pin login personal/org like Win AppHost.PinWorkspaces.
+// Pin the login's own folder as the one workspace, like Win AppHost.PinWorkspaces.
 // Env: PIN_PERSONAL, PIN_ORG, PIN_PORT. Do not pass paths as node - argv
 // (node - eats argv[1], and a path then looks like a port).
 "use strict";
@@ -50,12 +50,8 @@ function field(raw, key) {
   if (!(port > 0 && port < 65536)) throw new Error("pin-port-bad");
   const a = await rpc("workspace.create", { path: personal });
   const id = field(a, "workspaceId");
-  if (id) await rpc("workspace.rename", { workspaceId: id, title: "个人" });
-  if (org && org !== personal) {
-    const b = await rpc("workspace.create", { path: org });
-    const id2 = field(b, "workspaceId");
-    if (id2) await rpc("workspace.rename", { workspaceId: id2, title: "团队" });
-  }
+  // company-single-workspace-v1: one workspace, the person's own folder; no team seat.
+  if (id) await rpc("workspace.rename", { workspaceId: id, title: "工作区" });
   console.log("PIN_OK=1");
 })().catch((e) => {
   console.error("PIN_FAIL=" + e.message);

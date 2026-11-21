@@ -58,8 +58,24 @@ jobs:
         run: python -m pip install --disable-pip-version-check olefile==0.47 xlrd==2.0.1
       - name: Prove knowledge search (who sees what, ranking, PDF, OCR queue, old Office files)
         run: node scripts/prove-knowledge.js
+      - name: Prove the memory layer through KRouter, one bank per person
+        run: node scripts/prove-krouter-memory.js
+      - name: Prove memory is one company memory, finance kept apart
+        run: node scripts/prove-memory-shared.js
+      - name: Prove each person's memory is their own folder's, an admin's too
+        run: node scripts/prove-own-memory.js
+      - name: Prove the knowledge base zones (shared, sales and finance, finance's own)
+        run: node scripts/prove-kb-groups.js
+      - name: Prove an agent saves into the knowledge base by each zone's rule
+        run: node scripts/prove-kb-save.js
+      - name: Prove KRouter's nightly runs on the company memory, conversations stay private
+        if: runner.os == 'Linux'
+        run: node scripts/prove-krouter-nightly.js
         env:
           PROVE_PY: python
+      - name: Prove the alias table keeps itself, no one ticks
+        if: runner.os == 'Linux'
+        run: node scripts/prove-krouter-auto-alias.js
       - name: Prove the model gateway answers only a live login token
         run: node scripts/prove-gw-auth.js
       - name: Prove the TLS gateway switch and the /fetch guard
@@ -68,6 +84,8 @@ jobs:
         run: node scripts/prove-gpt-media.js
       - name: Prove desktop control shows the model one tool (mcp-one.cjs)
         run: node scripts/prove-mcp-one.js
+      - name: Prove the agent cannot open this desk's own page in a browser (company-desk-self-open-v1)
+        run: node scripts/prove-desk-self-open.mjs
       - name: Prove a site's brand comes from the server only (patch_site_brand.py)
         run: python scripts/prove-site-brand.py
       - name: Prove the company-share rights (throwaway accounts; fails if the share opens again)
@@ -80,6 +98,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prove-tailnet-join.ps1
+      - name: Prove Setup.exe checks the downloaded pack against version.json
+        if: runner.os == 'Windows'
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prove-setup-verify.ps1
       - name: Prove the desk mounts the share with its own account over a stale connection (throwaway accounts)
         if: runner.os == 'Windows'
         shell: powershell
@@ -99,12 +120,22 @@ jobs:
         run: node scripts/prove-gw-sse-done.js
       - name: Prove the model list carries each model's window and learns a refused limit
         run: node scripts/prove-gw-context.js
+      - name: Prove the admin picks which of a key vendor's models desks see
+        run: node scripts/prove-gw-key-models.js
       - name: Prove deep search is the GPT subscription and asks for it only when it is worth it
         run: node scripts/prove-search-route.js
       - name: Prove a vendor archive goes into a pack as shipped (Cua Driver)
         run: python3 scripts/prove-put-zip-archive.py
       - name: Prove pictures in the conversation keep their proportions
         run: python3 scripts/prove-inline-media-aspect.py
+      - name: Prove the Mac download is a TDHarness.app to drag into Applications
+        run: python3 scripts/prove-mac-app-zip.py
+      - name: Prove a Mac joins the company tailnet once, and never replaces another tailnet
+        if: runner.os == 'Linux'
+        run: bash scripts/prove-mac-tailnet-join.sh
+      - name: Prove a publish goes live at the end, version.json last
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-publish-go-live.py
       - name: Prove desk skills cache lays the site's _skills over the bundled skills
         run: node scripts/prove-sync-skills.js
       - name: Prove the Caddyfile imports extension routes inside the site
@@ -114,9 +145,65 @@ jobs:
       - name: Prove the Mac mount script keeps what was written while the share was down
         if: runner.os != 'Windows'
         run: bash scripts/prove-mac-mount-aside.sh
+      - name: Prove a Mac desk finds the server away from the office, and the login says why it failed
+        if: runner.os != 'Windows'
+        run: node scripts/prove-mac-offlan-resolve.js
       - name: Prove people management, including removing an account for good
         if: runner.os == 'Linux'
         run: python3 scripts/prove-people.py
+      - name: Prove the company chat (Tinode) logs in with TDH accounts only, and everyone is in everyone's contacts
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-auth.py
+      - name: Prove the chat page's setup (no CDNs, chunks beside the page, scripts fetched again after a fix)
+        run: python3 scripts/prove-tinode-setup.py
+      - name: Prove the desk's chat relay (its own origin, the person's chat token only, websocket for its page only)
+        run: node scripts/prove-chat-relay.mjs
+      - name: Prove 聊天 in the desk (left column, right-sidebar tab, the relay's page)
+        run: node scripts/prove-chat-desk.js
+      - name: Crash log and watchdog (company-crash-log-v1, company-watchdog-v1)
+        run: node scripts/prove-crash-log.js
+      - name: Daily report (company-daily-report-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-daily-report.py
+      - name: A person's own chats for their agent, and TDH早报 (company-chat-read-v1, company-chat-bot-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-read.py
+      - name: TDH 助手 in the chat (company-chat-assist-v1; the gate, who may see what, answers in the chat)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-assist.py
+      - name: TDH's login for ERPNext and the roster sync (company-erp-sso-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-erp-sso.py
+      - name: The chat's files onto the company disk, by kind (company-chat-archive-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-archive.py
+      - name: Finance papers in the chat read, filed, asked about, paired (company-chat-docs-v1/v2)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-docs.py
+      - name: A task card between two people said in their chat (company-chat-cards-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-card-chat.py
+      - name: The chat's display name follows the roster (company-chat-names-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-names.py
+      - name: The agent reads and writes ERPNext as the person who asks (company-erp-data-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-erp-data.py
+      - name: People's own folders into the knowledge base by themselves (company-kb-organize-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-kb-organize.py
+      - name: Who opened the mould drawings, for the morning report (company-drawing-watch-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-drawing-watch.py
+      - name: The desk's ERPNext entry (company-erp-desk-v1)
+        run: node scripts/prove-erp-desk.mjs
+      - name: Chat page logic, its input boxes with a Chinese input method, TDH 助手's cards (company-chat-client-v1, company-chat-ime-v1, company-chat-assist-v1; tinode-sdk 0.25.3, as the server runs)
+        if: runner.os == 'Linux'
+        run: |
+          npm install --no-save --no-fund --no-audit --prefix "$RUNNER_TEMP/tinode" tinode-sdk@0.25.3 jsdom@25.0.1
+          TINODE_SDK="$RUNNER_TEMP/tinode/node_modules/tinode-sdk" node scripts/prove-chat-client.js
+          TINODE_SDK="$RUNNER_TEMP/tinode/node_modules/tinode-sdk" JSDOM="$RUNNER_TEMP/tinode/node_modules/jsdom" node scripts/prove-chat-composer.js
+          TINODE_SDK="$RUNNER_TEMP/tinode/node_modules/tinode-sdk" JSDOM="$RUNNER_TEMP/tinode/node_modules/jsdom" node scripts/prove-chat-ai-card.js
       - name: Prove task-card reminders (due soon, overdue, the admins' page, WeCom against a fake)
         run: python scripts/prove-task-notify.py
       - name: Prove task cards (share reach, no self-approval, damaged board, body limits)
@@ -182,3 +269,7 @@ jobs:
         run: KERNEL_PREFIX="$HOME/tdh-gold" node scripts/prove-patches.js
       - name: Prove cut-off tool arguments end the turn instead of running
         run: KERNEL_PREFIX="$HOME/tdh-gold" node scripts/prove-toolargs-strict.mjs
+      - name: Prove artifacts follow the desk's light / dark choice, not the system's
+        run: KERNEL_PREFIX="$HOME/tdh-gold" node scripts/prove-artifact-theme.js
+      - name: Prove the model menu stays open when the effort pane opens
+        run: KERNEL_PREFIX="$HOME/tdh-gold" node scripts/prove-model-menu-blur.js

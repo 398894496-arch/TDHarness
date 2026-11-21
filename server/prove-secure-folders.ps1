@@ -5,6 +5,10 @@
 # secure-folders.ps1:
 #   everyone with an own account: reads the share root, the handbook and company memory;
 #     changes their own folder; cannot read runtime or brain
+#   everyone with an own account: changes the shared knowledge (_handbook\_company)
+#   a department kept apart: its own people read and change it, nobody else but admins (not dshshare)
+#   a zone some departments share (kb-zones.json groups): their people read and change it, nobody else
+#     but admins (company-kb-groups-v1)
 #   employee: cannot change the root, the handbook or company memory; cannot open a
 #     colleague's folder (raw conversations, memory, deliverables) or _office
 #   director: changes company memory; reads the folders of their own department only
@@ -74,6 +78,18 @@ function Expect([string]$who, [string]$sid, [string]$path, [string]$what, [bool]
   }
 }
 
+# Departments kept apart from the shared knowledge base (company-kb-zones-v1), as secure-folders.ps1 reads them.
+$apart = @{}
+$groups = @()
+$zonesFile = Join-Path $Root 'runtime\kb-zones.json'
+if (Test-Path -LiteralPath $zonesFile) {
+  $zj = Get-Content -LiteralPath $zonesFile -Raw -Encoding UTF8 | ConvertFrom-Json
+  foreach ($x in @($zj.private)) { if ($x) { $apart[[string]$x] = $true } }
+  if ($zj.groups) { $groups = @($zj.groups | Where-Object { ([string]$_.dir) -match '^_[A-Za-z0-9._-]+$' -and ([string]$_.dir) -ne '_company' }) }
+} else {
+  $finance = [string]::new([char[]](0x8D22, 0x52A1))
+  foreach ($dd in @($roster.depts)) { if ($dd -and ([string]$dd.name).Contains($finance)) { $apart[[string]$dd.id] = $true } }
+}
 $withOwn = @($people | Where-Object { Sid-Of ('smb-' + $_.login) })
 foreach ($p in $withOwn) {
   $sid = Sid-Of ('smb-' + $p.login)
@@ -83,6 +99,8 @@ foreach ($p in $withOwn) {
   Expect $who $sid $Company 'write' $admin
   Expect $who $sid (Join-Path $Company '_handbook') 'read' $true
   Expect $who $sid (Join-Path $Company '_handbook') 'write' $admin
+  Expect $who $sid (Join-Path $Company '_handbook\_company') 'read' $true
+  Expect $who $sid (Join-Path $Company '_handbook\_company') 'write' $true
   Expect $who $sid (Join-Path $Company '_shared') 'read' $true
   Expect $who $sid (Join-Path $Company '_shared') 'write' ($admin -or $p.role -eq 'director')
   Expect $who $sid (Join-Path $Company '_skills') 'write' $admin
@@ -102,7 +120,13 @@ foreach ($p in $withOwn) {
     Expect $who $sid $f 'write' $admin
   }
   foreach ($d in @($people | ForEach-Object { [string]$_.dept } | Where-Object { $_ -and $_ -ne 'company' } | Select-Object -Unique)) {
-    Expect $who $sid (Join-Path $Company ('_handbook\' + $d)) 'read' ($admin -or $p.dept -eq $d)
+    Expect $who $sid (Join-Path $Company ('_handbook\' + $d)) 'read' ($admin -or $p.dept -eq $d -or -not $apart.ContainsKey($d))
+    if ($apart.ContainsKey($d)) { Expect $who $sid (Join-Path $Company ('_handbook\' + $d)) 'write' ($admin -or $p.dept -eq $d) }
+  }
+  foreach ($g in $groups) {
+    $in = $admin -or (@(@($g.depts) | ForEach-Object { [string]$_ }) -contains [string]$p.dept)
+    $gp = Join-Path $Company ('_handbook\' + [string]$g.dir)
+    if (Test-Path -LiteralPath $gp) { Expect $who $sid $gp 'read' $in; Expect $who $sid $gp 'write' $in }
   }
 }
 # Each local administrator by name on runtime and brain: their unelevated programs (the
@@ -145,6 +169,10 @@ if ($ds) {
   Expect 'dshshare' $ds $Company 'write' $false
   Expect 'dshshare' $ds (Join-Path $Company '_handbook') 'write' $false
   Expect 'dshshare' $ds (Join-Path $Company '_shared') 'write' $false
+  Expect 'dshshare' $ds (Join-Path $Company '_handbook\_company') 'write' $false
+  # A shared password never opens a department kept apart, or a zone some departments share.
+  foreach ($d in @($apart.Keys)) { $hb = Join-Path $Company ('_handbook\' + $d); if (Test-Path -LiteralPath $hb) { Expect 'dshshare' $ds $hb 'read' $false } }
+  foreach ($g in $groups) { $gp = Join-Path $Company ('_handbook\' + [string]$g.dir); if (Test-Path -LiteralPath $gp) { Expect 'dshshare' $ds $gp 'read' $false } }
 }
 Write-Output ('CHECKS=' + $checks + ' FAILS=' + $fails + ' PEOPLE_WITH_OWN_ACCOUNT=' + $withOwn.Count)
 if ($fails -eq 0) { Write-Output 'SECURE_FOLDERS_PROVE_OK=1' } else { exit 1 }

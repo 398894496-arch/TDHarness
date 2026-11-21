@@ -71,6 +71,46 @@ internal static class AppHost
         catch { }
     }
 
+    // company-one-window-v1 (2026-11-21, 小潘: his desktop showed 「重新连接中」 after TDH was opened again while it was
+    // already open): a second start killed the first one's desk (StopDeskNode) and both fought over the seat. One TDH per
+    // Windows user: a second start brings the open window to the front and quits; a relaunch (update) waits for the old.
+    private static Mutex _one;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    private static bool OneWindow(string[] argv)
+    {
+        bool fresh;
+        try { _one = new Mutex(true, "Local\\TDHarness-company-desk", out fresh); }
+        catch { return true; }
+        if (fresh) return true;
+        if (Array.IndexOf(argv, "--relaunch") > 0)
+        {
+            try { if (_one.WaitOne(20000)) return true; }
+            catch (AbandonedMutexException) { return true; }
+        }
+        var me = Process.GetCurrentProcess();
+        foreach (var p in Process.GetProcessesByName(me.ProcessName))
+        {
+            try
+            {
+                if (p.Id == me.Id || p.MainWindowHandle == IntPtr.Zero) continue;
+                ShowWindow(p.MainWindowHandle, 9);
+                SetForegroundWindow(p.MainWindowHandle);
+                Log("one-window front " + p.Id);
+                return false;
+            }
+            catch { }
+        }
+        Log("one-window no-window");
+        MessageBox.Show("TDH 已经打开了。看不到窗口的话，在任务栏里点 TDH；还是找不到，就重启电脑再打开。", "TDHarness");
+        return false;
+    }
+
     [STAThread]
     private static int Main()
     {
@@ -82,11 +122,14 @@ internal static class AppHost
         }
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        if (!OneWindow(argv)) return 0;
         try
         {
             ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
             try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; }
             catch { }
+            // company-compat-v1：连公司服务器一律直连，不走 Clash 一类代理的「系统代理」。
+            DeskPrereq.DirectToSite();
             TidyExtraShortcuts();
             Application.Run(new ShellForm());
             return 0;
@@ -546,7 +589,7 @@ internal static class AppHost
 
     internal static void RelaunchSelf()
     {
-        try { Process.Start(Application.ExecutablePath); }
+        try { Process.Start(Application.ExecutablePath, "--relaunch"); }
         catch (Exception ex) { Log("relaunch " + ex.Message); }
         Environment.Exit(0);
     }
@@ -611,7 +654,12 @@ internal static class AppHost
             MessageBoxButtons.OK, MessageBoxIcon.Information);
         try
         {
-            RestoreProduct();
+            if (!RestoreProductSettled(null, null))
+            {
+                MessageBox.Show("服务器正在发布新版本，这次先用现在这版登录，下次打开再更新。", "TDHarness",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
         }
         catch (Exception ex)
         {
@@ -775,6 +823,10 @@ internal static class AppHost
 
     internal static void RestoreProduct(Action<string> onProgress)
     {
+        // company-compat-v1：更新要下载 400 多 MB 再解开，空间不够就先说，不在半路失败。
+        var free = DeskPrereq.FreeBytes(Root);
+        if (free >= 0 && free < 1500L * 1024 * 1024)
+            throw new Exception(Path.GetPathRoot(Path.GetFullPath(Root)) + " 只剩 " + DeskPrereq.GbText(free) + "，更新至少要 1.5 GB，请先清理磁盘");
         StopDeskNode();
         var restore = Path.Combine(Root, "tree-restore.ps1");
         if (!File.Exists(restore)) throw new Exception("tree-restore-missing");
@@ -822,8 +874,43 @@ internal static class AppHost
         lock (errBuf) { se = errBuf.ToString(); }
         Log("tree-restore " + so.Replace("\r", " ").Replace("\n", " | ") + " " + se);
         if (p.ExitCode != 0 || so.IndexOf("TREE_RESTORE_OK=1") < 0)
+        {
+            if ((so + se).IndexOf("restore-verify-failed", StringComparison.Ordinal) >= 0)
+                throw new Exception(VerifyMismatch);
             throw new Exception("tree-restore-failed");
+        }
         SyncDeskHome();
+    }
+
+    // company-update-settle-v1：下载的包和服务器的 version.json 对不上（服务器正在发版，或者下载中途包换了），
+    // 不算更新失败：等一分钟、从头重下一次；还对不上就这次先用现在这版，下次打开再更新。
+    // 2026-11-19：一晚连发几次版，一台正在更新的电脑撞上了，弹了「更新没完成（tree-restore-failed）」。
+    internal const string VerifyMismatch = "tree-restore-verify";
+
+    // 返回 true = 装好了；false = 服务器在发版，这次没更新（不是错误）。其他失败照旧抛出。
+    internal static bool RestoreProductSettled(Action<string> onProgress, Action onWait)
+    {
+        for (var round = 1; round <= 2; round++)
+        {
+            try
+            {
+                RestoreProduct(onProgress);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (ex.Message != VerifyMismatch) throw;
+                Log("update-verify-mismatch round " + round);
+            }
+            if (round == 2) break;
+            if (onWait != null)
+            {
+                try { onWait(); } catch { }
+            }
+            Thread.Sleep(60000);
+        }
+        Log("update-deferred server-publishing");
+        return false;
     }
 
     internal static void StopDeskNode()
@@ -894,6 +981,11 @@ internal static class AppHost
             File.WriteAllText(Path.Combine(rc, "login.role"), hit.Role.Trim() + "\n");
         if (!string.IsNullOrEmpty(hit.Login))
             File.WriteAllText(Path.Combine(rc, "login.name"), hit.Login.Trim() + "\n");
+        // company-remember-login-v1：登录框下次默认填这台电脑上次登录成功的账号。只有账号名，不是密码；退出登录也留着。
+        if (!string.IsNullOrEmpty(hit.Login))
+        {
+            try { File.WriteAllText(Path.Combine(rc, "last.login"), hit.Login.Trim() + "\n"); } catch { }
+        }
         var site = LeaseSite();
         if (!string.IsNullOrEmpty(site))
             File.WriteAllText(Path.Combine(rc, "site.login"), site.Trim() + "\n");
@@ -1081,6 +1173,15 @@ internal static class AppHost
             Log("ffmpeg-on-path");
         }
         else Log("ffmpeg-missing " + ffBin);
+        // company-shell-path-v1：Agent 的 shell 里直接有 node 和 opencli（bin\opencli.cmd 用自带的 Node 跑自带的 OpenCLI）。
+        {
+            var curPath = psi.EnvironmentVariables["PATH"];
+            if (string.IsNullOrEmpty(curPath)) curPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+            var front = "";
+            foreach (var d in new[] { Path.Combine(root, "bin"), Path.Combine(root, "node") })
+                if (Directory.Exists(d)) front += d + ";";
+            psi.EnvironmentVariables["PATH"] = front + curPath;
+        }
         try { psi.EnvironmentVariables.Remove("DEEPSEEK_API_KEY"); } catch { }
         psi.EnvironmentVariables["NO_PROXY"] = Site.NoProxy;
         psi.EnvironmentVariables["NODE_USE_ENV_PROXY"] = "0";
@@ -1212,9 +1313,8 @@ internal static class AppHost
         // show in the picker but selecting them never sticks.
         try
         {
-            NameWorkspace(Rpc("workspace.create", "{\"path\":\"" + JsonEscape(personal) + "\"}"), "个人");
-            if (!string.IsNullOrEmpty(org) && !string.Equals(org, personal, StringComparison.OrdinalIgnoreCase))
-                NameWorkspace(Rpc("workspace.create", "{\"path\":\"" + JsonEscape(org) + "\"}"), "团队");
+            // company-single-workspace-v1：只有一个工作区（本人目录），不再有「团队」。
+            NameWorkspace(Rpc("workspace.create", "{\"path\":\"" + JsonEscape(personal) + "\"}"), "工作区");
         }
         catch (Exception ex) { Log("pin-create " + ex.Message); }
         try { RunLease("collapse-seats", personal, org); }
@@ -1602,6 +1702,12 @@ internal sealed class ShellForm : Form
         uLab.Location = new Point(24, 58);
         _user.Width = 350;
         _user.Location = new Point(24, 82);
+        try
+        {
+            var last = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), "last.login")).Trim();
+            if (Regex.IsMatch(last, @"^[A-Za-z0-9._@-]{1,64}$")) _user.Text = last;
+        }
+        catch { }
         var pLab = new Label();
         pLab.Text = "密码";
         pLab.AutoSize = true;
@@ -1650,7 +1756,9 @@ internal sealed class ShellForm : Form
                 _logoutWatch = null;
             }
             AppHost.ClearLogin();
-            AppHost.QuitLease(_personal, _org, _leaseWatch);
+            var closingWatch = _leaseWatch;
+            _leaseWatch = null;
+            AppHost.QuitLease(_personal, _org, closingWatch);
             AppHost.StopDeskNode();
         };
         Shown += delegate
@@ -1663,12 +1771,26 @@ internal sealed class ShellForm : Form
             {
                 try { AppHost.EnsureCompanyNet(); }
                 catch (Exception ex) { AppHost.Log("ts-boot " + ex.Message); }
+                try { EnsureWebView2(); }
+                catch (Exception wvEx) { AppHost.Log("webview2-boot " + wvEx.Message); }
                 try { CheckForUpdate(); }
                 catch (Exception upEx) { AppHost.Log("update-check " + upEx.Message); ShowNote("", false); }
             }));
             boot.IsBackground = true;
             boot.Start();
         };
+    }
+
+    // company-compat-v1：窗口要微软 WebView2。没有就从公司服务器取微软的安装器装上（当前用户，不要管理员），
+    // 不等到登录成功后才报 webview2-missing。
+    private void EnsureWebView2()
+    {
+        var have = DeskPrereq.WebView2Version();
+        if (have.Length > 0) { AppHost.Log("webview2 " + have); return; }
+        ShowNote("正在安装微软 WebView2 组件（第一次需要，约一两分钟）…", false);
+        var ok = DeskPrereq.InstallWebView2(DeskPrereq.WebView2InstallerUrl(global::Site.ZipUrl), AppHost.Log, 600000);
+        AppHost.Log("webview2 " + (ok ? DeskPrereq.WebView2Version() : "missing"));
+        ShowNote(ok ? "" : "这台电脑缺微软 WebView2 组件，自动安装没成功。请联系管理员，或从微软官网下载「WebView2 Runtime」装上后再打开。", !ok);
     }
 
     // Runs on the boot thread. Only the dialog and the label touch the UI.
@@ -1721,18 +1843,28 @@ internal sealed class ShellForm : Form
     {
         SetLoginEnabled(false);
         ShowNote(first, false);
+        bool installed;
         try
         {
-            AppHost.RestoreProduct(delegate(string line)
+            installed = AppHost.RestoreProductSettled(delegate(string line)
             {
                 var text = AppHost.ProgressText(line);
                 if (text.Length > 0) ShowNote(text, false);
+            }, delegate
+            {
+                ShowNote("服务器正在发布新版本，一分钟后重新下载…", false);
             });
         }
         catch (Exception ex)
         {
             AppHost.Log("update-restore-fail " + ex.Message);
             ShowNote("更新没完成（" + ex.Message + "），先用现在这版登录。", true);
+            SetLoginEnabled(true);
+            return;
+        }
+        if (!installed)
+        {
+            ShowNote("服务器正在发布新版本，这次先用现在这版登录，下次打开再更新。", false);
             SetLoginEnabled(true);
             return;
         }
@@ -1798,8 +1930,28 @@ internal sealed class ShellForm : Form
             Application.DoEvents();
             LoginHit hit;
             try { hit = AppHost.CheckLogin(user, pass); }
-            catch (WebException)
+            catch (WebException wex)
             {
+                // company-login-reason-v1: HttpWebRequest throws on 401 and 429 too. Those are the server's answer,
+                // not a broken network: saying 连不上公司网 for a wrong password kept people retrying into the
+                // 15-minute lock (2026-11-20, 梁风禾).
+                var answered = wex.Response as HttpWebResponse;
+                var code = answered != null ? (int)answered.StatusCode : 0;
+                if (code == 401 || code == 403)
+                {
+                    _err.Text = "账号或密码不对";
+                    return;
+                }
+                if (code == 429)
+                {
+                    _err.Text = "登录失败次数太多，请 15 分钟后再试；忘了密码请找管理员重置";
+                    return;
+                }
+                if (code >= 400)
+                {
+                    _err.Text = "服务器没有正常回应（" + code + "），请稍后再试；一直这样请找管理员";
+                    return;
+                }
                 var netHint = AppHost.CompanyNetHint();
                 _err.Text = netHint.Length > 0 ? netHint : "连不上公司网，请稍后再试";
                 return;
@@ -1813,6 +1965,21 @@ internal sealed class ShellForm : Form
             _err.Text = "正在挂入公司盘…";
             Application.DoEvents();
             AppHost.EnsureShare(hit.SmbUser, hit.SmbPass);
+            // company-first-login-wait-v1：新员工第一次登录时，服务器刚建好他的共享盘账号，个人目录的授权
+            // 可能还差几秒（服务器也会先等授权再回话，这里再兜一层）。先等，不直接报 workspace-missing。
+            if (!string.IsNullOrEmpty(hit.Personal) && !Directory.Exists(hit.Personal))
+            {
+                _err.ForeColor = Color.FromArgb(90, 90, 90);
+                _err.Text = "正在准备你的个人目录…";
+                AppHost.Log("personal-wait " + hit.Personal);
+                for (var i = 0; i < 30 && !Directory.Exists(hit.Personal); i++)
+                {
+                    Application.DoEvents();
+                    Thread.Sleep(1000);
+                }
+                _err.ForeColor = Color.FromArgb(217, 45, 32);
+                _err.Text = "";
+            }
             if (string.IsNullOrEmpty(hit.Personal) || !Directory.Exists(hit.Personal))
                 throw new Exception("company-workspace-missing");
             _authUser = hit.Login;
@@ -1823,7 +1990,9 @@ internal sealed class ShellForm : Form
             _err.Text = "正在交接会话…";
             Application.DoEvents();
             AppHost.StopDeskNode();
-            try { AppHost.QuitLease(hit.Personal, hit.Org, _leaseWatch); } catch { }
+            var oldWatch = _leaseWatch;
+            _leaseWatch = null;                 // a watch we stop ourselves is not a seat lost (company-seat-back-v1)
+            try { AppHost.QuitLease(hit.Personal, hit.Org, oldWatch); } catch { }
             AppHost.AcquireLease(hit.Personal, hit.Org);
             _err.Text = "正在打开本机 Agent…";
             Application.DoEvents();
@@ -1831,23 +2000,28 @@ internal sealed class ShellForm : Form
             _leaseWatch = AppHost.StartLeaseWatch(hit.Personal, hit.Org);
             if (_leaseWatch != null)
             {
+                // company-seat-back-v1 (2026-11-21, 小潘: his desktop sat on 「重新连接中」 after his laptop took the seat; the
+                // user: the desktop signing in should simply put the laptop out). A desk that loses its seat, or whose
+                // local Agent stops, goes back to the sign-in with the account filled in and says why; 登录 takes the
+                // seat back on this computer (the other one is put out), the usual sign-in. No window left stuck.
                 var watch = _leaseWatch;
                 var t = new Thread(new ThreadStart(delegate
                 {
                     try { watch.WaitForExit(); }
                     catch { return; }
-                    if (watch.ExitCode == 3)
+                    var code = 0;
+                    try { code = watch.ExitCode; } catch { }
+                    try
                     {
-                        try
+                        BeginInvoke(new Action(delegate
                         {
-                            BeginInvoke(new Action(delegate
-                            {
-                                MessageBox.Show("这个账号已在其他设备登录，本机已退出。", "TDHarness");
-                                Close();
-                            }));
-                        }
-                        catch { }
+                            if (!object.ReferenceEquals(_leaseWatch, watch)) return;     // a newer sign-in has its own
+                            SeatLost(code == 3
+                                ? "这个账号已在其他设备登录，这台电脑已退出。点「登录」就在这台电脑继续用，另一台会退出。"
+                                : "这台电脑的 TDH 停了。点「登录」重新打开。");
+                        }));
                     }
+                    catch { }
                 }));
                 t.IsBackground = true;
                 t.Start();
@@ -1866,6 +2040,34 @@ internal sealed class ShellForm : Form
         {
             _go.Enabled = true;
         }
+    }
+
+    // company-seat-back-v1: back to the sign-in, the account kept (the password only in memory, as it was), the reason said.
+    private void SeatLost(string why)
+    {
+        if (_logoutWatch != null)
+        {
+            try { _logoutWatch.Stop(); _logoutWatch.Dispose(); } catch { }
+            _logoutWatch = null;
+        }
+        _leaseWatch = null;
+        AppHost.StopDeskNode();
+        if (_web != null)
+        {
+            Controls.Remove(_web);
+            try { _web.Dispose(); } catch { }
+            _web = null;
+        }
+        if (_authUser.Length > 0) _user.Text = _authUser;
+        if (_authPass.Length > 0) _pass.Text = _authPass;
+        _err.ForeColor = Color.FromArgb(217, 45, 32);
+        _err.Text = why;
+        _go.Enabled = true;
+        _login.Visible = true;
+        _login.Enabled = true;
+        _login.BringToFront();
+        try { Activate(); } catch { }
+        AppHost.Log("seat-lost " + why.Substring(0, Math.Min(12, why.Length)));
     }
 
     private void WatchLogout()
@@ -1892,8 +2094,9 @@ internal sealed class ShellForm : Form
             _logoutWatch = null;
         }
         AppHost.ClearLogin();
-        AppHost.QuitLease(_personal, _org, _leaseWatch);
+        var oldWatch = _leaseWatch;
         _leaseWatch = null;
+        AppHost.QuitLease(_personal, _org, oldWatch);
         AppHost.StopDeskNode();
         if (_web != null)
         {
@@ -1930,7 +2133,7 @@ internal sealed class ShellForm : Form
         }
         catch (Exception ex)
         {
-            throw new Exception("webview2-missing " + ex.Message);
+            throw new Exception("这台电脑缺微软 WebView2 组件（webview2-missing " + ex.Message + "）。重新打开 TDHarness 会自动安装；还不行请联系管理员");
         }
         _web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
         _web.CoreWebView2.Settings.AreDevToolsEnabled = false;

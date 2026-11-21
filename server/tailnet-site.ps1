@@ -3,6 +3,7 @@
 #   D:\dsh\runtime\tailscale\desk.key        the employee join key (a Tailscale auth key, reusable, pre-approved);
 #                                             the admin puts it here. Without it this script does nothing.
 #   -> D:\dsh\runtime\tailscale\vendor\       employee.auth, company-tailnet.txt, tailscale-setup.msi
+#   -> D:\dsh\runtime\tailscale\vendor-mac\   employee.auth, company-tailnet.txt, Tailscale.pkg
 # company-tailnet.txt is read from this server's own `tailscale status`: its tailnet address and name, the
 # address desks check to know they are on the company tailnet. The installer is Tailscale's official MSI,
 # downloaded once and kept only if Windows says it is signed by Tailscale Inc.
@@ -49,6 +50,30 @@ if (-not $fresh) {
 }
 $sig = Get-AuthenticodeSignature -LiteralPath $msi
 if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Tailscale Inc\.') { throw 'msi-signature-not-tailscale' }
+# The Mac pack (company-mac-tailnet-join-v1): the same two files plus Tailscale's own macOS installer.
+# Windows cannot check a pkg signature; the Mac checks it (pkgutil) before installing. Here only its shape.
+$VendorMac = Join-Path $Dir 'vendor-mac'
+New-Item -ItemType Directory -Force -Path $VendorMac | Out-Null
+foreach ($n in 'employee.auth', 'company-tailnet.txt') { Copy-Item -Force -LiteralPath (Join-Path $Vendor $n) -Destination (Join-Path $VendorMac $n) }
+$pkg = Join-Path $VendorMac 'Tailscale.pkg'
+$fresh = (Test-Path -LiteralPath $pkg) -and ((Get-Date) - (Get-Item -LiteralPath $pkg).LastWriteTime).TotalDays -lt 30
+if (-not $fresh) {
+  $tmp = $pkg + '.download'
+  & curl.exe -sL --max-time 600 -o $tmp 'https://pkgs.tailscale.com/stable/Tailscale-latest-macos.pkg'
+  $ok = ($LASTEXITCODE -eq 0) -and (Test-Path -LiteralPath $tmp) -and ((Get-Item -LiteralPath $tmp).Length -gt 5MB)
+  if ($ok) {
+    $head = New-Object byte[] 4
+    $fs = [IO.File]::OpenRead($tmp); try { [void]$fs.Read($head, 0, 4) } finally { $fs.Close() }
+    $ok = ([Text.Encoding]::ASCII.GetString($head) -eq 'xar!')
+  }
+  if ($ok) { Move-Item -Force -LiteralPath $tmp -Destination $pkg }
+  else {
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -Force -LiteralPath $tmp }
+    if (Test-Path -LiteralPath $pkg) { Write-Output 'TAILNET_MAC_PKG=kept-old (download failed)' } else { Write-Output 'TAILNET_MAC_PKG=missing (download failed)' }
+  }
+}
+if (Test-Path -LiteralPath $pkg) { Write-Output ('TAILNET_MAC_PKG_BYTES=' + (Get-Item -LiteralPath $pkg).Length) }
+
 Write-Output ('TAILNET_IP=' + $ip)
 Write-Output ('TAILNET_NODE=' + $node)
 Write-Output ('TAILNET_MSI_BYTES=' + (Get-Item -LiteralPath $msi).Length)

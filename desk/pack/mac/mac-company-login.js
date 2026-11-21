@@ -8,6 +8,8 @@ const https = require("https");
 const os = require("os");
 const path = require("path");
 const { URL } = require("url");
+// company-mac-offlan-resolve-v1: the server's name away from the office too (start.command preloads it as well).
+try { require(path.join(__dirname, "mac-resolve.js")); } catch { /* an older pack without it */ }
 
 function macWork(winPath) {
   const pth = String(winPath || "").replace(/\\/g, "/").trim();
@@ -24,9 +26,16 @@ function write(dest, text, mode) {
   if (mode) fs.chmodSync(dest, mode);
 }
 
-function fail(msg) {
+// Exit codes start.command tells apart (company-mac-offlan-resolve-v1); before, every failure read as a wrong password:
+//   3 the server was not reached (name not found, no connection, timeout)   4 account or password wrong
+//   5 too many failed tries (15 minutes)   6 the server answered something else   2 this script's own setup
+const UNREACHED = 3;
+const BAD_LOGIN = 4;
+const TOO_MANY = 5;
+const ODD = 6;
+function fail(msg, code) {
   process.stderr.write(String(msg) + "\n");
-  process.exit(2);
+  process.exit(code || 2);
 }
 
 const urlRaw = process.env.LOGIN_URL;
@@ -45,7 +54,7 @@ const body = JSON.stringify({ username: user, password: pw });
 const port = Number(u.port || 443);
 
 dns.lookup(u.hostname, { family: 4 }, (err, addr) => {
-  if (err) fail(err);
+  if (err) fail("login-unreached:" + (err.code || err.message || err), UNREACHED);
   const req = https.request(
     {
       hostname: addr,
@@ -66,15 +75,17 @@ dns.lookup(u.hostname, { family: 4 }, (err, addr) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => {
-        if (res.statusCode >= 400) fail("login-http:" + res.statusCode);
+        if (res.statusCode === 401 || res.statusCode === 403) fail("login-http:" + res.statusCode, BAD_LOGIN);
+        if (res.statusCode === 429) fail("login-http:429", TOO_MANY);
+        if (res.statusCode >= 400) fail("login-http:" + res.statusCode, ODD);
         let hit;
         try {
           hit = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         } catch {
-          fail("login-json");
+          fail("login-json", ODD);
         }
         if (!hit || !hit.ok || !hit.gw_token) {
-          fail("login-" + String((hit && hit.error) || "no-token"));
+          fail("login-" + String((hit && hit.error) || "no-token"), hit && hit.error === "bad-login" ? BAD_LOGIN : ODD);
         }
         const rc8 = path.dirname(tokPath);
         fs.mkdirSync(rc8, { recursive: true });
@@ -89,15 +100,18 @@ dns.lookup(u.hostname, { family: 4 }, (err, addr) => {
         if (org) write(path.join(rc8, "work.org"), org + "\n");
         if (hit.role) write(path.join(rc8, "login.role"), String(hit.role).trim() + "\n");
         if (hit.login) write(path.join(rc8, "login.name"), String(hit.login).trim() + "\n");
+        // company-remember-login-v1: the account dialog offers the last account that signed in here (a name, not a password; kept on logout).
+        if (hit.login) write(path.join(rc8, "last.login"), String(hit.login).trim() + "\n");
         process.stdout.write("LOGIN_OK=" + String(hit.login || "") + "\n");
+        process.exit(0); // do not wait for a system lookup still pending (company-mac-offlan-resolve-v1)
       });
     }
   );
   req.on("timeout", () => {
     req.destroy();
-    fail("login-timeout");
+    fail("login-timeout", UNREACHED);
   });
-  req.on("error", (e) => fail(e && e.message ? e.message : e));
+  req.on("error", (e) => fail("login-unreached:" + (e && (e.code || e.message) || e), UNREACHED));
   req.write(body);
   req.end();
 });
