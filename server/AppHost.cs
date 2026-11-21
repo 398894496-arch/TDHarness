@@ -71,6 +71,46 @@ internal static class AppHost
         catch { }
     }
 
+    // company-one-window-v1 (2026-11-21, 小潘: his desktop showed 「重新连接中」 after TDH was opened again while it was
+    // already open): a second start killed the first one's desk (StopDeskNode) and both fought over the seat. One TDH per
+    // Windows user: a second start brings the open window to the front and quits; a relaunch (update) waits for the old.
+    private static Mutex _one;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    private static bool OneWindow(string[] argv)
+    {
+        bool fresh;
+        try { _one = new Mutex(true, "Local\\TDHarness-company-desk", out fresh); }
+        catch { return true; }
+        if (fresh) return true;
+        if (Array.IndexOf(argv, "--relaunch") > 0)
+        {
+            try { if (_one.WaitOne(20000)) return true; }
+            catch (AbandonedMutexException) { return true; }
+        }
+        var me = Process.GetCurrentProcess();
+        foreach (var p in Process.GetProcessesByName(me.ProcessName))
+        {
+            try
+            {
+                if (p.Id == me.Id || p.MainWindowHandle == IntPtr.Zero) continue;
+                ShowWindow(p.MainWindowHandle, 9);
+                SetForegroundWindow(p.MainWindowHandle);
+                Log("one-window front " + p.Id);
+                return false;
+            }
+            catch { }
+        }
+        Log("one-window no-window");
+        MessageBox.Show("TDH 已经打开了。看不到窗口的话，在任务栏里点 TDH；还是找不到，就重启电脑再打开。", "TDHarness");
+        return false;
+    }
+
     [STAThread]
     private static int Main()
     {
@@ -82,6 +122,7 @@ internal static class AppHost
         }
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        if (!OneWindow(argv)) return 0;
         try
         {
             ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
@@ -548,7 +589,7 @@ internal static class AppHost
 
     internal static void RelaunchSelf()
     {
-        try { Process.Start(Application.ExecutablePath); }
+        try { Process.Start(Application.ExecutablePath, "--relaunch"); }
         catch (Exception ex) { Log("relaunch " + ex.Message); }
         Environment.Exit(0);
     }
