@@ -24,6 +24,7 @@ import daily_report  # noqa: E402
 import notify  # noqa: E402
 import chat_read  # noqa: E402
 import chat_assist  # noqa: E402
+import chat_archive  # noqa: E402
 import erp_sso  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
@@ -1920,6 +1921,39 @@ def chat_post(sender: str, topic: str, content, head: dict | None = None, ua: st
 ERP_ONCE = erp_sso.Once()
 
 
+def chat_archive_once() -> dict:
+    """company-chat-archive-v1 (server/chat_archive.py): the chat's new files onto the company disk, by kind."""
+    runtime = TOKEN_STORE.parent
+    try:
+        on = bool(json.loads((runtime / "chat-archive.json").read_text(encoding="utf-8-sig")).get("on"))
+    except (OSError, ValueError, AttributeError):
+        on = False
+    if not on:
+        return {"off": True}
+    out = chat_archive.run_once(chat_assist.load_config(runtime), runtime, people_by_login(), ROOT / "company" / "_office", CHAT_BOTS)
+    if out.get("files") or out.get("unreadable"):
+        line = json.dumps(out, ensure_ascii=False)
+        sys.stderr.write("people-api chat-archive %s\n" % line)
+        try:
+            (ROOT / "logs").mkdir(parents=True, exist_ok=True)
+            with (ROOT / "logs" / "chat-archive.log").open("a", encoding="utf-8") as fh:
+                fh.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), line))
+        except OSError:
+            pass
+    return out
+
+
+def chat_archive_loop() -> None:
+    time.sleep(float(os.environ.get("TDH_CHAT_ARCHIVE_DELAY") or 40))
+    every = float(os.environ.get("TDH_CHAT_ARCHIVE_EVERY") or 180)
+    while True:
+        try:
+            chat_archive_once()
+        except Exception as exc:  # noqa: BLE001 - the chat works without it; the next round tries again
+            sys.stderr.write("people-api chat-archive failed %s\n" % type(exc).__name__)
+        time.sleep(every)
+
+
 def _html_escape(text: str) -> str:
     import html as _h
     return _h.escape(str(text))
@@ -2277,6 +2311,8 @@ def main() -> None:
         threading.Thread(target=daily_report_loop, name="daily-report", daemon=True).start()
     if os.environ.get("TDH_CHAT_ASSIST", "1") != "0":
         threading.Thread(target=chat_assist_loop, name="chat-assist", daemon=True).start()
+    if os.environ.get("TDH_CHAT_ARCHIVE", "1") != "0":
+        threading.Thread(target=chat_archive_loop, name="chat-archive", daemon=True).start()
     if os.environ.get("TDH_ERP_SYNC", "1") != "0":
         threading.Thread(target=erp_sync_loop, name="erp-sync", daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
