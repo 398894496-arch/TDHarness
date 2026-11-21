@@ -1084,6 +1084,65 @@ def chat_provision_all() -> dict:
     return {"ok": not failed, "made": made, "failed": failed}
 
 
+CHAT_NAMES = ROOT / "runtime" / "tinode-names.json"
+
+
+def chat_set_name(login: str, name: str) -> str:
+    """Sets `login`'s chat name (its public fn; the rest of its public, a photo, kept). "set", "same" or why not."""
+    key = _chat_api_key()
+    if not key:
+        return "no-key"
+    lp = _ChatLP(key)
+    if not lp.sid:
+        return "no-session"
+    hi = lp.send({"hi": {"ver": "0.25", "ua": "TDH-names/1.0"}})
+    secret = base64.b64encode((login + ":" + _chat_ticket(login)).encode("utf-8")).decode("ascii")
+    r = lp.send({"login": {"scheme": "basic", "secret": secret}}) if hi and int(hi.get("code") or 500) < 300 else None
+    if not r or int(r.get("code") or 500) >= 300:
+        return "login"
+    c, frames = lp.send_collect({"sub": {"topic": "me", "get": {"what": "desc"}}})
+    if not c or int(c.get("code") or 500) >= 300:
+        return "sub"
+    public = next(((m["meta"].get("desc") or {}).get("public") for m in frames if (m.get("meta") or {}).get("desc")), None)
+    public = dict(public) if isinstance(public, dict) else {}
+    if public.get("fn") == name:
+        lp.send({"leave": {"topic": "me"}})
+        return "same"
+    public["fn"] = name
+    w = lp.send({"set": {"topic": "me", "desc": {"public": public}}})
+    lp.send({"leave": {"topic": "me"}})
+    return "set" if w and int(w.get("code") or 500) < 300 else "set-failed"
+
+
+def chat_names_sync() -> dict:
+    """company-chat-names-v1 (the user, 2026-11-21: they filled in their name in the roster and the chat still said
+    "tdh"): a chat account takes its name from the roster when it is made, and nothing changed it after. Each round,
+    a person whose roster name is not the one last set (runtime/tinode-names.json) gets it set on their chat account;
+    a name that is the same already is only noted. Returns counts."""
+    links = _tinode_links()
+    try:
+        done = json.loads(CHAT_NAMES.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        done = {}
+    out: dict = {}
+    for row in public_people():
+        login = str(row.get("login") or "")
+        name = str(row.get("name") or "").strip()
+        if not login or login in CHAT_BOTS or not links.get(login) or not name or row.get("status", "active") != "active" or done.get(login) == name:
+            continue
+        try:
+            r = chat_set_name(login, name)
+        except Exception as exc:  # noqa: BLE001 - next round
+            r = "error-" + type(exc).__name__
+        out[r] = out.get(r, 0) + 1
+        if r in ("set", "same"):
+            done[login] = name
+            tmp = CHAT_NAMES.with_suffix(".tmp")
+            tmp.write_text(json.dumps(done, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, CHAT_NAMES)
+    return out
+
+
 def chat_provision_loop() -> None:
     time.sleep(float(os.environ.get("TDH_CHAT_PROVISION_DELAY") or 20))
     every = float(os.environ.get("TDH_CHAT_PROVISION_EVERY") or 600)
@@ -1094,6 +1153,12 @@ def chat_provision_loop() -> None:
                 sys.stderr.write("people-api chat-provision %s\n" % json.dumps(res, ensure_ascii=False))
         except Exception as exc:  # Tinode not up yet: next round
             sys.stderr.write("people-api chat-provision failed %s\n" % exc)
+        try:
+            res = chat_names_sync()
+            if res:
+                sys.stderr.write("people-api chat-names %s\n" % json.dumps(res))
+        except Exception as exc:  # noqa: BLE001 - next round
+            sys.stderr.write("people-api chat-names failed %s\n" % exc)
         time.sleep(every)
 
 
