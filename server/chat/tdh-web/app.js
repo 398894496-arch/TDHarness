@@ -669,8 +669,9 @@
 	}
 
 	function Search() {
+		const [, redraw] = useState(0); // drawn within the same event, as the input box (company-chat-ime-v1)
 		return h("div", { className: "search" },
-			h("label", null, ICON.search(), h("input", { placeholder: "搜索", value: S.search, onChange: (e) => { S.search = e.target.value; bump(); } })),
+			h("label", null, ICON.search(), h("input", { placeholder: "搜索", value: S.search, onChange: (e) => { S.search = e.target.value; redraw((n) => n + 1); bump(); } })),
 			h("button", { className: "add", title: "发起群聊", onClick: () => { S.dialog = { kind: "group" }; bump(); } }, ICON.plus()));
 	}
 
@@ -884,8 +885,14 @@
 		useEffect(() => { focusInput = () => { if (ta.current) ta.current.focus(); }; });
 		useEffect(() => { setAt(null); if (ta.current) ta.current.focus(); }, [t.name]);
 		useEffect(() => { if (atRow.current) atRow.current.scrollIntoView({ block: "nearest" }); }, [at && at.i]);
+		// company-chat-ime-v1: the box is drawn with its new text within the same event. React puts a controlled box
+		// back to the text it last drew when the event is over; the store's redraw comes a frame later, so while a
+		// Chinese input method composed, the box was put back on every key, the input method broke and the pinyin
+		// letters stayed in the text ("ddada zda zi打字", twice; scripts/prove-chat-composer.js).
+		const [, redraw] = useState(0);
 		const set = (v) => {
 			S.drafts[t.name] = v;
+			redraw((n) => n + 1);
 			bump();
 			if (Date.now() - keyAt.current > 3000 && t.isSubscribed()) { keyAt.current = Date.now(); try { t.noteKeyPress(); } catch (e) { /* not now */ } }
 		};
@@ -1141,6 +1148,6 @@
 	start();
 	window.__tdhChat = { S, client, bump, open: openTopic,
 		act: { sendText, sendFiles, recall, quote, createGroup, togglePin, toggleMute, forwardTo, leaveGroup },
-		// company-chat-client-test-v1: the page's own logic, for scripts/prove-chat-client.js (CI)
-		fn: { atDraft, plain, mentionsMe, mentionedUnread, allMessages, contentOf, renderContent, safeUrl, listed, unread } }; // for checks in the desk's tests and a person's own debugging
+		// company-chat-client-test-v1: the page's own logic, for scripts/prove-chat-client.js and prove-chat-composer.js (CI)
+		fn: { atDraft, plain, mentionsMe, mentionedUnread, allMessages, contentOf, renderContent, safeUrl, listed, unread, Composer, Search } }; // for checks in the desk's tests and a person's own debugging
 })();
