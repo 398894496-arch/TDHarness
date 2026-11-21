@@ -44,6 +44,7 @@ from pathlib import Path
 
 TICKET_S, CODE_S, TOKEN_S, COOKIE_S = 120, 60, 300, 600
 COOKIE = "tdh_sso"
+HOME = "/desk/home"                       # ERPNext 16's own home (company-erp-home-v1)
 PUBLIC = "/tdh-sso"                       # the path the browser sees (Tailscale Serve -> /company/sso)
 SYNC_DOMAIN_RE = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
 ROLES = {
@@ -184,7 +185,9 @@ def authorize_link(page: str, base: str) -> str:
 
 def erp_login_link(cfg: dict, timeout: float = 15) -> str:
     """Asks ERPNext (as a guest, as the browser would) for its login page and takes the TDH link from it."""
-    req = urllib.request.Request(cfg["erp_origin"].rstrip("/") + "/login?redirect-to=%2Fapp")
+    # company-erp-home-v1 (the user, 2026-11-21: ERPNext 16 showed its app chooser, 「ERPNext」 and 「框架」, first): the
+    # login lands on ERPNext's own home (/desk/home), never on the chooser (/app -> /desk).
+    req = urllib.request.Request(cfg["erp_origin"].rstrip("/") + "/login?redirect-to=" + urllib.parse.quote(HOME, safe=""))
     host = urllib.parse.urlparse(cfg["base"]).netloc
     req.add_header("Host", host)
     req.add_header("X-Forwarded-Proto", "https")

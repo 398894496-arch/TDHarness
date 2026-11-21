@@ -87,6 +87,7 @@ class FakeErp:
         self.roles = ["System Manager", "Accounts Manager", "Sales Manager", "Purchase Manager", "Stock Manager",
                       "Accounts User", "Purchase User", "Sales User", "Stock User", "Employee"]
         self.created, self.puts, self.auths, self.hosts = [], [], set(), []
+        self.landing = []
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -105,6 +106,7 @@ class FakeErp:
                 u = urllib.parse.urlparse(self.path)
                 if u.path == "/login":
                     fake.hosts.append((self.headers.get("Host"), self.headers.get("X-Forwarded-Proto")))
+                    fake.landing.append(urllib.parse.parse_qs(u.query).get("redirect-to", [""])[0])
                     link = BASE + "/tdh-sso/authorize?" + urllib.parse.urlencode({"client_id": "tdh-erpnext", "redirect_uri": REDIRECT,
                                                                                 "response_type": "code", "scope": "openid", "state": "STATE1"})
                     raw = ('<html><a href="https://elsewhere.example/x">x</a><a class="btn" href="%s">TDH</a></html>'
@@ -269,6 +271,7 @@ def main() -> None:
               "an admin has every role ERPNext has (company-erp-admin-all-v1): %s" % roles_put)
         check(len(erp.created) == 2 and len(erp.puts) == 3, "a second round changes nothing: %s %s" % (erp.created, erp.puts))
         check(erp.auths == {"token %s:%s" % (KEY, KSECRET)}, "the sync's own API key")
+        check(erp.landing and set(erp.landing) == {"/desk/home"}, "the login lands on ERPNext's home, not the app chooser: %s" % erp.landing)
     finally:
         proc.terminate()
         proc.wait(timeout=10)
