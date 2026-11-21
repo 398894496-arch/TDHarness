@@ -466,8 +466,11 @@ async function search(person, body) {
 //   customers  the zone the person's department shares (kb-zones.json groups: customers, floor prices, costs)
 //   private    the person's own department kept apart (行政财务); an admin, when there is only one such department
 // Never over an existing file unless overwrite=true; the old one is kept in runtime/kb-history first. Never a 说明.md.
-const KB_MAX = 25 * 1024 * 1024;
-const KB_EXT = new Set(['.md', '.txt', '.csv', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.wps', '.et', '.dps']);
+// company-kb-nolimit-v1 (the user, 2026-11-21: "知识库工具 取消文件大小上限 无论再大 都读写并按需收录"): no size limit; a
+// file comes streamed to disk (/v1/kb-upload), never held whole; archives, drawings and the rest of the company's kinds too.
+const KB_EXT = new Set(['.md', '.txt', '.csv', '.doc', '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx', '.pdf', '.png', '.jpg', '.jpeg', '.gif',
+  '.webp', '.bmp', '.tif', '.tiff', '.heic', '.wps', '.et', '.dps', '.ofd', '.zip', '.rar', '.7z', '.tar', '.gz', '.dwg', '.dxf', '.step', '.stp',
+  '.igs', '.iges', '.stl', '.sldprt', '.sldasm', '.slddrw', '.json', '.xml', '.html', '.mp4', '.mov', '.mp3', '.m4a', '.wav']);
 const KB_HISTORY = process.env.TDH_KB_HISTORY || path.join(ROOT, 'runtime', 'kb-history');
 function kbZone(person, zone) {
   if (zone === 'company') return { zone: 'company', dir: C('_handbook', '_company') };
@@ -511,15 +514,68 @@ function kbName(raw) {
   if (!n || n.length > 120 || /[\\/:*?"<>|\u0000-\u001f]/.test(n) || /^[.\s]|[.\s]$/.test(n) || n === '说明.md') return '';
   return KB_EXT.has(path.extname(n).toLowerCase()) ? n : '';
 }
-function kbWrite(person, body) {
+// Where a save goes, or why not: { z, audience, into, file, name } or { error: <the answer> }.
+function kbTarget(person, body) {
   const z = kbZone(person, String(body.zone || ''));
-  if (!z) return { ok: false, status: 'not-in-zone', hint: '这个区你放不进去：客户与价格只有销售和行政财务能放，私密区只有本部门能放。' };
+  if (!z) return { error: { ok: false, status: 'not-in-zone', hint: '这个区你放不进去：客户与价格只有销售和行政财务能放，私密区只有本部门能放。' } };
   const folders = kbFolders(z.dir);
   const folder = String(body.folder || '').trim();
   const audience = kbAudience(z.zone);
-  if (folders.indexOf(folder) < 0) return { ok: false, status: 'bad-folder', zone: z.zone, folders, audience, hint: audience.note };
+  if (folders.indexOf(folder) < 0) return { error: { ok: false, status: 'bad-folder', zone: z.zone, folders, audience, hint: audience.note } };
   const name = kbName(body.name);
-  if (!name) return { ok: false, status: 'bad-name', hint: '文件名不能带路径或特殊字符，要有扩展名：' + [...KB_EXT].join(' ') };
+  if (!name) return { error: { ok: false, status: 'bad-name', hint: '文件名不能带路径或特殊字符，要有扩展名：' + [...KB_EXT].join(' ') } };
+  const into = path.join(z.dir, folder);
+  const file = path.join(into, name);
+  if (!under(into, file) || path.dirname(file) !== into) return { error: { ok: false, status: 'bad-name' } };
+  if (fs.existsSync(file) && body.overwrite !== true) return { error: { ok: false, status: 'exists', zone: z.zone, path: relName(file), audience, hint: audience.note } };
+  return { z, audience, into, file, name };
+}
+// The old one kept (runtime/kb-history) before a file is replaced.
+function kbKeepOld(person, file) {
+  if (!fs.existsSync(file)) return false;
+  const stamp = new Date(Date.now() + 8 * 3600e3).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+  const keep = path.join(KB_HISTORY, stamp + '-' + safe(person.login), path.relative(COMPANY, file));
+  fs.mkdirSync(path.dirname(keep), { recursive: true });
+  fs.copyFileSync(file, keep);
+  return true;
+}
+// A file streamed in (POST /v1/kb-upload?zone=&folder=&name=&overwrite=1, the body the file itself): to disk as it comes.
+function kbUpload(person, q, req) {
+  return new Promise((resolve) => {
+    const t = kbTarget(person, { zone: q.get('zone'), folder: q.get('folder'), name: q.get('name'), overwrite: q.get('overwrite') === '1' });
+    if (t.error) { req.resume(); resolve(t.error); return; }
+    const tmp = t.file + '.' + process.pid + '.' + Date.now() + '.uploading';
+    const out = fs.createWriteStream(tmp);
+    let bytes = 0;
+    let failed = false;
+    const fail = (why) => {
+      if (failed) return;
+      failed = true;
+      try { out.destroy(); } catch (e) { /* closed */ }
+      try { fs.unlinkSync(tmp); } catch (e) { /* not there */ }
+      resolve({ ok: false, status: why });
+    };
+    req.on('data', (c) => { bytes += c.length; });
+    req.on('aborted', () => fail('upload-cut'));
+    req.on('error', () => fail('upload-cut'));
+    out.on('error', () => fail('write-failed'));
+    out.on('finish', () => {
+      if (failed) return;
+      const want = Number(req.headers['content-length'] || 0);
+      if (!bytes || (want && bytes !== want)) { fail(bytes ? 'upload-cut' : 'empty'); return; }
+      try {
+        const replaced = kbKeepOld(person, t.file);
+        fs.renameSync(tmp, t.file);
+        resolve({ ok: true, status: 'written', zone: t.z.zone, path: relName(t.file), bytes, replaced, audience: t.audience, hint: t.audience.note });
+      } catch (e) { fail('write-failed'); }
+    });
+    req.pipe(out);
+  });
+}
+function kbWrite(person, body) {
+  const t = kbTarget(person, body);
+  if (t.error) return t.error;
+  const { z, audience, into, file, name } = t;
   let buf = null;
   if (typeof body.data === 'string' && body.data) buf = Buffer.from(body.data, 'base64');
   else if (typeof body.content === 'string' && body.content.trim()) {
@@ -527,19 +583,7 @@ function kbWrite(person, body) {
     buf = Buffer.from(body.content.replace(/^﻿/, ''), 'utf8');
   }
   if (!buf || !buf.length) return { ok: false, status: 'empty' };
-  if (buf.length > KB_MAX) return { ok: false, status: 'too-large', max: KB_MAX };
-  const into = path.join(z.dir, folder);
-  const file = path.join(into, name);
-  if (!under(into, file) || path.dirname(file) !== into) return { ok: false, status: 'bad-name' };
-  let replaced = false;
-  if (fs.existsSync(file)) {
-    if (body.overwrite !== true) return { ok: false, status: 'exists', zone: z.zone, path: relName(file), audience, hint: audience.note };
-    const stamp = new Date(Date.now() + 8 * 3600e3).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-    const keep = path.join(KB_HISTORY, stamp + '-' + safe(person.login), path.relative(COMPANY, file));
-    fs.mkdirSync(path.dirname(keep), { recursive: true });
-    fs.copyFileSync(file, keep);
-    replaced = true;
-  }
+  const replaced = kbKeepOld(person, file);
   const tmp = file + '.' + process.pid + '.tmp';
   fs.writeFileSync(tmp, buf);
   fs.renameSync(tmp, file);
@@ -571,6 +615,21 @@ const server = http.createServer(async (req, res) => {
     }
     let out;
     try { out = memoryWrite(person, body || {}); } catch (e) {
+      out = { ok: false, status: 'write-failed', error: String(e && e.code || e && e.message || e).slice(0, 80) };
+    }
+    audit(person.login, url.pathname, out.ok ? 1 : 0);
+    json(out.ok ? 200 : 400, { ...out, login: person.login });
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/v1/kb-upload') {
+    const person = personOf(tokenOf(req));
+    if (!person) {
+      req.resume();
+      json(401, { ok: false, status: 'login-required' });
+      return;
+    }
+    let out;
+    try { out = await kbUpload(person, url.searchParams, req); } catch (e) {
       out = { ok: false, status: 'write-failed', error: String(e && e.code || e && e.message || e).slice(0, 80) };
     }
     audit(person.login, url.pathname, out.ok ? 1 : 0);

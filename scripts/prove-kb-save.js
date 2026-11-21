@@ -132,11 +132,26 @@ function post(port, token, route, body) {
     const local = path.join(root, 'desk-file 价目表.xlsx');
     fs.writeFileSync(local, xlsx);
     const made = desk.kbSaveBody({ zone: 'company', folder: '01 公司介绍', path: local });
-    assert.ok(made.body && made.body.name === 'desk-file 价目表.xlsx' && Buffer.from(made.body.data, 'base64').equals(xlsx), 'the desk sends the file and its name');
+    assert.ok(made.upload && made.upload.name === 'desk-file 价目表.xlsx' && made.upload.size === xlsx.length && !made.body, 'the desk streams the file, its name kept');
     assert.ok(/absolute/.test(desk.kbSaveBody({ zone: 'company', folder: 'x', path: 'relative.xlsx' }).error), 'a relative path is refused');
     assert.ok(/no such file/.test(desk.kbSaveBody({ zone: 'company', folder: 'x', path: path.join(root, 'nope.xlsx') }).error), 'a missing file is refused');
-    r = await S('olly', made.body);
-    assert.ok(r.ok && fs.readFileSync(path.join(company, '_handbook/_company/01 公司介绍/desk-file 价目表.xlsx')).equals(xlsx), 'and the server stores it as sent');
+    r = (await desk.kbUpload(made.upload, 'http://127.0.0.1:' + port, T.olly, '/v1/kb-upload')).json;
+    assert.ok(r.ok && fs.readFileSync(path.join(company, '_handbook/_company/01 公司介绍/desk-file 价目表.xlsx')).equals(xlsx), 'and the server stores it as sent: ' + JSON.stringify(r));
+    // company-kb-nolimit-v1: no size limit; streamed, not held; an archive is a kind the knowledge base keeps.
+    const big = path.join(root, '出口报关单.zip');
+    const fd = fs.openSync(big, 'w');
+    const block = Buffer.alloc(1024 * 1024, 7);
+    for (let i = 0; i < 40; i++) fs.writeSync(fd, block);
+    fs.closeSync(fd);
+    r = (await desk.kbUpload(desk.kbSaveBody({ zone: 'private', folder: '03 人事与薪酬', path: big }).upload, 'http://127.0.0.1:' + port, T.fay, '/v1/kb-upload')).json;
+    assert.ok(r.ok && r.bytes === 40 * 1024 * 1024 && fs.statSync(path.join(company, '_handbook/d-fin/03 人事与薪酬/出口报关单.zip')).size === 40 * 1024 * 1024,
+      '40 MB (over the old 25 MB) streamed in: ' + JSON.stringify(r));
+    assert.ok(/fay/.test(r.hint), 'and says who reads it');
+    r = (await desk.kbUpload(desk.kbSaveBody({ zone: 'private', folder: '03 人事与薪酬', path: big }).upload, 'http://127.0.0.1:' + port, T.fay, '/v1/kb-upload')).json;
+    assert.strictEqual(r.status, 'exists', 'not over an existing one unless overwrite');
+    r = (await desk.kbUpload(desk.kbSaveBody({ zone: 'private', folder: '03 人事与薪酬', path: big }).upload, 'http://127.0.0.1:' + port, T.sam, '/v1/kb-upload')).json;
+    assert.strictEqual(r.status, 'not-in-zone', 'nor into a zone one may not put in');
+    assert.ok(!fs.readdirSync(path.join(company, '_handbook/d-fin/03 人事与薪酬')).some((n) => /uploading/.test(n)), 'nothing half-written left');
     console.log('KB_SAVE_PROVE_OK=1');
   } catch (e) {
     console.error('KB_SAVE_PROVE_FAIL ' + (e && e.message ? e.message : e));
