@@ -1,5 +1,5 @@
 """company-chat-docs-v1: file the finance papers already sent in the chat, quietly (nothing is said in the chat; the
-assistant does the new ones and says so). Run on the server: python chat_docs_backfill.py --after <message id>.
+assistant does the new ones and says so). Run on the server: python chat_docs_backfill.py --after <message id> [--only <id,id>].
 Only what check() calls sure is filed; what it is not sure of is counted, not filed. Prints counts.
 """
 import argparse
@@ -19,7 +19,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--after", type=int, required=True)
     ap.add_argument("--root", default=os.environ.get("TDH_ROOT") or r"D:\dsh")
+    ap.add_argument("--only", default="", help="only these message ids, comma separated")
     a = ap.parse_args()
+    only = {int(x) for x in a.only.split(",") if x.strip()}
     root = Path(a.root)
     rt = root / "runtime"
     cfg = chat_assist.load_config(rt)
@@ -44,6 +46,8 @@ def main() -> None:
             head = row.get("head") if isinstance(row.get("head"), dict) else {}
             sender = chat_assist.login_of(row.get("from_tags"))
             members = sorted({chat_assist.login_of(t) for t in row.get("member_tags") or []} - {""} - set(BOTS))
+            if only and int(row.get("id") or 0) not in only:
+                continue
             if head.get("tdh_ai") or not sender or sender in BOTS or not (set(members) & fin):
                 continue
             topic = str(row.get("topic") or "")
