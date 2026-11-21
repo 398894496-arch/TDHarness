@@ -29,6 +29,7 @@ import chat_archive  # noqa: E402
 import chat_docs  # noqa: E402
 import erp_sso  # noqa: E402
 import erp_data  # noqa: E402
+import kb_organize  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
 ROSTER = Path(os.environ.get("TDH_ROSTER") or str(ROOT / "runtime" / "roster.json"))
@@ -2092,6 +2093,26 @@ def erp_agent_log(login: str, route: str, payload: dict, status: int, body: dict
         pass
 
 
+def kb_organize_loop() -> None:
+    """company-kb-organize-v1 (server/kb_organize.py): people's own folders into the knowledge base, every 10 minutes."""
+    time.sleep(float(os.environ.get("TDH_KB_ORGANIZE_DELAY") or 45))
+    every = float(os.environ.get("TDH_KB_ORGANIZE_EVERY") or 600)
+    while True:
+        try:
+            out = kb_organize.run_once(ROOT / "company", TOKEN_STORE.parent, people_by_login())
+            if out.get("copied") or out.get("finance"):
+                line = json.dumps({k: out[k] for k in ("seen", "copied", "same", "review", "finance", "review_open")}, ensure_ascii=False)
+                sys.stderr.write("people-api kb-organize %s\n" % line)
+                try:
+                    with (ROOT / "logs" / "kb-organize.log").open("a", encoding="utf-8") as fh:
+                        fh.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), line))
+                except OSError:
+                    pass
+        except Exception as exc:  # noqa: BLE001 - the share busy, a file mid-copy: the next round
+            sys.stderr.write("people-api kb-organize failed %s\n" % type(exc).__name__)
+        time.sleep(every)
+
+
 def chat_archive_once() -> dict:
     """company-chat-archive-v1 (server/chat_archive.py): the chat's new files onto the company disk, by kind."""
     runtime = TOKEN_STORE.parent
@@ -2758,6 +2779,8 @@ def main() -> None:
         threading.Thread(target=notify_loop, name="notify", daemon=True).start()
     if os.environ.get("TDH_CHAT_PROVISION", "1") != "0":
         threading.Thread(target=chat_provision_loop, name="chat-provision", daemon=True).start()
+    if os.environ.get("TDH_KB_ORGANIZE", "1") != "0":
+        threading.Thread(target=kb_organize_loop, name="kb-organize", daemon=True).start()
     if os.environ.get("TDH_DAILY_REPORT", "1") != "0":
         threading.Thread(target=daily_report_loop, name="daily-report", daemon=True).start()
     if os.environ.get("TDH_CHAT_ASSIST", "1") != "0":
