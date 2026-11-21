@@ -712,6 +712,13 @@ window.__ModuleLoader__.load({
 			"  text-overflow: ellipsis; white-space: nowrap;",
 			"  font-size: 12px; font-weight: 400;",
 			"}",
+			".cs-restore {",
+			"  flex: none; height: 22px; padding: 0 8px; border-radius: 999px; cursor: pointer;",
+			"  border: 1px solid " + tint(T.brand, 45) + "; background: transparent; color: " + T.brand + ";",
+			"  font-size: 12px; line-height: 20px;",
+			"}",
+			".cs-restore:hover { background: " + tint(T.brand, 12) + "; }",
+			".cs-restore:disabled { opacity: .5; cursor: default; }",
 			".cs-row-m {",
 			"  margin-top: 2px; font-size: 11px; font-weight: 400; line-height: 1.4;",
 			"  color: " + T.label2 + ";",
@@ -1475,6 +1482,8 @@ window.__ModuleLoader__.load({
 		let clearSessionFn = function () {};
 		let sessionListFn = function () { return null; };
 		let workspaceListFn = function () { return null; };
+		// company-session-restore-v1 (the user, 2026-11-21: "归档后的窗口 你要给我一个还原按钮"): the archived list's 还原.
+		let unarchiveFn = function () { return Promise.reject(new Error("not-ready")); };
 		let insertDeskTextFn = function () { return false; };
 		// The session whose composer is on screen, as told by the composer's own
 		// slot. 0.2.x dropped `current` from the session list, so this is the only
@@ -3046,6 +3055,12 @@ window.__ModuleLoader__.load({
 			const sessArchiveHook = React.useState(false);
 			const sessArchive = sessArchiveHook[0];
 			const setSessArchive = sessArchiveHook[1];
+			const restoringHook = React.useState({});
+			const restoring = restoringHook[0];
+			const setRestoring = restoringHook[1];
+			const restoredHook = React.useState({});
+			const restored = restoredHook[0];
+			const setRestored = restoredHook[1];
 			const taskArchiveHook = React.useState(false);
 			const taskArchive = taskArchiveHook[0];
 			const setTaskArchive = taskArchiveHook[1];
@@ -3291,7 +3306,7 @@ window.__ModuleLoader__.load({
 
 			function archivedSessionRows() {
 				const ws = workspaceListFn() || {};
-				const ids = ws.archivedSessionIds || [];
+				const ids = (ws.archivedSessionIds || []).filter(function (id) { return !restored[id]; });
 				const snap = sessionListFn() || {};
 				const byId = snap.byId || {};
 				if (!ids.length) {
@@ -3309,7 +3324,23 @@ window.__ModuleLoader__.load({
 						}
 					},
 						React.createElement("div", { className: "cs-row-t" },
-							React.createElement("span", { className: "cs-row-t-name" }, title)
+							React.createElement("span", { className: "cs-row-t-name" }, title),
+							React.createElement("button", {
+								type: "button",
+								className: "cs-restore",
+								title: "放回会话列表",
+								disabled: restoring[id] === true,
+								onClick: function (event) {
+									event.stopPropagation();
+									const mark = function (v) { return function (prev) { const next = Object.assign({}, prev); next[id] = v; return next; }; };
+									setRestoring(mark(true));
+									Promise.resolve().then(function () { return unarchiveFn(id); }).then(function () {
+										setRestored(mark(true));
+									}).catch(function () {
+										setRestoring(mark("failed"));
+									});
+								}
+							}, restoring[id] === "failed" ? "没还原，再点一次" : "还原")
 						),
 						React.createElement("div", { className: "cs-row-m" }, id)
 					);
@@ -7484,6 +7515,10 @@ window.__ModuleLoader__.load({
 				} catch (err) {
 					return null;
 				}
+			};
+			unarchiveFn = function (sessionId) {
+				if (!ctx.workspaces || typeof ctx.workspaces.unarchiveSession !== "function") return Promise.reject(new Error("no-unarchive"));
+				return ctx.workspaces.unarchiveSession(sessionId);
 			};
 			try {
 				const remote = typeof ctx.get === "function" ? ctx.get("remote.artifact") : undefined;

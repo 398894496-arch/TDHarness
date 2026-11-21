@@ -98,6 +98,10 @@ exp0 = exp;
 	assert.deepEqual(Array.from(exp.panelsForRole("admin", rows), (r) => r.id), ["plugins", "artifacts", "schedules", "company-chat"], "the admin sees 插件 too");
 	assert.deepEqual(Array.from(exp.panelsForRole("employee", null)), []);
 	assert.ok(/const shownPanels = panelsForDesk\(shellRole, panels, chatDock\);/.test(fs.readFileSync(CLIENT, "utf8")), "the left column uses it");
+	// company-session-restore-v1: an archived session's row has 还原, which unarchives it through the workspaces service.
+	const src = fs.readFileSync(CLIENT, "utf8");
+	assert.ok(/return ctx\.workspaces\.unarchiveSession\(sessionId\);/.test(src) && /className: "cs-restore"/.test(src)
+		&& /\? "没还原，再点一次" : "还原"/.test(src) && /event\.stopPropagation\(\);/.test(src), "archived rows can be restored");
 	assert.deepEqual(Array.from(exp.panelsForDesk("employee", rows, false), (r) => r.id), ["artifacts", "schedules", "company-chat"]);
 }
 const regs = [];
