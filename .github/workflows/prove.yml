@@ -168,12 +168,16 @@ jobs:
       - name: A person's own chats for their agent, and TDH早报 (company-chat-read-v1, company-chat-bot-v1)
         if: runner.os == 'Linux'
         run: python3 scripts/prove-chat-read.py
-      - name: Chat page logic and its input boxes with a Chinese input method (company-chat-client-v1, company-chat-ime-v1; tinode-sdk 0.25.3, as the server runs)
+      - name: TDH 助手 in the chat (company-chat-assist-v1; the gate, who may see what, answers in the chat)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-assist.py
+      - name: Chat page logic, its input boxes with a Chinese input method, TDH 助手's cards (company-chat-client-v1, company-chat-ime-v1, company-chat-assist-v1; tinode-sdk 0.25.3, as the server runs)
         if: runner.os == 'Linux'
         run: |
           npm install --no-save --no-fund --no-audit --prefix "$RUNNER_TEMP/tinode" tinode-sdk@0.25.3 jsdom@25.0.1
           TINODE_SDK="$RUNNER_TEMP/tinode/node_modules/tinode-sdk" node scripts/prove-chat-client.js
           TINODE_SDK="$RUNNER_TEMP/tinode/node_modules/tinode-sdk" JSDOM="$RUNNER_TEMP/tinode/node_modules/jsdom" node scripts/prove-chat-composer.js
+          TINODE_SDK="$RUNNER_TEMP/tinode/node_modules/tinode-sdk" JSDOM="$RUNNER_TEMP/tinode/node_modules/jsdom" node scripts/prove-chat-ai-card.js
       - name: Prove task-card reminders (due soon, overdue, the admins' page, WeCom against a fake)
         run: python scripts/prove-task-notify.py
       - name: Prove task cards (share reach, no self-approval, damaged board, body limits)

@@ -23,6 +23,7 @@ import tickets as ticket_board  # noqa: E402
 import daily_report  # noqa: E402
 import notify  # noqa: E402
 import chat_read  # noqa: E402
+import chat_assist  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
 ROSTER = Path(os.environ.get("TDH_ROSTER") or str(ROOT / "runtime" / "roster.json"))
@@ -850,8 +851,8 @@ _TINODE_MU = threading.Lock()
 # company-chat-bot-v1: the server's own chat senders, outside the roster, one per kind of notice, so a notice comes
 # in a chat of its own (TDH早报), not from a person. Only this server logs in as one (one-time tickets, never a
 # password or a desk token); a bot opens no directory, so it is in nobody's contacts until it writes to them. No one
-# can be added to the roster under a bot's login.
-CHAT_BOTS = {"tdh-daily": "TDH早报"}
+# can be added to the roster under a bot's login. TDH助手 posts TDH 助手's answers in groups (company-chat-assist-v1).
+CHAT_BOTS = {"tdh-daily": "TDH早报", "tdh-assist": "TDH助手"}
 
 
 def _tinode_links() -> dict:
@@ -1722,6 +1723,145 @@ def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
     return 200, out
 
 
+def chat_post(sender: str, topic: str, content, head: dict | None = None, ua: str = "TDH-assist/1.0") -> dict:
+    """One message from `sender` into `topic` (the name as `sender` sees it), signed in with a one-time ticket; leaves
+    after (company-chat-assist-v1). In a group `sender` is not in yet, the subscription joins it."""
+    lp, why = _chat_login(sender, ua)
+    if lp is None:
+        return {"ok": False, "why": why}
+    s = lp.send({"sub": {"topic": topic}})
+    if not s or int(s.get("code") or 500) >= 300:
+        return {"ok": False, "why": "sub", "code": (s or {}).get("code")}
+    pub = {"topic": topic, "noecho": True, "content": content}
+    if head:
+        pub["head"] = head
+    p = lp.send({"pub": pub})
+    lp.send({"leave": {"topic": topic}})
+    return {"ok": bool(p) and int(p.get("code") or 500) < 300, "seq": ((p or {}).get("params") or {}).get("seq")}
+
+
+_ASSIST_MU = threading.Lock()
+_ASSIST_CTX: dict = {}      # topic -> its last few lines ("name：words"), the model's context; in memory only
+_ASSIST_LAST: dict = {}     # topic -> when TDH 助手 last answered there
+
+
+def _assist_post(c: dict, kind: str, text: str, links: dict) -> dict:
+    """TDH 助手's answer into the chat of the question `c`. One-to-one: posted by the person asked, who confirms it;
+    a group: posted by TDH助手, confirmed by the person @-ed in the question, if any."""
+    head = {"tdh_ai": {"v": 1, "of": c["seq"], "kind": kind}, "reply": str(c["seq"])}
+    content = chat_assist.PREFIX + text
+    if c["topic"].startswith("p2p"):
+        others = [m for m in c["members"] if m != c["sender"]]
+        if len(c["members"]) != 2 or len(others) != 1 or not links.get(c["sender"]) or not links.get(others[0]):
+            return {"ok": False, "why": "members"}
+        head["tdh_ai"]["confirm"] = "usr" + links[others[0]]
+        return chat_post(others[0], "usr" + links[c["sender"]], content, head)
+    if c["topic"].startswith("grp"):
+        uids = {"usr" + links[m]: m for m in c["members"] if links.get(m)}
+        confirm = next((u for u in c["mentions"] if uids.get(u) not in (None, c["sender"])), "")
+        if confirm:
+            head["tdh_ai"]["confirm"] = confirm
+        return chat_post("tdh-assist", c["topic"], content, head)
+    return {"ok": False, "why": "topic"}
+
+
+def chat_assist_once() -> dict:
+    """company-chat-assist-v1 (server/chat_assist.py): one round over the chat's new messages. The first round only
+    notes where the chat is: what was written before TDH 助手 was on is not answered."""
+    runtime = TOKEN_STORE.parent
+    cfg = chat_assist.load_config(runtime)
+    if not cfg.get("on"):
+        return {"ok": True, "off": True}
+    with _ASSIST_MU:
+        state = chat_assist.load_state(runtime)
+        if "last_id" not in state:
+            state["last_id"] = chat_assist.max_id(cfg, runtime)
+            chat_assist.save_state(runtime, state)
+            return {"ok": True, "started_after": state["last_id"]}
+        rows = chat_assist.fetch(cfg, runtime, int(state["last_id"]))
+        out = {"ok": True, "rows": len(rows), "looked": 0, "answered": 0, "skipped": {}}
+        if not rows:
+            return out
+        if state.get("day") != chat_assist.today():
+            state["day"], state["calls"] = chat_assist.today(), 0
+        people = people_by_login()
+        links = _tinode_links()
+        viewers = chat_assist.cash_viewers(runtime)
+        try:
+            token = (runtime / "gw-service.token").read_text(encoding="utf-8").strip()
+        except OSError:
+            token = ""
+
+        def skip(why: str) -> None:
+            out["skipped"][why] = out["skipped"].get(why, 0) + 1
+
+        for row in rows:
+            state["last_id"] = max(int(state["last_id"]), int(row.get("id") or 0))
+            topic = str(row.get("topic") or "")
+            who = chat_assist.login_of(row.get("from_tags"))
+            words = chat_assist.own_words(row.get("content"))
+            ctx = _ASSIST_CTX.setdefault(topic, [])
+            if who and words and not (isinstance(row.get("head"), dict) and row["head"].get("tdh_ai")):
+                ctx.append("%s：%s" % ((people.get(who) or {}).get("name") or who, words[:120]))
+                del ctx[:-6]
+            c = chat_assist.candidate(row, CHAT_BOTS)
+            if c is None:
+                continue
+            out["looked"] += 1
+            kinds = [k for k in c["kinds"] if chat_assist.may_see(k, c["members"], people, viewers)]
+            if not kinds:
+                skip("not-for-everyone")
+                continue
+            if time.time() - _ASSIST_LAST.get(topic, 0) < float(cfg["cooldown_s"]):
+                skip("cooldown")
+                continue
+            if int(state.get("calls") or 0) >= int(cfg["max_per_day"]):
+                skip("day-limit")
+                continue
+            if not token:
+                skip("no-service-token")
+                continue
+            data = chat_assist.pack_data(cfg, token, kinds[0], c["text"])
+            if data is None:
+                skip("no-data")
+                continue
+            state["calls"] = int(state.get("calls") or 0) + 1
+            asker = (people.get(c["sender"]) or {}).get("name") or c["sender"]
+            text = chat_assist.answer(cfg, token, asker, c["text"], ctx[:-1], kinds[0], data)
+            if not text:
+                skip("none")
+                continue
+            r = _assist_post(c, kinds[0], text, links)
+            if r.get("ok"):
+                out["answered"] += 1
+                _ASSIST_LAST[topic] = time.time()
+            else:
+                skip("post-%s" % r.get("why"))
+        chat_assist.save_state(runtime, state)
+    if out["looked"]:
+        line = "rows=%d looked=%d answered=%d skipped=%s calls_today=%s" % (
+            out["rows"], out["looked"], out["answered"], json.dumps(out["skipped"]), state.get("calls"))
+        sys.stderr.write("people-api chat-assist " + line + "\n")
+        try:
+            (ROOT / "logs").mkdir(parents=True, exist_ok=True)
+            with (ROOT / "logs" / "chat-assist.log").open("a", encoding="utf-8") as fh:
+                fh.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), line))
+        except OSError:
+            pass
+    return out
+
+
+def chat_assist_loop() -> None:
+    time.sleep(float(os.environ.get("TDH_CHAT_ASSIST_DELAY") or 15))
+    every = float(os.environ.get("TDH_CHAT_ASSIST_EVERY") or 5)
+    while True:
+        try:
+            chat_assist_once()
+        except Exception as exc:  # noqa: BLE001 - the chat works without it; the next round tries again
+            sys.stderr.write("people-api chat-assist failed %s\n" % type(exc).__name__)
+        time.sleep(every)
+
+
 DAILY_MU = threading.Lock()
 
 
@@ -1828,6 +1968,8 @@ def main() -> None:
         threading.Thread(target=chat_provision_loop, name="chat-provision", daemon=True).start()
     if os.environ.get("TDH_DAILY_REPORT", "1") != "0":
         threading.Thread(target=daily_report_loop, name="daily-report", daemon=True).start()
+    if os.environ.get("TDH_CHAT_ASSIST", "1") != "0":
+        threading.Thread(target=chat_assist_loop, name="chat-assist", daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     sys.stdout.write("LISTEN=%s:%s\n" % (HOST, PORT))
     sys.stdout.flush()
