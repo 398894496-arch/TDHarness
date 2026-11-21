@@ -117,6 +117,11 @@ class FakeErp:
                 fake.auths.add(self.headers.get("Authorization"))
                 if u.path == "/api/resource/Role":
                     return self._json(200, {"data": [{"name": r} for r in fake.roles]})
+                if u.path.startswith("/api/resource/User/"):
+                    name = urllib.parse.unquote(u.path.rsplit("/", 1)[1])
+                    if name not in fake.users:
+                        return self._json(404, {})
+                    return self._json(200, {"data": dict(fake.users[name], roles=fake.users[name].get("roles") or [])})
                 if u.path == "/api/resource/User":
                     q = urllib.parse.parse_qs(u.query)
                     like = json.loads(q["filters"][0])[0][2].replace("%", "")
@@ -127,7 +132,7 @@ class FakeErp:
                 fake.auths.add(self.headers.get("Authorization"))
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
                 fake.created.append(body)
-                fake.users[body["email"]] = {"name": body["email"], "enabled": body["enabled"], "first_name": body["first_name"]}
+                fake.users[body["email"]] = {"name": body["email"], "enabled": body["enabled"], "first_name": body["first_name"], "roles": body.get("roles") or []}
                 self._json(200, {"data": {"name": body["email"]}})
 
             def do_PUT(self):
@@ -259,7 +264,10 @@ def main() -> None:
         check(all(c["send_welcome_email"] == 0 and c["user_type"] == "System User" and "new_password" not in c for c in erp.created), "no mail, no password")
         check(("tdh@tdh.test", {"enabled": 1}) in erp.puts and ("old@tdh.test", {"enabled": 0}) in erp.puts, "enabled again / disabled: %s" % erp.puts)
         check(not any(n in ("Administrator", "someone@other.org") for n, _ in erp.puts), "Administrator and other domains untouched")
-        check(len(erp.created) == 2 and len(erp.puts) == 2, "a second round changes nothing: %s %s" % (erp.created, erp.puts))
+        roles_put = [b for n, b in erp.puts if n == "tdh@tdh.test" and "roles" in b]
+        check(len(roles_put) == 1 and sorted(r["role"] for r in roles_put[0]["roles"]) == sorted(erp.roles),
+              "an admin has every role ERPNext has (company-erp-admin-all-v1): %s" % roles_put)
+        check(len(erp.created) == 2 and len(erp.puts) == 3, "a second round changes nothing: %s %s" % (erp.created, erp.puts))
         check(erp.auths == {"token %s:%s" % (KEY, KSECRET)}, "the sync's own API key")
     finally:
         proc.terminate()

@@ -2144,7 +2144,7 @@ def erp_sync_once() -> dict:
         f = erp_data.ensure_finance_user(cfg, runtime / "erp-finance.json")
         if not f.get("ok") or f.get("created") or f.get("roles_set") or f.get("key_made"):
             out["finance_user"] = {x: f[x] for x in ("ok", "why", "created", "roles_set", "key_made") if x in f}
-    if not out.get("ok") or any(out.get(k) for k in ("created", "enabled", "disabled", "renamed", "failed", "keys", "finance_user")):
+    if not out.get("ok") or any(out.get(k) for k in ("created", "enabled", "disabled", "renamed", "failed", "admin_roles", "keys", "finance_user")):
         line = json.dumps(out, ensure_ascii=False)
         sys.stderr.write("people-api erp-sync %s\n" % line)
         try:
