@@ -271,7 +271,8 @@ def main() -> None:
               "an admin has every role ERPNext has (company-erp-admin-all-v1): %s" % roles_put)
         check(len(erp.created) == 2 and len(erp.puts) == 3, "a second round changes nothing: %s %s" % (erp.created, erp.puts))
         check(erp.auths == {"token %s:%s" % (KEY, KSECRET)}, "the sync's own API key")
-        check(erp.landing and set(erp.landing) == {"/desk/home"}, "the login lands on ERPNext's home, not the app chooser: %s" % erp.landing)
+        check(set(erp.landing) == {"/desk/selling", "/desk/home"} and "/app" not in erp.landing,
+              "the login lands on the department's workspace (an admin on the home), never the app chooser: %s" % erp.landing)
     finally:
         proc.terminate()
         proc.wait(timeout=10)

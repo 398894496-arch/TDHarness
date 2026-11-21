@@ -45,11 +45,14 @@ from pathlib import Path
 TICKET_S, CODE_S, TOKEN_S, COOKIE_S = 120, 60, 300, 600
 COOKIE = "tdh_sso"
 HOME = "/desk/home"                       # ERPNext 16's own home (company-erp-home-v1)
+# company-erp-dept-v1 (2026-11-21, 郭迎's ERPNext home: "Accounting Dimension 权限不足"): each department lands on its own
+# workspace; ERPNext's home has the accounts' charts, which only admins and 行政财务 may read.
+HOME_BY_DEPT = {"行政财务": "/desk/accounting", "销售": "/desk/selling", "生产设计": "/desk/manufacturing", "内勤": "/desk/stock"}
 PUBLIC = "/tdh-sso"                       # the path the browser sees (Tailscale Serve -> /company/sso)
 SYNC_DOMAIN_RE = re.compile(r"^[a-z0-9.-]+\.[a-z]{2,}$")
 ROLES = {
     "admin": ["System Manager", "Accounts Manager", "Sales Manager", "Purchase Manager", "Stock Manager", "Manufacturing Manager"],
-    "depts": {"行政财务": ["Accounts User", "Purchase User"], "销售": ["Sales User"], "生产设计": ["Manufacturing User", "Stock User"],
+    "depts": {"行政财务": ["Accounts Manager", "Accounts User", "Purchase User"], "销售": ["Sales User"], "生产设计": ["Manufacturing User", "Stock User"],
               "内勤": ["Sales User", "Stock User"]},
     "default": ["Employee"],
 }
@@ -183,11 +186,16 @@ def authorize_link(page: str, base: str) -> str:
     return ""
 
 
-def erp_login_link(cfg: dict, timeout: float = 15) -> str:
+def home_of(row: dict, dept_name: str) -> str:
+    """Where a person lands in ERPNext: an admin on its home, a department on its workspace, anyone else on the home."""
+    return HOME if row.get("role") == "admin" else HOME_BY_DEPT.get(dept_name, HOME)
+
+
+def erp_login_link(cfg: dict, timeout: float = 15, home: str = HOME) -> str:
     """Asks ERPNext (as a guest, as the browser would) for its login page and takes the TDH link from it."""
     # company-erp-home-v1 (the user, 2026-11-21: ERPNext 16 showed its app chooser, 「ERPNext」 and 「框架」, first): the
     # login lands on ERPNext's own home (/desk/home), never on the chooser (/app -> /desk).
-    req = urllib.request.Request(cfg["erp_origin"].rstrip("/") + "/login?redirect-to=" + urllib.parse.quote(HOME, safe=""))
+    req = urllib.request.Request(cfg["erp_origin"].rstrip("/") + "/login?redirect-to=" + urllib.parse.quote(home, safe=""))
     host = urllib.parse.urlparse(cfg["base"]).netloc
     req.add_header("Host", host)
     req.add_header("X-Forwarded-Proto", "https")
@@ -270,17 +278,22 @@ def sync(cfg: dict, people: dict, depts: dict, mapping: dict, api=None) -> dict:
                 out["enabled" if "enabled" in change else "renamed"] += 1
             else:
                 out["failed"] += 1
-    out["admin_roles"] = 0
+    out["admin_roles"] = out["dept_roles"] = 0
     for email, row in active.items():
-        if row.get("role") != "admin" or email not in have:
+        if email not in have:
+            continue
+        # company-erp-dept-v1: a department's roles reach the people made before they were changed (added each round,
+        # never taken away), as an admin's every role does.
+        want = set(every) if row.get("role") == "admin" else set(roles_for(row, depts.get(row.get("dept"), ""), mapping, known))
+        if not want:
             continue
         st, d = api("GET", "/api/resource/User/" + urllib.parse.quote(email))
         if st != 200:
             continue
         mine = {r.get("role") for r in ((d.get("data") or {}).get("roles") or [])}
-        if set(every) - mine:
-            st, _ = api("PUT", "/api/resource/User/" + urllib.parse.quote(email), {"roles": [{"role": r} for r in sorted(mine | set(every))]})
-            out["admin_roles" if st == 200 else "failed"] += 1
+        if want - mine:
+            st, _ = api("PUT", "/api/resource/User/" + urllib.parse.quote(email), {"roles": [{"role": r} for r in sorted(mine | want)]})
+            out[("admin_roles" if row.get("role") == "admin" else "dept_roles") if st == 200 else "failed"] += 1
     for email, u in have.items():
         if email not in active and int(u.get("enabled") or 0):
             st, _ = api("PUT", "/api/resource/User/" + urllib.parse.quote(email), {"enabled": 0})
