@@ -7,7 +7,8 @@
   3. The backend reaches the tailnet name: an extra hosts entry in /opt/tdh-erpnext/private-compose.yaml (the file the
      stack always uses), the backend recreated.
   4. Tailscale Serve: https://<erp host>/tdh-sso -> http://127.0.0.1:4181/company/sso (the people service).
-  5. The agent's ERPNext guide (skills/company-erpnext) into the company's _skills.
+  5. The agent's ERPNext guide (skills/company-erpnext) and its reads and writes (skills/company-erpnext-data) into
+     the company's _skills.
 No secret is printed; prints ERP_SSO_INSTALL_OK=1.
 """
 import json
@@ -114,10 +115,11 @@ docker exec tdh-erpnext-backend-1 getent hosts %(site)s | awk '{print "backend r
     print("4 serve: / -> %s; /tdh-sso -> %s; funnel %s" % ((handlers.get("/") or {}).get("Proxy"), (handlers.get("/tdh-sso") or {}).get("Proxy"), funnel))
     if funnel or (handlers.get("/") or {}).get("Proxy") != "http://127.0.0.1:18080":
         raise SystemExit("Tailscale Serve is not as expected")
-    skills = Path(os.environ.get("TDH_COMPANY") or r"D:\dsh\company") / "_skills" / "company-erpnext"
-    skills.mkdir(parents=True, exist_ok=True)
-    (skills / "SKILL.md").write_bytes((HERE / "skills" / "company-erpnext" / "SKILL.md").read_bytes())
-    print("5 skill company-erpnext in _skills (desks take it at their next start)")
+    for name in ("company-erpnext", "company-erpnext-data"):        # the guide; the agent's reads and writes
+        skills = Path(os.environ.get("TDH_COMPANY") or r"D:\dsh\company") / "_skills" / name
+        skills.mkdir(parents=True, exist_ok=True)
+        (skills / "SKILL.md").write_bytes((HERE / "skills" / name / "SKILL.md").read_bytes())
+    print("5 skills company-erpnext, company-erpnext-data in _skills (desks take them at their next start)")
     print("ERP_SSO_INSTALL_OK=1")
 
 

@@ -166,7 +166,7 @@ def main() -> None:
     port = free_port()
     env = dict(os.environ, TDH_ROOT=str(root), TDH_PEOPLE_PORT=str(port), DSH_LEASE_DIR=str(rt / "lease"),
                TDH_SMB_LEDGER=str(root / "smb-ledger.jsonl"), TDH_CHAT_PROVISION="0", TDH_DAILY_REPORT="0", TDH_CHAT_ASSIST="0",
-               TDH_ERP_SYNC_DELAY="0.2", TDH_ERP_SYNC_EVERY="1.5", TDH_NOTIFY_EVERY="0")
+               TDH_ERP_SYNC_DELAY="0.2", TDH_ERP_SYNC_EVERY="1.5", TDH_NOTIFY_EVERY="0", TDH_ERP_KEYS="0")   # keys: prove-erp-data.py
     log = root / "people-api.err"
     with open(log, "wb") as err:
         proc = subprocess.Popen([sys.executable, str(API)], env=env, stdout=subprocess.DEVNULL, stderr=err)
@@ -272,7 +272,7 @@ def main() -> None:
     head = skill.split("\n---", 1)[0]
     check(head.startswith("---\nname: company-erpnext\n") and "whenToUse:" in head and "disable-model-invocation" not in head,
           "the ERPNext guide is in the agent's list")
-    for w in ("https://tdharness.tail9c7cc7.ts.net", "左栏「聊天」下面的「ERPNext」", "山东壹通达高分子材料有限公司", "烟台腾达聚氨酯有限公司", "内部客户", "提交", "修订", "物料移动", "销售出库", "采购入库", "生产工单"):
+    for w in ("https://tdharness.tail9c7cc7.ts.net", "TDH 左栏的「ERPNext」", "company-erpnext-data", "山东壹通达高分子材料有限公司", "烟台腾达聚氨酯有限公司", "内部客户", "提交", "修订", "物料移动", "销售出库", "采购入库", "生产工单"):
         check(w in skill, "the guide says: " + w)
     print("ERP_SSO_PROVE_OK=1")
 

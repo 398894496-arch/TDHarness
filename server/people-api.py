@@ -28,6 +28,7 @@ import chat_assist  # noqa: E402
 import chat_archive  # noqa: E402
 import chat_docs  # noqa: E402
 import erp_sso  # noqa: E402
+import erp_data  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
 ROSTER = Path(os.environ.get("TDH_ROSTER") or str(ROOT / "runtime" / "roster.json"))
@@ -1788,6 +1789,23 @@ class Handler(BaseHTTPRequestHandler):
             t = ERP_ONCE.put({"kind": "ticket", "login": login}, erp_sso.TICKET_S, "t-")
             self._send(*json_bytes({"ok": True, "url": cfg["base"] + erp_sso.PUBLIC + "/start?t=" + t}))
             return
+        if path.startswith("/company/ext/erp/"):
+            # company-erp-data-v1: the person's agent reads and writes ERPNext as that person (server/erp_data.py).
+            login = login_from_token(self._token())
+            row = person(login) if login else None
+            cfg = erp_sso.load_config(TOKEN_STORE.parent)
+            if not row or row.get("status", "active") != "active":
+                self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
+                return
+            if not cfg:
+                self._send(*json_bytes({"ok": False, "error": "erp-off"}, 404))
+                return
+            route = path[len("/company/ext/erp/"):].strip("/")
+            keys = erp_data._load(TOKEN_STORE.parent / "erp-keys.json")
+            status, body = erp_data.handle(route, payload, erp_sso.email_of(login, cfg["email_domain"]), cfg, keys)
+            erp_agent_log(login, route, payload, status, body)
+            self._send(*json_bytes(body, status))
+            return
         if path.startswith("/company/ext/chat/"):
             # company-chat-read-v1: a person's own chats, for their own agent (Caddy: /company/ext/chat/* here).
             login = login_from_token(self._token())
@@ -2058,6 +2076,20 @@ def card_to_chat(action: str, actor: str, card: dict, people: dict) -> threading
 ERP_ONCE = erp_sso.Once()
 
 
+def erp_agent_log(login: str, route: str, payload: dict, status: int, body: dict) -> None:
+    """company-erp-data-v1: who asked ERPNext what, the answer's status; never a document's contents."""
+    p = payload if isinstance(payload, dict) else {}
+    name = str(body.get("name") or p.get("name") or "")[:80]
+    line = "%s %s %s %s %s %s%s" % (time.strftime("%Y-%m-%dT%H:%M:%S"), login, route, str(p.get("doctype") or p.get("report") or "")[:60],
+                                    name or "-", status, (" rows=%d" % len(body["rows"])) if isinstance(body.get("rows"), list) else "")
+    try:
+        (ROOT / "logs").mkdir(parents=True, exist_ok=True)
+        with (ROOT / "logs" / "erp-agent.log").open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+
+
 def chat_archive_once() -> dict:
     """company-chat-archive-v1 (server/chat_archive.py): the chat's new files onto the company disk, by kind."""
     runtime = TOKEN_STORE.parent
@@ -2103,8 +2135,16 @@ def erp_sync_once() -> dict:
     if not cfg or not cfg.get("api_key") or not cfg.get("api_secret"):
         return {"ok": True, "off": True}
     depts = {d.get("id"): d.get("name") for d in (load_roster().get("depts") or []) if isinstance(d, dict)}
-    out = erp_sso.sync(cfg, people_by_login(), depts, erp_sso.load_roles(runtime))
-    if not out.get("ok") or any(out.get(k) for k in ("created", "enabled", "disabled", "renamed", "failed")):
+    people = people_by_login()
+    out = erp_sso.sync(cfg, people, depts, erp_sso.load_roles(runtime))
+    if out.get("ok") and os.environ.get("TDH_ERP_KEYS", "1") != "0":
+        # company-erp-data-v1: each person's key for the agent, the finance sync's user (counts only in the log).
+        k = erp_data.ensure_keys(cfg, people, runtime / "erp-keys.json")
+        out["keys"] = {x: k[x] for x in ("made", "dropped", "failed") if k.get(x)} or ({"why": k.get("why")} if not k.get("ok") else {})
+        f = erp_data.ensure_finance_user(cfg, runtime / "erp-finance.json")
+        if not f.get("ok") or f.get("created") or f.get("roles_set") or f.get("key_made"):
+            out["finance_user"] = {x: f[x] for x in ("ok", "why", "created", "roles_set", "key_made") if x in f}
+    if not out.get("ok") or any(out.get(k) for k in ("created", "enabled", "disabled", "renamed", "failed", "keys", "finance_user")):
         line = json.dumps(out, ensure_ascii=False)
         sys.stderr.write("people-api erp-sync %s\n" % line)
         try:
