@@ -365,13 +365,18 @@
 	function aiText(t, msg) {
 		return plain(contentOf(t, msg)).replace(/^【TDH 助手】\s*/, "");
 	}
+	// Who may answer an AI message: the person asked (an answer: confirm), or the person who said it and the owner
+	// (a proposed task card, company-chat-tasks-v1: deciders). The first answer from one of them counts.
+	function aiDeciders(a) {
+		return !a ? [] : Array.isArray(a.deciders) ? a.deciders.map(String) : a.confirm ? [String(a.confirm)] : [];
+	}
 	function aiConfirmation(items, msg) {
-		const a = aiOf(msg);
+		const who = aiDeciders(aiOf(msg));
 		let out = null;
-		if (!a || !a.confirm) return null;
+		if (!who.length) return null;
 		items.forEach((m) => {
 			const ok = aiOkOf(m);
-			if (ok && (ok.of | 0) === msg.seq && m.from === a.confirm) out = { ok: ok.ok !== false };
+			if (!out && ok && (ok.of | 0) === msg.seq && who.includes(m.from)) out = { ok: ok.ok !== false, by: m.from, seq: m.seq };
 		});
 		return out;
 	}
@@ -468,7 +473,8 @@
 		bump();
 	}
 	function confirmAi(t, msg, ok) {
-		const pub = t.createMessage(ok ? "确认无误" : "这条数据有误，我来核对", true);
+		const task = (aiOf(msg) || {}).kind === "task";
+		const pub = t.createMessage(task ? (ok ? "记下" : "不用记") : ok ? "确认无误" : "这条数据有误，我来核对", true);
 		pub.head = Object.assign({}, pub.head || {}, { tdh_ai_ok: { of: msg.seq, ok: !!ok }, reply: "" + msg.seq });
 		t.publishDraft(pub).catch((err) => toast("发送失败：" + ((err && err.message) || "")));
 		bump();
@@ -736,7 +742,7 @@
 				h("div", { className: "bottom" }, h("div", { className: "preview" }, at ? h("b", null, "[有人@我] ") : null, quiet && n > 1 ? "[" + n + "条] " : "", preview || " "), quiet ? ICON.mute() : null)));
 		});
 		return h("div", { className: "rows" },
-			h("div", { className: "assist-note" }, "TDH 助手会读公司聊天：问到资金、生产进度、原料行情，它会自动查好发在对话里，由被问的人确认。"),
+			h("div", { className: "assist-note" }, "TDH 助手会读公司聊天：问到资金、生产进度、原料行情，它会自动查好发在对话里，由被问的人确认；说到要做的事，它会问一句要不要记成任务卡，到期前提醒。"),
 			rows.length ? rows : h("div", { className: "empty" }, q ? "没有找到" : "还没有聊天"));
 	}
 
@@ -873,23 +879,34 @@
 			last = ts;
 			const okOf = aiOkOf(msg);
 			if (okOf) {
-				nodes.push(h("div", { key: "k" + msg.seq, className: "note" }, userName(msg.from, t) + (okOf.ok !== false ? " 确认了 TDH 助手的数据" : " 说 TDH 助手的数据有误，正在核对")));
+				const target = items.find((x) => x.seq === (okOf.of | 0));
+				const counted = target ? aiConfirmation(items, target) : null;
+				if (!counted || counted.seq !== msg.seq) return; // an answer that does not count leaves no note
+				const onTask = (aiOf(target) || {}).kind === "task";
+				const yes = okOf.ok !== false;
+				nodes.push(h("div", { key: "k" + msg.seq, className: "note" }, userName(msg.from, t) +
+					(onTask ? (yes ? " 记下了这张任务卡" : " 说不用记") : yes ? " 确认了 TDH 助手的数据" : " 说 TDH 助手的数据有误，正在核对")));
 				return;
 			}
 			const ai = aiOf(msg);
 			if (ai) {
 				const conf = aiConfirmation(items, msg);
-				const who = ai.confirm ? userName(ai.confirm, t) : "";
+				const task = ai.kind === "task";
+				const who = aiDeciders(ai);
+				const names = who.map((u) => userName(u, t)).join(" 或 ");
 				let foot = null;
-				if (conf) foot = h("div", { className: "ai-foot " + (conf.ok ? "ok" : "bad") }, conf.ok ? "✓ " + who + " 确认无误" : "✗ " + who + "：有误，正在核对");
-				else if (ai.confirm && ai.confirm === S.meId) foot = h("div", { className: "ai-foot" },
-					h("button", { className: "ai-ok", onClick: () => confirmAi(t, msg, true) }, "确认无误"),
-					h("button", { className: "ai-bad", onClick: () => confirmAi(t, msg, false) }, "有误"));
-				else if (ai.confirm) foot = h("div", { className: "ai-foot" }, "等 " + who + " 确认");
+				if (conf) {
+					const by = userName(conf.by, t);
+					foot = h("div", { className: "ai-foot " + (conf.ok ? "ok" : "bad") },
+						task ? (conf.ok ? "✓ " + by + " 记下了" : by + "：不用记") : conf.ok ? "✓ " + by + " 确认无误" : "✗ " + by + "：有误，正在核对");
+				} else if (who.includes(S.meId)) foot = h("div", { className: "ai-foot" },
+					h("button", { className: "ai-ok", onClick: () => confirmAi(t, msg, true) }, task ? "记下" : "确认无误"),
+					h("button", { className: "ai-bad", onClick: () => confirmAi(t, msg, false) }, task ? "不用" : "有误"));
+				else if (who.length) foot = h("div", { className: "ai-foot" }, "等 " + names + (task ? " 决定" : " 确认"));
 				nodes.push(h("div", { key: "m" + msg.seq, className: "m ai", onContextMenu: (e) => openMenu(e, [{ label: "复制", run: () => copy(aiText(t, msg)) }]) },
 					h("div", { className: "a s36 ai-av" }, "TDH"),
 					h("div", { className: "col" },
-						h("div", { className: "who" }, "TDH 助手 · 自动查询"),
+						h("div", { className: "who" }, task || ai.kind === "task-made" ? "TDH 助手 · 任务卡" : "TDH 助手 · 自动查询"),
 						h("div", { className: "b" }, aiText(t, msg)),
 						foot)));
 				return;

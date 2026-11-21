@@ -69,6 +69,19 @@ check(tickets.collect_notices(b, people, now) == [], "nothing twice on the same 
 nxt = sorted((x["to"], x["kind"], x["ticket"]) for x in tickets.collect_notices(b, people, now + 24 * H))
 check(nxt == sorted([("amy", "overdue", soon), ("boss", "overdue", soon), ("amy", "overdue", late), ("boss", "overdue", late)]),
       "next day: both now overdue, each to assignee and issuer %r" % nxt)
+# company-chat-tasks-v1: a due with a time of day is told once more within the hour, and then not as "soon" again;
+# a due that is a whole day (23:59:59) is not.
+b2 = tickets.Board(root / "tickets2.json", company)
+t = tickets.datetime.fromtimestamp(now / 1000).replace(hour=15, minute=0, second=0, microsecond=0)
+meet = b2.apply("issue", boss, people, {"to": "amy", "title": "开会", "due": int(t.timestamp() * 1000)})["ticket"]
+day_end = b2.apply("issue", boss, people, {"to": "amy", "title": "当天内", "due": t.strftime("%Y-%m-%d")})["ticket"]
+at = lambda h, m: int(t.replace(hour=h, minute=m).timestamp() * 1000)
+k = lambda when: sorted((x["kind"], x["ticket"], x["text"]) for x in tickets.collect_notices(b2, people, when))
+first = k(at(9, 0))
+check([(a, b_) for a, b_, _ in first] == sorted([("soon", meet), ("soon", day_end)]), "the morning: both soon %r" % first)
+check(all("负责人 amy" in x for _, _, x in first), "the owner by name (no name: the login)")
+check([(a, b_) for a, b_, _ in k(at(14, 10))] == [("hour", meet)], "within the hour: the meeting only")
+check(k(at(14, 40)) == [], "once within the hour, and no second soon after it")
 page = tickets.digest(b, people, now, "boss")
 check("超期 1 张" in page and "超期了" in page and "作废的" not in page and "amy 4" in page, "digest %r" % page)
 people["eve"] = {"login": "eve", "role": "admin", "dept": "ops", "personal": str(company / "emp-eve")}
