@@ -41,6 +41,7 @@ CLOSED_STATES = ("已通过", "已作废")
 COMMENT_MAX = 2000
 COMMENTS_MAX = 200
 SOON_MS = 24 * 3600 * 1000
+HOUR_MS = 3600 * 1000
 
 
 def parse_due(value) -> int:
@@ -606,7 +607,8 @@ def fmt_ms(ms: int) -> str:
 def collect_notices(board: "Board", people: dict, now: int | None = None) -> list[dict]:
     """Who to tell what about due times, once per card and kind per day. Marks what it
     returns as told and saves, so call it under the people service's lock.
-    Kinds: soon (due within 24h: the assignee), overdue (the assignee and the issuer)."""
+    Kinds: soon (due within 24h: the assignee), hour (a due with a time of day, within the hour: the
+    assignee; company-chat-tasks-v1), overdue (the assignee and the issuer)."""
     now = now or now_ms()
     day = datetime.fromtimestamp(now / 1000).strftime("%Y-%m-%d")
     data = board.load()
@@ -616,17 +618,24 @@ def collect_notices(board: "Board", people: dict, now: int | None = None) -> lis
         if not due or card.get("state") not in OPEN_STATES:
             continue
         told = card.setdefault("reminded", {})
-        kind = "overdue" if now > due else ("soon" if due - now <= SOON_MS else "")
+        timed = datetime.fromtimestamp(due / 1000).strftime("%H:%M:%S") != "23:59:59"
+        if now > due:
+            kind = "overdue"
+        elif timed and due - now <= HOUR_MS:
+            kind = "" if told.get("hour") else "hour"        # once; not a second "soon" after it
+        else:
+            kind = "soon" if due - now <= SOON_MS else ""
         if not kind or told.get(kind) == day:
             continue
         told[kind] = day
         to = [card.get("to")] + ([card.get("from")] if kind == "overdue" and card.get("from") != card.get("to") else [])
-        word = "已超期" if kind == "overdue" else "快到期"
+        word = {"overdue": "已超期", "hour": "一小时内到期", "soon": "快到期"}[kind]
+        owner = (people.get(card.get("to")) or {}).get("name") or card.get("to")
         for login in to:
             if login in people:
                 out.append({"to": login, "kind": kind, "ticket": card["id"],
                             "text": "任务卡%s：「%s」截止 %s，负责人 %s，状态 %s" % (
-                                word, card.get("title"), fmt_ms(due), card.get("to"), card.get("state"))})
+                                word, card.get("title"), fmt_ms(due), owner, card.get("state"))})
     if out:
         board.save(data)
     return out

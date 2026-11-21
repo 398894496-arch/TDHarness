@@ -5,6 +5,8 @@
 // - The person named to confirm has 确认无误 and 有误; a click sends the confirmation (head tdh_ai_ok, of the answer).
 // - Anyone else sees 等 <name> 确认; once confirmed, everyone sees ✓ <name> 确认无误 and the confirmation is a note.
 // - A confirmation from anyone but the person named does not count.
+// - A proposed task card (company-chat-tasks-v1, kind task, deciders): 记下 and 不用 for the person who said it and the
+//   owner, 等 … 决定 for anyone else; the first answer of one of them counts; the card made is a TDH 助手 · 任务卡 note.
 // - The chat list tells everyone the chat is read.
 // Prints CHAT_AI_CARD_PROVE_OK=1.
 'use strict';
@@ -89,6 +91,7 @@ async function render(me, list) {
   v = await render(BOSS, [question, answer, forged]);
   assert.ok(!v.box.querySelector('.m.ai button'), 'no buttons for anyone else');
   assert.strictEqual(v.box.querySelector('.m.ai .ai-foot').textContent, '等 郭迎 确认', 'waiting for the person asked');
+  assert.ok(!Array.from(v.box.querySelectorAll('.note')).some((n) => /确认了/.test(n.textContent)), 'a confirmation that does not count leaves no note');
   v.root.unmount();
 
   // Confirmed.
@@ -100,6 +103,36 @@ async function render(me, list) {
   const wrong = { seq: 3, from: FIN, ts: ts(1), head: { tdh_ai_ok: { of: 2, ok: false } }, content: '这条数据有误，我来核对' };
   v = await render(BOSS, [question, answer, wrong]);
   assert.strictEqual(v.box.querySelector('.m.ai .ai-foot.bad').textContent, '✗ 郭迎：有误，正在核对');
+  v.root.unmount();
+
+  // A proposed task card.
+  const ask = { seq: 4, from: BOSS, ts: ts(2), content: '@郭迎 周五前把11月发票开了' };
+  const prop = { seq: 5, from: FIN, ts: ts(2), head: { tdh_ai: { v: 1, of: 4, kind: 'task', deciders: [BOSS, FIN] }, reply: '4' },
+    content: '【TDH 助手】要记成任务卡吗？\n负责人：郭迎\n事情：开 11 月发票\n截止：11-27 周五' };
+  v = await render(BOSS, [ask, prop]);
+  let pc = v.box.querySelectorAll('.m.ai');
+  assert.strictEqual(pc.length, 1);
+  assert.strictEqual(pc[0].querySelector('.who').textContent, 'TDH 助手 · 任务卡');
+  assert.ok(pc[0].querySelector('.b').textContent.startsWith('要记成任务卡吗？'));
+  assert.deepStrictEqual(Array.from(pc[0].querySelectorAll('button')).map((b) => b.textContent), ['记下', '不用'], 'the person who said it decides');
+  pc[0].querySelector('button.ai-ok').dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(v.sent[0].head)), { tdh_ai_ok: { of: 5, ok: true }, reply: '5' });
+  assert.strictEqual(v.sent[0].content, '记下');
+  v.root.unmount();
+  v = await render('usrOther00001', [ask, prop]);
+  assert.strictEqual(v.box.querySelector('.m.ai .ai-foot').textContent, '等 田总 或 郭迎 决定', 'anyone else waits');
+  v.root.unmount();
+  const no = { seq: 6, from: FIN, ts: ts(3), head: { tdh_ai_ok: { of: 5, ok: false } }, content: '不用记' };
+  const yes = { seq: 7, from: BOSS, ts: ts(3), head: { tdh_ai_ok: { of: 5, ok: true } }, content: '记下' };
+  const made = { seq: 8, from: FIN, ts: ts(3), head: { tdh_ai: { v: 1, of: 5, kind: 'task-made' } },
+    content: '【TDH 助手】已记成任务卡「开 11 月发票」：负责人 郭迎，截止 11-27 周五。到期前我会在聊天里提醒。' };
+  v = await render(BOSS, [ask, prop, no, yes, made]);
+  pc = v.box.querySelectorAll('.m.ai');
+  assert.strictEqual(pc[0].querySelector('.ai-foot').textContent, '郭迎：不用记', 'the first answer counts');
+  const notes = Array.from(v.box.querySelectorAll('.note')).map((n) => n.textContent);
+  assert.ok(notes.includes('郭迎 说不用记') && !notes.some((n) => n.startsWith('田总')), 'only the answer that counts leaves a note: ' + notes);
+  assert.strictEqual(pc[1].querySelector('.who').textContent, 'TDH 助手 · 任务卡');
+  assert.ok(!pc[1].querySelector('.ai-foot') && !pc[1].querySelector('button'), 'the card made: a note, nothing to click');
   v.root.unmount();
 
   // An ordinary message stays ordinary.

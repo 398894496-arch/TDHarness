@@ -43,8 +43,9 @@ BOARD = ticket_board.Board(
 TICKET_ACTIONS = ("issue", "rename", "edit", "submit", "verdict", "withdraw", "archive",
                   "bind-session", "unbind-session", "attach-file", "detach-file", "upload",
                   "set-due", "reassign", "cancel", "comment")
-# Due-time reminders and the admins' morning page go out through WeCom when runtime/wecom.env
-# is set up (server/notify.py); every NOTIFY_EVERY seconds, the page once a day from DIGEST_HOUR.
+# Due-time reminders go out in the company chat from TDH助手 (company-chat-tasks-v1) and through WeCom when
+# runtime/wecom.env is set up (server/notify.py); the admins' morning page through WeCom only. Every NOTIFY_EVERY
+# seconds, the page once a day from DIGEST_HOUR.
 NOTIFY_EVERY = int(os.environ.get("TDH_NOTIFY_EVERY") or 600)
 DIGEST_HOUR = int(os.environ.get("TDH_DIGEST_HOUR") or 8)
 SEED_ADMIN = "tdh"
@@ -1581,13 +1582,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def notify_once(now_ms: int | None = None) -> list:
-    """One reminder round: due-soon / overdue notices, then the admins' page if it is time.
-    Returns [(login, kind, ticket, result)] for the proof."""
+    """One reminder round: due-soon / due-within-the-hour / overdue notices, then the admins' page if it is time.
+    The notices go in the company chat from TDH助手 (company-chat-tasks-v1: WeCom was never set up here, so no
+    reminder went out at all) and by WeCom when it is set up; the admins' page by WeCom only (the daily report has
+    the cards). Returns [(login, kind, ticket, result)] for the proof."""
     runtime = TOKEN_STORE.parent
     wc = notify.WeCom(runtime)
+    chat = os.environ.get("TDH_NOTIFY_CHAT", "1") != "0" and bool(_chat_api_key())
     done = []
-    if not wc.on:
-        return done                      # not set up: do not mark anything as told, nothing went out
+    if not wc.on and not chat:
+        return done                      # nowhere to tell: do not mark anything as told, nothing went out
     people = people_by_login()
     try:
         with BOARD_MU:
@@ -1595,9 +1599,14 @@ def notify_once(now_ms: int | None = None) -> list:
     except ticket_board.Refused:
         return done                      # a damaged board: say nothing, change nothing
     for n in notices:
-        r = wc.send(n["to"], n["text"])
+        r = wc.send(n["to"], n["text"]) if wc.on else ""
+        if chat:
+            c = chat_send("tdh-assist", n["to"], "⏰ " + n["text"])
+            r = (r + " " if r else "") + ("chat-sent" if c.get("ok") else "chat-%s" % c.get("why"))
         notify.log(runtime, n["to"], n["kind"], n["ticket"], r)
         done.append((n["to"], n["kind"], n["ticket"], r))
+    if not wc.on:
+        return done
     now = (now_ms or int(time.time() * 1000)) / 1000
     day, hour = time.strftime("%Y-%m-%d", time.localtime(now)), time.localtime(now).tm_hour
     state_file = runtime / "notify-state.json"
@@ -1745,24 +1754,95 @@ _ASSIST_CTX: dict = {}      # topic -> its last few lines ("name：words"), the 
 _ASSIST_LAST: dict = {}     # topic -> when TDH 助手 last answered there
 
 
+def _assist_where(c: dict, links: dict) -> tuple:
+    """Who posts TDH 助手's message into the chat of the message `c`, and under which topic name: one-to-one, the
+    other person (Tinode has no third party there); a group, TDH助手 itself. ("", "") when it cannot be posted."""
+    if c["topic"].startswith("p2p"):
+        others = [m for m in c["members"] if m != c["sender"]]
+        if len(c["members"]) == 2 and len(others) == 1 and links.get(c["sender"]) and links.get(others[0]):
+            return others[0], "usr" + links[c["sender"]]
+        return "", ""
+    if c["topic"].startswith("grp"):
+        return "tdh-assist", c["topic"]
+    return "", ""
+
+
 def _assist_post(c: dict, kind: str, text: str, links: dict) -> dict:
     """TDH 助手's answer into the chat of the question `c`. One-to-one: posted by the person asked, who confirms it;
     a group: posted by TDH助手, confirmed by the person @-ed in the question, if any."""
+    poster, topic = _assist_where(c, links)
+    if not poster:
+        return {"ok": False, "why": "members"}
     head = {"tdh_ai": {"v": 1, "of": c["seq"], "kind": kind}, "reply": str(c["seq"])}
-    content = chat_assist.PREFIX + text
     if c["topic"].startswith("p2p"):
-        others = [m for m in c["members"] if m != c["sender"]]
-        if len(c["members"]) != 2 or len(others) != 1 or not links.get(c["sender"]) or not links.get(others[0]):
-            return {"ok": False, "why": "members"}
-        head["tdh_ai"]["confirm"] = "usr" + links[others[0]]
-        return chat_post(others[0], "usr" + links[c["sender"]], content, head)
-    if c["topic"].startswith("grp"):
+        head["tdh_ai"]["confirm"] = "usr" + links[poster]
+    else:
         uids = {"usr" + links[m]: m for m in c["members"] if links.get(m)}
         confirm = next((u for u in c["mentions"] if uids.get(u) not in (None, c["sender"])), "")
         if confirm:
             head["tdh_ai"]["confirm"] = confirm
-        return chat_post("tdh-assist", c["topic"], content, head)
-    return {"ok": False, "why": "topic"}
+    return chat_post(poster, topic, chat_assist.PREFIX + text, head)
+
+
+def _assist_propose(c: dict, act: dict, links: dict, people: dict, state: dict) -> dict:
+    """company-chat-tasks-v1: ask in the chat whether to make the task a card; the person who said it and the owner
+    may answer (记下 / 不用). What the card will be is kept here, not taken from the chat later."""
+    poster, topic = _assist_where(c, links)
+    if not poster:
+        return {"ok": False, "why": "members"}
+    sender, owner = c["sender"], act["owner"]
+    if owner != sender:
+        issuer = sender
+    else:
+        others = [m for m in c["members"] if m != sender]
+        issuer = others[0] if c["topic"].startswith("p2p") and len(others) == 1 else sender
+    deciders = sorted({sender, owner})
+    head = {"tdh_ai": {"v": 1, "of": c["seq"], "kind": "task", "deciders": ["usr" + links[x] for x in deciders if links.get(x)]},
+            "reply": str(c["seq"])}
+    name = (people.get(owner) or {}).get("name") or owner
+    r = chat_post(poster, topic, chat_assist.proposal(name, act["what"], act["due"]), head)
+    if r.get("ok") and r.get("seq"):
+        state.setdefault("pending", {})["%s:%s" % (c["topic"], r["seq"])] = {
+            "seq": r["seq"], "sender": sender, "issuer": issuer, "owner": owner, "what": act["what"], "due": act["due"],
+            "type": act["type"], "said": c["text"][:200], "deciders": deciders, "poster": poster, "post_topic": topic, "at": time.time()}
+    return r
+
+
+def _assist_card(p: dict, people: dict) -> tuple:
+    """Make the card a proposal was about: (card id, "") or ("", why). Someone who may not give work to the owner
+    (an employee to another) leaves it as the owner's own to-do, saying who asked."""
+    issuer, owner = people.get(p["issuer"]), people.get(p["owner"])
+    if issuer is None or owner is None:
+        return "", "not-in-roster"
+    if not ticket_board.Board.may_issue(issuer, owner):
+        issuer = owner
+    said = (people.get(p["sender"]) or {}).get("name") or p["sender"]
+    body = {"to": p["owner"], "title": p["what"], "due": p["due"] or "",
+            "assignment": "%s\n（来自公司聊天：%s 说「%s」）" % (p["what"], said, p["said"])}
+    try:
+        with BOARD_MU:
+            res = BOARD.apply("issue", issuer, people, body)
+    except ticket_board.Refused as e:
+        return "", "refused-%s" % e
+    return str(res.get("ticket") or ""), ""
+
+
+def _assist_decided(state: dict, topic: str, who: str, ok: dict, people: dict, out: dict) -> None:
+    """A 记下 / 不用 under a proposal: from one of the people it names, the first answer counts."""
+    key = "%s:%s" % (topic, int(ok.get("of") or 0))
+    p = (state.get("pending") or {}).get(key)
+    if not p or who not in p["deciders"]:
+        return
+    del state["pending"][key]
+    if ok.get("ok") is False:
+        out["declined"] = out.get("declined", 0) + 1
+        return
+    tid, why = _assist_card(p, people)
+    owner = (people.get(p["owner"]) or {}).get("name") or p["owner"]
+    text = ("已记成任务卡「%s」：负责人 %s，截止 %s。到期前我会在聊天里提醒。" % (p["what"], owner, chat_assist.due_text(p["due"])) if tid
+            else "这张任务卡没建成（%s），请在 TDH 的任务卡里自己建一张。" % why)
+    chat_post(p["poster"], p["post_topic"], chat_assist.PREFIX + text, {"tdh_ai": {"v": 1, "of": p["seq"], "kind": "task-made"}})
+    out["cards" if tid else "card_failed"] = out.get("cards" if tid else "card_failed", 0) + 1
 
 
 def chat_assist_once() -> dict:
@@ -1779,11 +1859,14 @@ def chat_assist_once() -> dict:
             chat_assist.save_state(runtime, state)
             return {"ok": True, "started_after": state["last_id"]}
         rows = chat_assist.fetch(cfg, runtime, int(state["last_id"]))
-        out = {"ok": True, "rows": len(rows), "looked": 0, "answered": 0, "skipped": {}}
+        out = {"ok": True, "rows": len(rows), "looked": 0, "answered": 0, "proposed": 0, "skipped": {}}
         if not rows:
             return out
         if state.get("day") != chat_assist.today():
             state["day"], state["calls"] = chat_assist.today(), 0
+        pending = state.setdefault("pending", {})
+        for k in [k for k, v in pending.items() if time.time() - float(v.get("at") or 0) > 7 * 86400]:
+            del pending[k]                              # a proposal nobody answered in a week
         people = people_by_login()
         links = _tinode_links()
         viewers = chat_assist.cash_viewers(runtime)
@@ -1798,18 +1881,23 @@ def chat_assist_once() -> dict:
         for row in rows:
             state["last_id"] = max(int(state["last_id"]), int(row.get("id") or 0))
             topic = str(row.get("topic") or "")
+            head = row.get("head") if isinstance(row.get("head"), dict) else {}
             who = chat_assist.login_of(row.get("from_tags"))
             words = chat_assist.own_words(row.get("content"))
             ctx = _ASSIST_CTX.setdefault(topic, [])
-            if who and words and not (isinstance(row.get("head"), dict) and row["head"].get("tdh_ai")):
+            if who and words and not head.get("tdh_ai"):
                 ctx.append("%s：%s" % ((people.get(who) or {}).get("name") or who, words[:120]))
                 del ctx[:-6]
+            if isinstance(head.get("tdh_ai_ok"), dict):
+                _assist_decided(state, topic, who, head["tdh_ai_ok"], people, out)
+                continue
             c = chat_assist.candidate(row, CHAT_BOTS)
             if c is None:
                 continue
             out["looked"] += 1
-            kinds = [k for k in c["kinds"] if chat_assist.may_see(k, c["members"], people, viewers)]
-            if not kinds:
+            data_kinds = [k for k in c["kinds"] if k != "task" and chat_assist.may_see(k, c["members"], people, viewers)]
+            with_task = "task" in c["kinds"] and chat_assist.may_see("task", c["members"], people, viewers)
+            if not data_kinds and not with_task:
                 skip("not-for-everyone")
                 continue
             if time.time() - _ASSIST_LAST.get(topic, 0) < float(cfg["cooldown_s"]):
@@ -1821,26 +1909,35 @@ def chat_assist_once() -> dict:
             if not token:
                 skip("no-service-token")
                 continue
-            data = chat_assist.pack_data(cfg, token, kinds[0], c["text"])
-            if data is None:
+            kind = data_kinds[0] if data_kinds else None
+            data = chat_assist.pack_data(cfg, token, kind, c["text"]) if kind else None
+            if data is None and not with_task:
                 skip("no-data")
                 continue
             state["calls"] = int(state.get("calls") or 0) + 1
+            names = {re.sub(r"\s+", "", (people.get(m) or {}).get("name") or m): m for m in c["members"]}
             asker = (people.get(c["sender"]) or {}).get("name") or c["sender"]
-            text = chat_assist.answer(cfg, token, asker, c["text"], ctx[:-1], kinds[0], data)
-            if not text:
+            choice = chat_assist.decide(cfg, token, asker, c["text"], ctx[:-1], list(names), kind, data, with_task)
+            act = chat_assist.check(choice, kind, data, with_task, names)
+            if act["action"] == "answer":
+                r = _assist_post(c, kind, act["text"], links)
+                counted = "answered"
+            elif act["action"] == "task":
+                r = _assist_propose(c, act, links, people, state)
+                counted = "proposed"
+            else:
                 skip("none")
                 continue
-            r = _assist_post(c, kinds[0], text, links)
             if r.get("ok"):
-                out["answered"] += 1
+                out[counted] += 1
                 _ASSIST_LAST[topic] = time.time()
             else:
                 skip("post-%s" % r.get("why"))
         chat_assist.save_state(runtime, state)
-    if out["looked"]:
-        line = "rows=%d looked=%d answered=%d skipped=%s calls_today=%s" % (
-            out["rows"], out["looked"], out["answered"], json.dumps(out["skipped"]), state.get("calls"))
+    if out["looked"] or out.get("cards") or out.get("declined") or out.get("card_failed"):
+        line = "rows=%d looked=%d answered=%d proposed=%d cards=%d declined=%d skipped=%s calls_today=%s" % (
+            out["rows"], out["looked"], out["answered"], out["proposed"], out.get("cards", 0), out.get("declined", 0),
+            json.dumps(out["skipped"]), state.get("calls"))
         sys.stderr.write("people-api chat-assist " + line + "\n")
         try:
             (ROOT / "logs").mkdir(parents=True, exist_ok=True)
