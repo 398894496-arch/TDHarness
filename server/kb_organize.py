@@ -15,8 +15,11 @@ a zone's category folder, under 来自 <name>:
              05 行政事务      purchase orders and records, goods received, suppliers' files, licences
   customers  (销售 and 行政财务's, kb-zones.json groups) 02 底价与成本 (floor prices, costs, margins, purchase prices,
              price lists), 01 客户信息 (quotations, customers)
-Nothing goes to _company by itself (everyone reads it); what cannot be told is listed for the admins in
-_office/知识库待确认.md. A copy that is there already (the same bytes) is not made again; a changed file comes in as a
+What the rules cannot tell, the model is asked about by its name and folder (model=, the people service's TDH 助手
+model): sure, it is filed where it says (_company too); not sure, the person who put it there is asked in the chat
+by TDH 助手 (ask=: "放进去 / 不放", its best guess and who would read it), and their answer counts (decide()); no admin
+confirms anything (the user, same day: "不需要管理员确认 让TDH自动分类不确认的主动询问！"). Each round the person is told
+in the chat what of theirs went in (tell=). A copy that is there already (the same bytes) is not made again; a changed file comes in as a
 new version beside the old one. The ledger, invoice lists and reimbursement sheets (.xlsx) also go to the finance
 store's inbox (runtime/mfg/finance-inbox), which the manufacturing pack files and sends on to ERPNext.
 Chat copies, the chat's finance papers, daily reports, the pack's outputs and hidden folders are not read. The log has
@@ -90,6 +93,55 @@ def classify(rel: str) -> tuple | None:
     return None
 
 
+def menu(zs: dict, people: dict) -> dict:
+    """zone → {categories, who reads it}: what the model chooses from and what a question says."""
+    names = lambda f: "、".join(str(p.get("name") or p.get("login")) for p in people.values() if (p.get("status") or "active") == "active" and f(p))
+    admins = names(lambda p: p.get("role") == "admin")
+    out = {}
+    for zone, d in zs.items():
+        cats = sorted(c.name for c in d.iterdir() if c.is_dir() and (c / "说明.md").is_file()) if d.is_dir() else []
+        if zone == "company":
+            who = "全公司"
+        elif zone == "private":
+            who = "%s，和管理员（%s）" % (names(lambda p, n=d.name: p.get("dept") == n) or "本部门", admins)
+        else:
+            who = "销售、行政财务，和管理员（%s）" % admins
+        out[zone] = {"categories": cats, "who": who}
+    return out
+
+
+ZONE_NAMES = {"private": "行政财务私密区", "customers": "销售与行政财务区", "company": "全公司共享区"}
+_MU = None
+
+
+def _lock():
+    global _MU
+    if _MU is None:
+        import threading
+        _MU = threading.Lock()
+    return _MU
+
+
+def decide(runtime: Path, login: str, seq: int, yes: bool) -> bool:
+    """The person's answer to a question of theirs (the chat's 放进去 / 不放). True when it was one."""
+    with _lock():
+        f = Path(runtime) / "kb-organize.json"
+        try:
+            state = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        asks = state.setdefault("asks", {})
+        for rel, a in list(asks.items()):
+            if a.get("login") == login and int(a.get("seq") or 0) == int(seq):
+                del asks[rel]
+                (state.setdefault("approved", {}) if yes else state.setdefault("declined", {}))[rel] = a
+                tmp = f.with_suffix(".tmp")
+                tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+                os.replace(tmp, f)
+                return True
+    return False
+
+
 def files_of(folder: Path):
     for parent, dirs, names in os.walk(folder):
         dirs[:] = sorted(d for d in dirs if not d.startswith((".", "_")) and d not in SKIP_DIRS)
@@ -115,10 +167,19 @@ def _place(into: Path, name: str, sha: str) -> tuple:
     return into / ("%s (%s)%s" % (stem, time.strftime("%H%M%S"), ext)), False
 
 
-def run_once(company: Path, runtime: Path, people: dict, now: float | None = None, dry: bool = False) -> dict:
+def run_once(company: Path, runtime: Path, people: dict, now: float | None = None, dry: bool = False,
+             model=None, ask=None, tell=None) -> dict:
+    with _lock():
+        return _run(company, runtime, people, now, dry, model, ask, tell)
+
+
+def _run(company, runtime, people, now, dry, model, ask, tell) -> dict:
     now = now or time.time()
     company, runtime = Path(company), Path(runtime)
     zs = zones(company, runtime)
+    if (Path(company) / "_handbook" / "_company").is_dir():
+        zs["company"] = Path(company) / "_handbook" / "_company"
+    zm = menu(zs, people)
     state_f = runtime / "kb-organize.json"
     try:
         state = json.loads(state_f.read_text(encoding="utf-8"))
@@ -126,7 +187,9 @@ def run_once(company: Path, runtime: Path, people: dict, now: float | None = Non
         state = {}
     done = state.setdefault("files", {})
     review = state.setdefault("review", {})
-    out = {"seen": 0, "copied": 0, "same": 0, "review": 0, "finance": 0, "unstable": 0, "by": {}}
+    asks, approved, declined = state.setdefault("asks", {}), state.setdefault("approved", {}), state.setdefault("declined", {})
+    out = {"seen": 0, "copied": 0, "same": 0, "review": 0, "finance": 0, "unstable": 0, "by": {}, "model": 0, "asked": 0, "declined": 0}
+    filed: dict = {}
     by_folder = {Path(str(p.get("personal") or "")).name: p for p in people.values() if p.get("personal")}
     for folder in sorted(company.glob("emp-*")):
         if not folder.is_dir():
@@ -135,6 +198,7 @@ def run_once(company: Path, runtime: Path, people: dict, now: float | None = Non
         if (who.get("status") or "active") != "active":
             continue
         name = str(who.get("name") or folder.name[4:])
+        login = str(who.get("login") or "")
         for f in files_of(folder):
             ext = f.suffix.lower()
             if ext not in DOC or ext in TEMP:
@@ -150,15 +214,38 @@ def run_once(company: Path, runtime: Path, people: dict, now: float | None = Non
             stamp = [st.st_size, int(st.st_mtime)]
             if (done.get(rel) or {}).get("stamp") == stamp or (review.get(rel) or {}).get("stamp") == stamp:
                 continue
+            if (declined.get(rel) or {}).get("stamp") == stamp:
+                continue
+            if (asks.get(rel) or {}).get("stamp") == stamp:
+                continue                                  # asked; waiting for the answer
             if now - st.st_mtime < STABLE_S:
                 out["unstable"] += 1
                 continue
-            got = classify(f.relative_to(folder).as_posix())
-            if not got or got[0] not in zs or not (zs[got[0]] / got[1] / "说明.md").is_file():
+            inner = f.relative_to(folder).as_posix()
+            got = classify(inner)
+            if got and got[0] == "company":
+                got = None
+            ok = lambda g: bool(g) and g[0] in zs and (zs[g[0]] / g[1] / "说明.md").is_file()
+            if not got and (approved.get(rel) or {}).get("stamp") == stamp:
+                got = (approved[rel]["zone"], approved[rel]["category"])
+            if not got and model is not None:
+                m = model(inner, name, str(who.get("dept") or ""), zm) or {}
+                guess = (str(m.get("zone") or ""), str(m.get("category") or ""))
+                out["model"] += 1
+                if ok(guess) and m.get("confident") is True:
+                    got = guess
+                elif ok(guess) and ask is not None and login:
+                    seq = ask(login, inner, ZONE_NAMES.get(guess[0], guess[0]), guess[1], zm[guess[0]]["who"]) if not dry else 0
+                    if seq:
+                        asks[rel] = {"stamp": stamp, "login": login, "seq": seq, "zone": guess[0], "category": guess[1], "at": int(now)}
+                        out["asked"] += 1
+                        continue
+            if not ok(got):
                 review[rel] = {"stamp": stamp, "who": name, "why": "认不出该放哪个区、哪个分类" if not got else "那个区或分类不在"}
                 out["review"] += 1
                 continue
             review.pop(rel, None)
+            approved.pop(rel, None)
             zone, cat = got
             try:
                 sha = _sha(f)
@@ -177,31 +264,29 @@ def run_once(company: Path, runtime: Path, people: dict, now: float | None = Non
                 continue
             done[rel] = {"stamp": stamp, "to": dest.relative_to(company).as_posix(), "sha": sha[:16]}
             out["same" if same else "copied"] += 1
+            if not same and login:
+                filed.setdefault(login, []).append((f.name, ZONE_NAMES.get(zone, zone), cat))
             k = "%s/%s" % (zone, cat)
             out["by"][k] = out["by"].get(k, 0) + (0 if same else 1)
     if not dry:
         tmp = state_f.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, state_f)
-        _review_page(company, review)
+        old = company / "_office" / "知识库待确认.md"          # no admin's list any more
+        try:
+            if old.exists():
+                old.unlink()
+        except OSError:
+            pass
+        if tell is not None:
+            for login, items in filed.items():
+                try:
+                    tell(login, items)
+                except Exception:  # noqa: BLE001 - filed all the same; only the word in the chat is missed
+                    pass
     out["review_open"] = len(review)
+    out["asks_open"] = len(asks)
     return out
-
-
-def _review_page(company: Path, review: dict) -> None:
-    """The admins' list of what could not be told (_office/知识库待确认.md)."""
-    page = company / "_office" / "知识库待确认.md"
-    lines = ["# 知识库待确认", "", "员工放到公司盘、TDH 认不出该放进知识库哪个区的文件（每十分钟更新）。要放就在 TDH 里说「把 xxx 存进知识库的 yyy」，",
-             "或者自己拖进 `_handbook` 对应的文件夹；不用放的不用管。", "", "| 来自 | 文件 | 原因 |", "|---|---|---|"]
-    for rel, r in sorted(review.items(), key=lambda x: (x[1].get("who", ""), x[0]))[:500]:
-        lines.append("| %s | %s | %s |" % (r.get("who", ""), rel.replace("|", "/"), r.get("why", "")))
-    try:
-        page.parent.mkdir(parents=True, exist_ok=True)
-        tmp = page.with_suffix(".tmp")
-        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        os.replace(tmp, page)
-    except OSError:
-        pass
 
 
 if __name__ == "__main__":

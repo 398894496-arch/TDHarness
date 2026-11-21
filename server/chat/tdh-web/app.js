@@ -502,6 +502,10 @@
 		"doc-ask": { label: "TDH 助手 · 财务单据", yes: "存进财务", no: "不用", sayYes: "存进财务", sayNo: "不用存",
 			noteYes: " 把它存进了财务", noteNo: " 说不用存", doneYes: (b) => "✓ " + b + " 存进了财务", doneNo: (b) => b + "：不用存", wait: " 决定" },
 		"doc-note": { label: "TDH 助手 · 财务单据" },
+		// company-kb-organize-v1: a file on the share TDH could not place for sure, and what went in.
+		"kb-ask": { label: "TDH 助手 · 知识库", yes: "放进去", no: "不放", sayYes: "放进去", sayNo: "不放", noteYes: " 让 TDH 收进知识库", noteNo: " 说不放进知识库",
+			doneYes: (b) => "✓ " + b + " 让它收进知识库", doneNo: (b) => b + "：不放进知识库", wait: " 决定" },
+		"kb-note": { label: "TDH 助手 · 知识库" },
 	};
 	function aiWords(a) {
 		return AI_WORDS[(a && a.kind) || ""] || AI_WORDS.data;
