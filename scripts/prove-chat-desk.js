@@ -9,8 +9,9 @@
 //     chat is not on screen pops up in the window (打开 opens the chat panel); while the window is in the
 //     background the host is asked for the system's notification; old messages from before the page loaded are
 //     not announced.
-//   - company-erp-desk-v1: ERPNext under 聊天 (sidebar.panellist "company-erp", order after 聊天, for every role) and
-//     its page (main, keyed "company-erp"): it asks this desk's host to open ERPNext (POST /company/erp/open with the
+//   - company-erp-desk-v1/v2: ERPNext under 聊天 (sidebar.panellist "company-erp", order after 聊天, for every role) and
+//     its page (main, keyed "company-erp"): ERPNext in a frame at the address this desk's host gives (POST
+//     /company/erp/where), the browser on a click; before v2 it asked this desk's host to open ERPNext (POST /company/erp/open with the
 //     desk page's header) and says it is open, with 再打开一次; a site that is not set up or a stale login say so,
 //     with 重试.
 //   - company-chat-dock-v1: 聊天 locked in a column of its own at the window's right edge (工作区 | AI 对话 |
@@ -290,21 +291,29 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 		["company-chat", "company-erp"], "every role has ERPNext");
 	const erpMain = regs.find((x) => x.opts.name === "main" && x.opts.key === "company-erp");
 	assert.ok(erpMain, "its page in the main area");
-	let erpAsk = null;
+	// company-erp-desk-v2: in this page, in a frame at the relay's address; the browser one click away.
+	const FRAME = "http://127.0.0.1:17821/tdh-sso/start?t=t-AbC_123-xyzXYZ0123456789abcd";
+	const erpAsk = [];
 	tree = render(erpMain.Comp, (url, opts) => {
-		erpAsk = { url, opts };
-		return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+		erpAsk.push({ url, opts });
+		return Promise.resolve({ ok: true, json: () => Promise.resolve(url === "/company/erp/where" ? { ok: true, url: FRAME } : { ok: true }) });
 	});
 	assert.match(text(tree), /正在用你的 TDH 账号打开 ERPNext/);
 	effects.forEach((fn) => fn());
 	await new Promise((r) => setImmediate(r));
 	await new Promise((r) => setImmediate(r));
-	assert.equal(erpAsk.url, "/company/erp/open", "asks this desk's host");
-	assert.equal(erpAsk.opts.method, "POST");
-	assert.equal(erpAsk.opts.headers["X-TDH-ERP"], "1", "with the desk page's header");
+	assert.equal(erpAsk[0].url, "/company/erp/where", "asks this desk's host for the frame's address");
+	assert.equal(erpAsk[0].opts.method, "POST");
+	assert.equal(erpAsk[0].opts.headers["X-TDH-ERP"], "1", "with the desk page's header");
 	tree = rerender(erpMain.Comp);
-	assert.match(text(tree), /ERPNext 已在浏览器里打开/);
-	assert.ok(byText(tree, "再打开一次"), "and can open it again");
+	assert.equal(find(tree, "iframe").props.src, FRAME, "ERPNext in this page's frame");
+	byText(tree, "在浏览器里打开").props.onClick();
+	await new Promise((r) => setImmediate(r));
+	await new Promise((r) => setImmediate(r));
+	assert.equal(erpAsk[1].url, "/company/erp/open", "and in the browser on a click");
+	tree = rerender(erpMain.Comp);
+	assert.match(text(tree), /已在浏览器里打开/);
+	assert.ok(byText(tree, "重新打开"), "and can be opened again");
 	for (const [error, says] of [["erp-off", /ERPNext 还没接好/], ["bad-token", /TDH 的登录过期了/], ["", /连不上公司服务器/]]) {
 		tree = render(erpMain.Comp, () => Promise.resolve({ ok: false, json: () => Promise.resolve({ ok: false, error }) }));
 		effects.forEach((fn) => fn());

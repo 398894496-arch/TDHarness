@@ -7311,15 +7311,29 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		// company-erp-desk-v1: ERPNext (on the company server, the tailnet only) under 聊天 in the left column. A page in
-		// the desk cannot hold it (ERPNext refuses frames, and its login would not stay there), so this desk's host asks
-		// the site for a one-time link that logs the person in with their TDH account and opens it in the browser.
+		// company-erp-desk-v1: ERPNext (on the company server, the tailnet only) under 聊天 in the left column.
+		// company-erp-desk-v2 (the user, 2026-11-21: "能不能直接在TDH里打开"): in this page, through this desk's host's
+		// relay (erp-relay.js, as the chat's): the relay's address for a one-time link that logs the person in with
+		// their TDH account. The browser stays one click away (it needs the tailnet to let 443 through).
 		const ERP_PANEL = "company-erp";
 		const ERP_WHY = {
 			"erp-off": "ERPNext 还没接好，请找管理员。",
 			"bad-token": "TDH 的登录过期了，请重新打开 TDH 再试。",
 			"header": "这个页面不能打开 ERPNext。",
+			"relay": "本机的 ERPNext 转发没起来，请重启 TDH 再试。",
 		};
+		function erpWhere() {
+			return fetch("/company/erp/where", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Accept": "application/json", "X-TDH-ERP": "1" }
+			}).then(function (res) {
+				return res.json().then(function (j) {
+					if (res.ok && j && j.ok && j.url) return String(j.url);
+					throw new Error((j && j.error) || "open");
+				});
+			});
+		}
 		function erpOpen() {
 			return fetch("/company/erp/open", {
 				method: "POST",
@@ -7343,39 +7357,59 @@ window.__ModuleLoader__.load({
 			);
 		}
 		function ErpPage() {
-			const [state, setState] = React.useState("opening");
+			const [url, setUrl] = React.useState("");
 			const [why, setWhy] = React.useState("");
 			const [round, setRound] = React.useState(0);
+			const [note, setNote] = React.useState("");
 			React.useEffect(function () {
 				let live = true;
-				setState("opening");
-				erpOpen().then(function () {
-					if (live) setState("opened");
+				setUrl("");
+				setWhy("");
+				erpWhere().then(function (u) {
+					if (live) setUrl(u);
 				}, function (err) {
-					if (!live) return;
-					setWhy(ERP_WHY[String((err && err.message) || "")] || "没打开：这台电脑连不上公司服务器，或 ERPNext 没在运行。");
-					setState("failed");
+					if (live) setWhy(ERP_WHY[String((err && err.message) || "")] || "没打开：这台电脑连不上公司服务器，或 ERPNext 没在运行。");
 				});
 				return function () { live = false; };
 			}, [round]);
-			const line = state === "opening" ? "正在用你的 TDH 账号打开 ERPNext…"
-				: state === "opened" ? "ERPNext 已在浏览器里打开，用的是你的 TDH 账号。" : why;
-			return React.createElement("div", {
-				"data-company-erp": state,
+			const outside = function () {
+				setNote("");
+				erpOpen().then(function () {
+					setNote("已在浏览器里打开。浏览器打不开时，就在这里用。");
+				}, function (err) {
+					setNote(ERP_WHY[String((err && err.message) || "")] || "浏览器没打开。");
+				});
+			};
+			const bar = React.createElement("div", {
 				style: {
-					width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-					gap: 12, background: T.base, color: T.label2, fontFamily: FONT, fontSize: 13, textAlign: "center", padding: 24, boxSizing: "border-box"
+					height: 36, flex: "none", display: "flex", alignItems: "center", gap: 8, padding: "0 10px",
+					borderBottom: "0.5px solid " + T.border1, color: T.label2, fontSize: 12, boxSizing: "border-box"
 				}
 			},
-				React.createElement(ErpGlyph, { size: 28 }),
-				React.createElement("div", { style: { color: T.label, fontSize: 15, fontWeight: 600 } }, "ERPNext"),
-				React.createElement("div", null, line),
-				state === "opening" ? null : React.createElement(P.Button, {
-					variant: "outline",
-					size: "sm",
-					type: "button",
-					onClick: function () { setRound(round + 1); }
-				}, state === "opened" ? "再打开一次" : "重试")
+				React.createElement(ErpGlyph, { size: 14 }),
+				React.createElement("span", { style: { color: T.label, fontWeight: 600, fontSize: 13 } }, "ERPNext"),
+				React.createElement("span", { style: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, note),
+				React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: function () { setRound(round + 1); } }, "重新打开"),
+				React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: outside }, "在浏览器里打开")
+			);
+			const box = { width: "100%", height: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+				background: T.base, fontFamily: FONT };
+			return React.createElement("div", { "data-company-erp": url ? "framed" : why ? "failed" : "opening", style: box },
+				bar,
+				url ? React.createElement("iframe", {
+					key: url,
+					src: url,
+					title: "ERPNext",
+					style: { flex: 1, width: "100%", minHeight: 0, border: 0, display: "block", background: "#fff" },
+					allow: "clipboard-read; clipboard-write; fullscreen"
+				}) : React.createElement("div", {
+					style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
+						color: T.label2, fontSize: 13, textAlign: "center", padding: 24, boxSizing: "border-box" }
+				},
+					React.createElement(ErpGlyph, { size: 28 }),
+					React.createElement("div", null, why || "正在用你的 TDH 账号打开 ERPNext…"),
+					why ? React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: function () { setRound(round + 1); } }, "重试") : null
+				)
 			);
 		}
 		// company-chat-dock-v1: the right sidebar no longer offers 聊天 (it has its own column). A 聊天 tab a desk
