@@ -4,7 +4,8 @@
 #    127.0.0.1 only, as the Windows service TDH-PostgreSQL; a database and role "tinode".
 # 2. Tinode in D:\dsh\tinode (SYSTEM and Administrators only: its config holds the database password and its token
 #    key), uploads in D:\dsh\tinode-uploads, set up by tinode-setup.py, tables by init-db, the task Autostart-Tinode.
-# 3. Its routes in Caddy (chat.caddy in runtime\caddy\ext), reloaded without a restart.
+# 3. The agent's skill for reading a person's own chats, in company\_skills.
+# 4. Its routes in Caddy (chat.caddy in runtime\caddy\ext), reloaded without a restart.
 # Passwords are made here and kept in D:\dsh\runtime (admins only); none is printed. Each step is skipped when it is
 # done already, so a second run changes nothing. Prints CHAT_INSTALL_OK=1.
 # Keep this file ASCII: Windows PowerShell 5.1 reads BOM-less UTF-8 as the ANSI code page.
@@ -126,7 +127,14 @@ for ($i = 0; $i -lt 30; $i++) {
 if (-not (Get-NetTCPConnection -LocalPort 6060 -State Listen -ErrorAction SilentlyContinue)) { throw 'tinode-not-listening' }
 Write-Output 'TINODE=listening 127.0.0.1:6060'
 
-# ---- 3. Caddy ----
+# ---- 3. The agent's skill for a person's own chats (company-chat-read-v1); desks take it when TDH starts ----
+$skills = Join-Path $Root 'company\_skills'
+if (Test-Path -LiteralPath $skills) {
+  Copy-Item -LiteralPath (Join-Path $Chat 'skills\company-chat-history') -Destination $skills -Recurse -Force
+  Write-Output 'SKILL=company-chat-history'
+}
+
+# ---- 4. Caddy ----
 $ext = Join-Path $Rt 'caddy\ext\chat.caddy'
 Copy-Item -LiteralPath (Join-Path $Chat 'chat.caddy') -Destination $ext -Force
 $caddy = Join-Path $Rt 'caddy\caddy.exe'

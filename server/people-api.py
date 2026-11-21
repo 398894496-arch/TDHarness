@@ -22,6 +22,7 @@ import desk_lease  # noqa: E402
 import tickets as ticket_board  # noqa: E402
 import daily_report  # noqa: E402
 import notify  # noqa: E402
+import chat_read  # noqa: E402
 
 ROOT = Path(os.environ.get("TDH_ROOT") or r"D:\dsh")
 ROSTER = Path(os.environ.get("TDH_ROSTER") or str(ROOT / "runtime" / "roster.json"))
@@ -846,6 +847,11 @@ def run_lease(login: str, device_id: str, action: str) -> tuple[int, dict]:
 # machine may ask (loopback, not through Caddy).
 TINODE_LINKS = ROOT / "runtime" / "tinode-links.json"
 _TINODE_MU = threading.Lock()
+# company-chat-bot-v1: the server's own chat senders, outside the roster, one per kind of notice, so a notice comes
+# in a chat of its own (TDH早报), not from a person. Only this server logs in as one (one-time tickets, never a
+# password or a desk token); a bot opens no directory, so it is in nobody's contacts until it writes to them. No one
+# can be added to the roster under a bot's login.
+CHAT_BOTS = {"tdh-daily": "TDH早报"}
 
 
 def _tinode_links() -> dict:
@@ -959,6 +965,12 @@ class _ChatLP:
             return self._lines(r.read().decode("utf-8", "replace"))
 
     def send(self, msg: dict) -> dict | None:
+        return self.send_collect(msg)[0]
+
+    def send_collect(self, msg: dict) -> tuple:
+        """Send one message; returns (its answer, the other messages that came before it), the answer None if none
+        came in 15 seconds. The answer is the ctrl with its id, or the meta with its id (a get that found something
+        has no ctrl); the data of a get come before its ctrl (company-chat-read-v1)."""
         self.n += 1
         mid = str(self.n)
         key = next(iter(msg))
@@ -967,14 +979,18 @@ class _ChatLP:
         req = self._req.Request(self._url(), data=json.dumps(msg).encode("utf-8"), method="POST", headers={"Content-Type": "text/plain"})
         with self._open.open(req, timeout=20) as r:
             got = self._lines(r.read().decode("utf-8", "replace"))
+        frames = []
         deadline = time.time() + 15
         while time.time() < deadline:
             for m in got:
                 c = m.get("ctrl")
                 if c and c.get("id") == mid:
-                    return c
+                    return c, frames
+                frames.append(m)
+                if (m.get("meta") or {}).get("id") == mid:
+                    return {"id": mid, "code": 200}, frames
             got = self._get()
-        return None
+        return None, frames
 
 
 def chat_directory_join(login: str) -> dict:
@@ -1070,7 +1086,7 @@ def chat_provision_loop() -> None:
 def chat_directory_later(login: str, delay: float) -> None:
     """Run chat_directory_join in the background once Tinode has finished this login; one at a time per person."""
     links = _tinode_links()
-    if not links.get(login):
+    if not links.get(login) or login in CHAT_BOTS:
         return
     done = set((_chat_directory().get(login) or []))
     if all(u in done for w, u in links.items() if w != login):
@@ -1103,7 +1119,7 @@ def tinode_auth(payload: dict) -> dict:
     if endpoint == "link":
         login, _pw = _tinode_secret(payload)
         uid = str(((payload.get("rec") or {}).get("uid")) or "")
-        if not login or not uid or person(login) is None:
+        if not login or not uid or (person(login) is None and login not in CHAT_BOTS):
             return {"err": "malformed"}
         with _TINODE_MU:
             links = _tinode_links()
@@ -1112,8 +1128,9 @@ def tinode_auth(payload: dict) -> dict:
             tmp = TINODE_LINKS.with_suffix(".tmp")
             tmp.write_text(json.dumps(links, ensure_ascii=False), encoding="utf-8")
             os.replace(tmp, TINODE_LINKS)
-        # The new account is made but not yet logged in: join the directory a little later.
-        chat_directory_later(login, 4.0)
+        # The new account is made but not yet logged in: join the directory a little later (a person, not a bot).
+        if login not in CHAT_BOTS:
+            chat_directory_later(login, 4.0)
         return {"rec": {"uid": uid, "authlvl": "auth"}}
     if endpoint != "auth":
         return {"err": "unsupported"}
@@ -1123,6 +1140,16 @@ def tinode_auth(payload: dict) -> dict:
         return {"err": "malformed"}
     if login_blocked(login, src):
         return {"err": "policy"}
+    if login in CHAT_BOTS:
+        if not (pw.startswith("tkt_") and _take_ticket(login, pw)):
+            login_failed(login, src)
+            return {"err": "failed"}
+        rec = {"authlvl": "auth", "state": "ok", "tags": ["tdh:" + login]}
+        uid = _tinode_links().get(login)
+        if uid:
+            rec["uid"] = uid
+            return {"rec": rec}
+        return {"rec": rec, "newacc": {"auth": "JRWPS", "anon": "N", "public": {"fn": CHAT_BOTS[login]}, "trusted": {"staff": True}}}
     row = person(login)
     active = row is not None and row.get("status", "active") == "active"
     if pw.startswith("tkt_"):
@@ -1261,7 +1288,7 @@ class Handler(BaseHTTPRequestHandler):
             if not LOGIN_RE.match(login):
                 fail("login-bad")
                 return
-            if login == SEED_ADMIN or row_of(login) is not None or login in pass_map():
+            if login == SEED_ADMIN or login in CHAT_BOTS or row_of(login) is not None or login in pass_map():
                 fail("login-taken")
                 return
             # A removed account's login stays retired: its folder emp-<login> is still on the
@@ -1522,6 +1549,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/company/people":
             self._people(payload)
             return
+        if path.startswith("/company/ext/chat/"):
+            # company-chat-read-v1: a person's own chats, for their own agent (Caddy: /company/ext/chat/* here).
+            login = login_from_token(self._token())
+            row = person(login) if login else None
+            if not row or row.get("status", "active") != "active":
+                self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
+                return
+            status, body = chat_read_for(login, path[len("/company/ext/chat/"):].strip("/"), payload)
+            self._send(*json_bytes(body, status))
+            return
         if path == "/company/daily-report":
             # company-daily-report-v1: an admin makes today's page now (dry: without sending), or another day's.
             row = person(login_from_token(self._token()))
@@ -1583,9 +1620,10 @@ def notify_once(now_ms: int | None = None) -> list:
 
 def chat_send(sender: str, to: str, text: str) -> dict:
     """One chat message from `sender` to `to` (company-daily-report-v1): signs in as the sender with a one-time
-    ticket, opens their one-to-one chat, posts, leaves."""
+    ticket, opens their one-to-one chat, posts, leaves. A bot's chat account is made at its first message
+    (company-chat-bot-v1)."""
     links = _tinode_links()
-    if not links.get(sender) or not links.get(to):
+    if not (links.get(sender) or sender in CHAT_BOTS) or not links.get(to):
         return {"ok": False, "why": "no-account"}
     key = _chat_api_key()
     if not key:
@@ -1605,6 +1643,78 @@ def chat_send(sender: str, to: str, text: str) -> dict:
     p = lp.send({"pub": {"topic": topic, "noecho": True, "content": text}})
     lp.send({"leave": {"topic": topic}})
     return {"ok": bool(p) and int(p.get("code") or 500) < 300, "code": (p or {}).get("code")}
+
+
+def _chat_login(login: str, ua: str):
+    """A chat session signed in as `login` with a one-time ticket: (session, "") or (None, why)."""
+    key = _chat_api_key()
+    if not key:
+        return None, "no-key"
+    lp = _ChatLP(key)
+    if not lp.sid:
+        return None, "no-session"
+    hi = lp.send({"hi": {"ver": "0.25", "ua": ua}})
+    secret = base64.b64encode((login + ":" + _chat_ticket(login)).encode("utf-8")).decode("ascii")
+    r = lp.send({"login": {"scheme": "basic", "secret": secret}}) if hi and int(hi.get("code") or 500) < 300 else None
+    if not r or int(r.get("code") or 500) >= 300:
+        return None, "login"
+    return lp, ""
+
+
+def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
+    """company-chat-read-v1 (server/chat_read.py): `login`'s own chats for their agent. what: list | read | search.
+    The log has the counts, never what was said."""
+    if what not in ("list", "read", "search"):
+        return 404, {"ok": False, "error": "not-found"}
+    links = _tinode_links()
+    if not links.get(login):
+        return 200, {"ok": False, "error": "no-chat-account", "hint": "你还没有聊天账号：打开一次 TDH 左边的「聊天」，或过 10 分钟再试。"}
+    names = {}
+    for who, row in people_by_login().items():
+        if links.get(who):
+            names["usr" + links[who]] = str(row.get("name") or who)
+    names["usr" + links[login]] = "我"
+    lp, why = _chat_login(login, "TDH-read/1.0")
+    if lp is None:
+        return 200, {"ok": False, "error": "chat-" + why, "hint": "聊天服务现在连不上，稍后再试。"}
+    note = "只读：只能看到你自己所在的私聊和群，不会标成已读。"
+    try:
+        chats = chat_read.my_chats(lp, names)
+        if what == "list":
+            out = {"ok": True, "chats": chats[:100], "count": len(chats), "note": note}
+            n = len(chats)
+        elif what == "read":
+            want = str(payload.get("chat") or payload.get("name") or "").strip()
+            since = str(payload.get("since") or "").strip()
+            if since and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", since):
+                return 400, {"ok": False, "error": "bad-since", "hint": "since 写成 2026-11-20 这样"}
+            c = chat_read.find_chat(chats, want)
+            if c is None:
+                return 200, {"ok": False, "error": "no-such-chat", "hint": "你的聊天里没有「%s」（没聊过的人也找不到）。" % want,
+                             "chats": [x["name"] for x in chats[:40]]}
+            try:
+                limit = int(payload.get("limit") or 50)
+            except (TypeError, ValueError):
+                limit = 50
+            msgs, cut = chat_read.fit(chat_read.read_chat(lp, c["topic"], names, limit, since), newest_last=True)
+            out = {"ok": True, "chat": c["name"], "kind": c["kind"], "messages": msgs, "left_out_older": cut, "note": note}
+            n = len(msgs)
+        else:
+            q = str(payload.get("q") or payload.get("word") or "").strip()
+            if not q:
+                return 400, {"ok": False, "error": "no-word", "hint": "要搜的词放在 q"}
+            try:
+                days = int(payload.get("days") or 30)
+            except (TypeError, ValueError):
+                days = 30
+            hits, cut = chat_read.fit(chat_read.search(lp, chats, names, q, days), newest_last=False)
+            out = {"ok": True, "q": q, "days": max(1, min(days, 90)), "hits": hits, "left_out_older": cut, "note": note}
+            n = len(hits)
+    except (RuntimeError, OSError, ValueError) as e:
+        sys.stderr.write("people-api chat-read %s %s failed %s\n" % (login, what, type(e).__name__))
+        return 200, {"ok": False, "error": "chat-failed", "hint": "聊天服务没有答复，稍后再试。"}
+    sys.stderr.write("people-api chat-read %s %s n=%d\n" % (login, what, n))
+    return 200, out
 
 
 DAILY_MU = threading.Lock()

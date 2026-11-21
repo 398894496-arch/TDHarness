@@ -165,6 +165,9 @@ jobs:
       - name: Daily report (company-daily-report-v1)
         if: runner.os == 'Linux'
         run: python3 scripts/prove-daily-report.py
+      - name: A person's own chats for their agent, and TDH早报 (company-chat-read-v1, company-chat-bot-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-read.py
       - name: Chat page logic and its input boxes with a Chinese input method (company-chat-client-v1, company-chat-ime-v1; tinode-sdk 0.25.3, as the server runs)
         if: runner.os == 'Linux'
         run: |

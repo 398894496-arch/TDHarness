@@ -128,6 +128,8 @@ def main() -> None:
             check(got.get("error") == "login-bad", "login %r refused, got %r" % (bad, got.get("error")))
         code, got = call(port, "POST", {"action": "add", "login": "tdh", "password": "longenough1"}, admin)
         check(got.get("error") == "login-taken", "seed login cannot be added again")
+        code, got = call(port, "POST", {"action": "add", "login": "tdh-daily", "password": "longenough1", "dept": ops}, admin)
+        check(got.get("error") == "login-taken", "the login of TDH早报, the server's own chat account, is not for a person (company-chat-bot-v1)")
         code, got = call(port, "POST", {"action": "add", "login": "zhangsan", "password": "short", "dept": ops}, admin)
         check(got.get("error") == "password-too-short", "short password")
         code, got = call(port, "POST", {"action": "add", "login": "liu6", "password": "123456", "dept": "company"}, admin)
