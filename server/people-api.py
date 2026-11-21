@@ -1767,14 +1767,17 @@ def _assist_where(c: dict, links: dict) -> tuple:
     return "", ""
 
 
-def _assist_post(c: dict, kind: str, text: str, links: dict) -> dict:
+def _assist_post(c: dict, kind: str, text: str, links: dict, cannot: bool = False) -> dict:
     """TDH 助手's answer into the chat of the question `c`. One-to-one: posted by the person asked, who confirms it;
-    a group: posted by TDH助手, confirmed by the person @-ed in the question, if any."""
+    a group: posted by TDH助手, confirmed by the person @-ed in the question, if any. What TDH cannot answer (cannot)
+    has nothing to confirm."""
     poster, topic = _assist_where(c, links)
     if not poster:
         return {"ok": False, "why": "members"}
     head = {"tdh_ai": {"v": 1, "of": c["seq"], "kind": kind}, "reply": str(c["seq"])}
-    if c["topic"].startswith("p2p"):
+    if cannot:
+        head["tdh_ai"]["cannot"] = True
+    elif c["topic"].startswith("p2p"):
         head["tdh_ai"]["confirm"] = "usr" + links[poster]
     else:
         uids = {"usr" + links[m]: m for m in c["members"] if links.get(m)}
@@ -1859,7 +1862,7 @@ def chat_assist_once() -> dict:
             chat_assist.save_state(runtime, state)
             return {"ok": True, "started_after": state["last_id"]}
         rows = chat_assist.fetch(cfg, runtime, int(state["last_id"]))
-        out = {"ok": True, "rows": len(rows), "looked": 0, "answered": 0, "proposed": 0, "skipped": {}}
+        out = {"ok": True, "rows": len(rows), "looked": 0, "answered": 0, "cannot": 0, "proposed": 0, "skipped": {}}
         if not rows:
             return out
         if state.get("day") != chat_assist.today():
@@ -1919,9 +1922,9 @@ def chat_assist_once() -> dict:
             asker = (people.get(c["sender"]) or {}).get("name") or c["sender"]
             choice = chat_assist.decide(cfg, token, asker, c["text"], ctx[:-1], list(names), kind, data, with_task)
             act = chat_assist.check(choice, kind, data, with_task, names)
-            if act["action"] == "answer":
-                r = _assist_post(c, kind, act["text"], links)
-                counted = "answered"
+            if act["action"] in ("answer", "cannot"):
+                r = _assist_post(c, kind, act["text"], links, cannot=act["action"] == "cannot")
+                counted = "answered" if act["action"] == "answer" else "cannot"
             elif act["action"] == "task":
                 r = _assist_propose(c, act, links, people, state)
                 counted = "proposed"
@@ -1935,8 +1938,8 @@ def chat_assist_once() -> dict:
                 skip("post-%s" % r.get("why"))
         chat_assist.save_state(runtime, state)
     if out["looked"] or out.get("cards") or out.get("declined") or out.get("card_failed"):
-        line = "rows=%d looked=%d answered=%d proposed=%d cards=%d declined=%d skipped=%s calls_today=%s" % (
-            out["rows"], out["looked"], out["answered"], out["proposed"], out.get("cards", 0), out.get("declined", 0),
+        line = "rows=%d looked=%d answered=%d cannot=%d proposed=%d cards=%d declined=%d skipped=%s calls_today=%s" % (
+            out["rows"], out["looked"], out["answered"], out["cannot"], out["proposed"], out.get("cards", 0), out.get("declined", 0),
             json.dumps(out["skipped"]), state.get("calls"))
         sys.stderr.write("people-api chat-assist " + line + "\n")
         try:
