@@ -1628,7 +1628,9 @@ class Handler(BaseHTTPRequestHandler):
             if not row or row.get("status", "active") != "active":
                 self._note(403, "这个链接已经用过或过期了。请回到 TDH，再点一次左边的 ERPNext。")
                 return
-            link = erp_sso.erp_login_link(cfg) or cfg["base"] + "/login?redirect-to=%2Fdesk%2Fhome"
+            depts = {d.get("id"): d.get("name") for d in (load_roster().get("depts") or []) if isinstance(d, dict)}
+            home = erp_sso.home_of(row, depts.get(row.get("dept"), ""))
+            link = erp_sso.erp_login_link(cfg, home=home) or cfg["base"] + "/login?redirect-to=" + home.replace("/", "%2F")
             self._redirect(link, self._sso_cookie(cfg, row["login"]))
             return
         if sub == "authorize":
@@ -2144,7 +2146,7 @@ def erp_sync_once() -> dict:
         f = erp_data.ensure_finance_user(cfg, runtime / "erp-finance.json")
         if not f.get("ok") or f.get("created") or f.get("roles_set") or f.get("key_made"):
             out["finance_user"] = {x: f[x] for x in ("ok", "why", "created", "roles_set", "key_made") if x in f}
-    if not out.get("ok") or any(out.get(k) for k in ("created", "enabled", "disabled", "renamed", "failed", "admin_roles", "keys", "finance_user")):
+    if not out.get("ok") or any(out.get(k) for k in ("created", "enabled", "disabled", "renamed", "failed", "admin_roles", "dept_roles", "keys", "finance_user")):
         line = json.dumps(out, ensure_ascii=False)
         sys.stderr.write("people-api erp-sync %s\n" % line)
         try:
