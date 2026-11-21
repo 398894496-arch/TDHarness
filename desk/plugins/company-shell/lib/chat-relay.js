@@ -570,7 +570,7 @@ export function startChatRelay(opts) {
 
 	async function page(req, res, u) {
 		if (u.searchParams.get("k") !== pageKey) {
-			plain(res, 403, "请从 TDH 左栏或右侧栏的「聊天」打开。");
+			plain(res, 403, "请从 TDH 窗口最右边的聊天栏，或左栏的「聊天」打开。");
 			return;
 		}
 		const [r, t] = await Promise.all([

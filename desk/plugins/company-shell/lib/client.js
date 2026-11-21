@@ -6,6 +6,9 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
 		const React = require("react");
+		// The host's static modules include react-dom (createPortal): 聊天's own column at the window's right
+		// edge is drawn on document.body, outside the kernel's frame (company-chat-dock-v1).
+		const ReactDOM = require("react-dom");
 		// Verified live on the desk (2026-08-21): the host's per-plugin require
 		// resolves this to the same icon/primitive set the shipped rows use —
 		// real SVG icon components (IconPanelLeftOutline16, IconCloseOutline16,
@@ -75,6 +78,11 @@ window.__ModuleLoader__.load({
 		// fails at import time with "cannot access before initialization", which
 		// takes the whole frame with it now that the shipped sidebar row is off.
 		const ANIM = "var(--ds-transition-duration-slow, 240ms) var(--ds-ease-in-out, ease-in-out)";
+		// company-chat-dock-v1: 聊天's own column at the right edge, from this window width up (the CSS and
+		// ChatDock read the same query), and how wide it is (300px is the right sidebar's own minimum; the chat
+		// page goes to one column at a time under 640px).
+		const CHAT_DOCK_MEDIA = "(min-width: 1100px)";
+		const CHAT_DOCK_WIDTH = "clamp(300px, 26vw, 400px)";
 		// Layout hard-codes the collapsed track at 56. We paint a 48px rail and
 		// override the frame's first grid track when the sidebar is collapsed
 		// (see [data-sidebar-collapsed] below). Keep the two numbers in lockstep.
@@ -928,7 +936,22 @@ window.__ModuleLoader__.load({
 			".cs-cat { display: flex; flex-direction: column; gap: 8px; width: 100%; }",
 			".cs-cat-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }",
 			".cs-cat input[type=text], .cs-cat input[type=password] { height: 32px; min-width: 220px; border-radius: 8px; border: 0.5px solid var(--dsw-alias-border-l3, #ddd); padding: 0 8px; font: inherit; background: #fff; color: #111; }",
-			".cs-apply { height: 36px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 8px; background: #111; color: #fff; cursor: pointer; font: inherit; }"
+			".cs-apply { height: 36px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 8px; background: #111; color: #fff; cursor: pointer; font: inherit; }",
+			// company-chat-dock-v1 (see ChatDock): #root gives up the chat's width on the right, so the kernel's frame
+			// lays its three columns out in the rest; the chat column sits in that strip. A right sidebar shown
+			// fullscreen is 100vw wide and anchored at the frame's right edge: it stops at the chat, as the kernel
+			// stops it at the sidebar on Windows' own title bar.
+			"@media " + CHAT_DOCK_MEDIA + " {",
+			"  html[data-company-chat-dock] { --company-chat-dock-width: " + CHAT_DOCK_WIDTH + "; }",
+			"  html[data-company-chat-dock] #root { box-sizing: border-box; padding-right: var(--company-chat-dock-width); }",
+			"  html[data-company-chat-dock] [data-sidebar-right-panel=fullscreen] { max-width: calc(100vw - var(--company-chat-dock-width)); }",
+			"}",
+			".cs-chat-dock {",
+			"  position: fixed; top: 0; right: 0; bottom: 0; z-index: 5;",
+			"  width: var(--company-chat-dock-width, 340px);",
+			"  box-sizing: border-box; display: flex; flex-direction: column; min-width: 0; min-height: 0;",
+			"  background: " + T.base + "; border-left: 0.5px solid var(--dsw-alias-border-l3);",
+			"}"
 		].join("\n") + "\n" + LOOK_CSS + "\n" + CARD_CSS;
 
 		function Style() {
@@ -3075,7 +3098,9 @@ window.__ModuleLoader__.load({
 			);
 			// Plugins can switch whole parts of the desk off, so only the admin gets
 			// that entry, same as the models and version pages; the rest are everyone's.
-			const shownPanels = panelsForRole(shellRole, panels);
+			// 聊天 is not listed while it has its own column at the right edge.
+			const chatDock = React.useSyncExternalStore(chatDockSubscribe, chatDocked);
+			const shownPanels = panelsForDesk(shellRole, panels, chatDock);
 			function openFreshSession() {
 				if (props.selectPanel) props.selectPanel(null);
 				selectTask(null);
@@ -6953,7 +6978,8 @@ window.__ModuleLoader__.load({
 			chatSnap = next;
 			chatSubs.forEach(function (fn) { fn(); });
 		}
-		// The chat frames on screen (left panel or right-sidebar tab); a hidden kept-mounted tab has no box.
+		// The chat frames on screen (its column at the right edge, the left panel, an old right-sidebar tab); a hidden
+		// kept-mounted tab has no box.
 		const chatBoxes = new Set();
 		function chatOnScreen() {
 			try {
@@ -6985,7 +7011,8 @@ window.__ModuleLoader__.load({
 							const last = fresh[fresh.length - 1];
 							const text = (last.group ? "「" + (last.from || "群聊") + "」有新消息" : (last.from || "同事") + " 发来新消息") +
 								(fresh.length > 1 ? "（共 " + fresh.length + " 条）" : "");
-							if (!chatOnScreen()) toast = { id: last.id, text: text };
+							// The chat's own column is always there: its list shows what is new, no popup over it.
+							if (!chatOnScreen() && !chatDocked()) toast = { id: last.id, text: text };
 							let focused = true;
 							try { focused = document.hasFocus(); } catch (err) {}
 							if (!focused) {
@@ -7150,6 +7177,140 @@ window.__ModuleLoader__.load({
 			return React.createElement(ChatFrame);
 		}
 
+		// company-chat-dock-v1 ------------------------------------------------------------
+		// 聊天 locked in a column of its own at the window's right edge (the user, 2026-11-20): 工作区 | AI 对话 |
+		// 侧边栏 (files, browser, terminal: opened when needed, closed by default) | 聊天, always there. The kernel's
+		// frame has three columns and no seat for a fourth, but it lays itself out from its own measured width:
+		// #root gives up the chat's width on the right (CSS above), the frame and all its rules (the right
+		// sidebar's share, the 400px kept for the conversation, the workspace folding under 1024px) work in the
+		// rest, and the chat sits in that strip, a portal on document.body under the kernel's menus and dialogs.
+		// It is one chat for the whole desk, whatever session or page is shown, and the only one: while it is
+		// there the left column does not list 聊天 and an old right-sidebar 聊天 tab closes itself. A window
+		// narrower than CHAT_DOCK_MEDIA has no such column; 聊天 is back in the left column then.
+		let chatDockMq;
+		let chatDockHolders = 0;
+		const chatDockSubs = new Set();
+		function chatDockQuery() {
+			if (chatDockMq === undefined) {
+				chatDockMq = null;
+				try {
+					if (typeof window.matchMedia === "function") chatDockMq = window.matchMedia(CHAT_DOCK_MEDIA);
+				} catch (err) {}
+				if (chatDockMq) {
+					try {
+						if (typeof chatDockMq.addEventListener === "function") chatDockMq.addEventListener("change", chatDockPing);
+						else if (typeof chatDockMq.addListener === "function") chatDockMq.addListener(chatDockPing);
+					} catch (err) {}
+				}
+			}
+			return chatDockMq;
+		}
+		function chatDockPing() {
+			chatDockSubs.forEach(function (fn) { fn(); });
+		}
+		function chatDockSubscribe(fn) {
+			chatDockQuery();
+			chatDockSubs.add(fn);
+			return function () { chatDockSubs.delete(fn); };
+		}
+		// The window is wide enough for the column.
+		function chatDockWide() {
+			const mq = chatDockQuery();
+			return !!(mq && mq.matches) && typeof ReactDOM.createPortal === "function";
+		}
+		// The column is on screen (wide enough, and drawn).
+		function chatDocked() {
+			return chatDockHolders > 0 && chatDockWide();
+		}
+		// The frame folds the workspace away under 1024px of its own width. Take the chat's column out of a 1280px
+		// window (the Mac app opens at that size) and the frame is about 950px: the workspace would fold although
+		// the window has room for it. So each time the frame goes narrow, once, the shell opens it with the kernel's
+		// own toggle (in a narrow frame that is the kernel's "open anyway", which the kernel drops by itself when the
+		// right sidebar opens). One the person folded while the frame was wide stays folded; one they fold while
+		// it is narrow, too. The kernel collapses it a moment after the frame narrows: a narrow frame that is
+		// still open is waited out.
+		function workspaceKeeper(toggle) {
+			let side = "";
+			let wideFolded = false;
+			return function (frameWidth, folded) {
+				if (!(frameWidth > 0)) return;
+				if (frameWidth >= 1024) {
+					side = "wide";
+					wideFolded = folded;
+					return;
+				}
+				if (side === "narrow" || !folded) return;
+				side = "narrow";
+				if (!wideFolded && typeof toggle === "function") toggle();
+			};
+		}
+		function keepWorkspaceOpen(toggle) {
+			const look = workspaceKeeper(toggle);
+			let frame = null;
+			let ro = null;
+			let mo = null;
+			let timer = 0;
+			let tries = 0;
+			function check() {
+				try {
+					if (frame && frame.isConnected) look(frame.getBoundingClientRect().width, frame.hasAttribute("data-sidebar-collapsed"));
+				} catch (err) {}
+			}
+			function find() {
+				timer = 0;
+				// The frame is the element that holds the kernel's overlay layer.
+				const overlay = document.querySelector("[data-shell-overlay]");
+				frame = overlay ? overlay.parentElement : null;
+				if (!frame) {
+					if (++tries < 20) timer = setTimeout(find, 250);
+					return;
+				}
+				if (typeof ResizeObserver !== "undefined") {
+					ro = new ResizeObserver(check);
+					ro.observe(frame);
+				}
+				if (typeof MutationObserver !== "undefined") {
+					mo = new MutationObserver(check);
+					mo.observe(frame, { attributes: true, attributeFilter: ["data-sidebar-collapsed"] });
+				}
+				check();
+			}
+			find();
+			return function () {
+				if (timer) clearTimeout(timer);
+				if (ro) ro.disconnect();
+				if (mo) mo.disconnect();
+			};
+		}
+		function ChatDock(props) {
+			const wide = React.useSyncExternalStore(chatDockSubscribe, chatDockWide);
+			React.useEffect(function () {
+				if (!wide) return undefined;
+				const root = document.documentElement;
+				chatDockHolders++;
+				root.setAttribute("data-company-chat-dock", "1");
+				chatDockPing();
+				// The chat is in its column now: the same chat in the main area would be a second one.
+				try {
+					if (props.panelInfo && props.panelInfo.getSnapshot().activePanelId === CHAT_PANEL && props.selectPanel) props.selectPanel(null);
+				} catch (err) {}
+				const stopKeeping = keepWorkspaceOpen(props.toggleSidebar);
+				return function () {
+					stopKeeping();
+					chatDockHolders = Math.max(0, chatDockHolders - 1);
+					if (!chatDockHolders) root.removeAttribute("data-company-chat-dock");
+					chatDockPing();
+				};
+			}, [wide]);
+			if (!wide || !document.body) return null;
+			return ReactDOM.createPortal(
+				React.createElement("aside", { className: "cs-chat-dock", "data-company-chat-dock": "1", "aria-label": "聊天" },
+					React.createElement(ChatFrame)
+				),
+				document.body
+			);
+		}
+
 		// company-erp-desk-v1: ERPNext (on the company server, the tailnet only) under 聊天 in the left column. A page in
 		// the desk cannot hold it (ERPNext refuses frames, and its login would not stay there), so this desk's host asks
 		// the site for a one-time link that logs the person in with their TDH account and opens it in the browser.
@@ -7217,7 +7378,18 @@ window.__ModuleLoader__.load({
 				}, state === "opened" ? "再打开一次" : "重试")
 			);
 		}
-		function ChatTab() {
+		// company-chat-dock-v1: the right sidebar no longer offers 聊天 (it has its own column). A 聊天 tab a desk
+		// saved before that still comes back with the session's layout: while the column is there, the tab closes
+		// itself (the last tab closes the sidebar with it); in a window too narrow for the column it is the chat.
+		function ChatTab(props) {
+			const info = props && typeof props.useTabInfo === "function" ? props.useTabInfo() : null;
+			const docked = React.useSyncExternalStore(chatDockSubscribe, chatDocked);
+			const actions = info && info.tab ? info.tab.actions : null;
+			React.useEffect(function () {
+				if (!docked || !actions || typeof actions.close !== "function") return;
+				try { actions.close(); } catch (err) {}
+			}, [docked, actions]);
+			if (docked) return null;
 			return React.createElement(ChatFrame);
 		}
 
@@ -7322,9 +7494,24 @@ window.__ModuleLoader__.load({
 				}, ErpGlyph);
 			});
 
-			// company-chat-desk-v1: 聊天, the company chat (Tinode on the site), as a panel in the left column and
-			// as a right-sidebar tab. Both show the chat page this desk's host relays (chat-relay.js), on a port of
-			// its own: a separate origin from this page, already logged in as the person at this desk.
+			// company-chat-desk-v1: 聊天, the company chat (Tinode on the site). company-chat-dock-v1: in a column of
+			// its own at the window's right edge, always there (ChatDock); in a window too narrow for that column, as
+			// a panel in the left column. Both show the chat page this desk's host relays (chat-relay.js), on a port
+			// of its own: a separate origin from this page, already logged in as the person at this desk.
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
+					id: "company-chat-dock",
+					order: 29,
+					inject: function () {
+						return {
+							panelInfo: ctx.layout.panelInfo,
+							selectPanel: function (id) { try { ctx.layout.selectPanel(id); } catch (err) {} },
+							toggleSidebar: function () { try { ctx.layout.toggleSidebar(); } catch (err) {} }
+						};
+					}
+				}, ChatDock);
+			});
 			ctx.slots.inject("main", function () {
 				return ctx.slots.register({
 					name: "main",
@@ -7337,7 +7524,8 @@ window.__ModuleLoader__.load({
 					id: "company-chat-toast",
 					order: 30,
 					inject: function () {
-						return { openChat: function () { try { ctx.layout.selectPanel(CHAT_PANEL); } catch (err) {} } };
+						// With its column on screen the chat is already open there.
+						return { openChat: function () { if (chatDocked()) return; try { ctx.layout.selectPanel(CHAT_PANEL); } catch (err) {} } };
 					}
 				}, ChatToast);
 			});
@@ -7353,19 +7541,14 @@ window.__ModuleLoader__.load({
 			if (typeof ctx.inject === "function") {
 				ctx.inject(["slots", "sidebarRightTabs"], function (rctx) {
 					rctx.effect(function () {
+						// No guide entry (company-chat-dock-v1): the right sidebar's start page offers files, browser
+						// and terminal; the type stays for a 聊天 tab a desk saved before (see ChatTab).
 						return rctx.sidebarRightTabs.register({
 							id: CHAT_TAB,
 							kind: CHAT_TAB,
 							priority: "extension",
 							keepMounted: true,
-							title: function () { return "聊天"; },
-							guide: [{
-								id: CHAT_TAB,
-								order: 40,
-								title: function () { return "聊天"; },
-								description: function () { return "和同事私聊、群聊、传文件"; },
-								icon: ChatGlyph
-							}]
+							title: function () { return "聊天"; }
 						});
 					}, "company-shell: chat tab type");
 					rctx.slots.inject("sidebar.right.pane.tab", function () {
@@ -7536,7 +7719,15 @@ window.__ModuleLoader__.load({
 			const list = Array.isArray(panels) ? panels : [];
 			return role === "admin" ? list : list.filter(function (p) { return p && p.id !== "plugins"; });
 		}
+		// company-chat-dock-v1: and while 聊天 has its own column at the right edge, the left column does not list it
+		// a second time.
+		function panelsForDesk(role, panels, chatDock) {
+			const list = panelsForRole(role, panels);
+			return chatDock ? list.filter(function (p) { return p && p.id !== CHAT_PANEL; }) : list;
+		}
 		exports.panelsForRole = panelsForRole;
+		exports.panelsForDesk = panelsForDesk;
+		exports.workspaceKeeper = workspaceKeeper;
 		exports.apply = apply;
 		exports.inject = inject;
 		return module.exports;

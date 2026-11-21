@@ -1,8 +1,8 @@
 // Proof for company-chat-desk-v1, the desk side of 聊天 (desk/plugins/company-shell/lib/client.js): loaded with a
 // stand-in kernel (every service answers anything), the shell
 //   - adds 聊天 to the left column (sidebar.panellist "company-chat") and its page (main, keyed "company-chat");
-//   - once the right sidebar's tab registry is there, registers the 聊天 tab type (kept mounted, on the start
-//     page) and its body under the same id;
+//   - once the right sidebar's tab registry is there, registers the 聊天 tab type (kept mounted) and its body
+//     under the same id; company-chat-dock-v1: no longer on the right sidebar's start page;
 //   - the page asks this desk's host where the chat is (/company/chat/where) and shows it in an iframe; when the
 //     host has no relay it says so and offers 重试;
 //   - company-chat-notify-v1: the desk asks its host for the unread count (badge on 聊天); a new message while the
@@ -13,6 +13,14 @@
 //     its page (main, keyed "company-erp"): it asks this desk's host to open ERPNext (POST /company/erp/open with the
 //     desk page's header) and says it is open, with 再打开一次; a site that is not set up or a stale login say so,
 //     with 重试.
+//   - company-chat-dock-v1: 聊天 locked in a column of its own at the window's right edge (工作区 | AI 对话 |
+//     侧边栏 opened when needed | 聊天): from a 1100px window up the shell draws the chat on document.body (a portal
+//     from the window's overlay), marks <html> so #root gives up the chat's width and the kernel's frame lays its
+//     three columns out in the rest (a fullscreen right sidebar stops at the chat), and while it is there the left
+//     column does not list 聊天, a 聊天 shown in the main area goes back to the conversation, an old right-sidebar
+//     聊天 tab closes itself and no popup comes over it; a narrower window has no column and 聊天 is back in the
+//     left column. The frame folds the workspace under 1024px of its own width: once each time it goes narrow
+//     only for the chat's column, the shell opens the workspace again; one the person folded stays folded.
 // Prints CHAT_DESK_PROVE_OK=1.
 "use strict";
 const assert = require("node:assert/strict");
@@ -60,7 +68,7 @@ o = o || {};
 let mod = null;
 const intervals = [];
 const sandbox = {
-	window: { __ModuleLoader__: { load: (m) => { mod = m; } } },
+	window: Object.assign({ __ModuleLoader__: { load: (m) => { mod = m; } } }, o.window || {}),
 	document: o.document || anything,
 	navigator: anything,
 	localStorage: anything,
@@ -79,7 +87,7 @@ const sandbox = {
 };
 vm.runInNewContext(fs.readFileSync(CLIENT, "utf8"), sandbox, { filename: "client.js" });
 assert.ok(mod, "client.js registers its module");
-const exp = mod.factory((name) => (name === "react" ? React : anything));
+const exp = mod.factory((name) => (name === "react" ? React : name === "react-dom" && o.reactDom ? o.reactDom : anything));
 exp0 = exp;
 // company-panels-for-all-v1: an employee's left column has 工件、定时任务、聊天; only 插件 is the admin's.
 {
@@ -88,7 +96,8 @@ exp0 = exp;
 	assert.deepEqual(Array.from(exp.panelsForRole("director", rows), (r) => r.id), ["artifacts", "schedules", "company-chat"]);
 	assert.deepEqual(Array.from(exp.panelsForRole("admin", rows), (r) => r.id), ["plugins", "artifacts", "schedules", "company-chat"], "the admin sees 插件 too");
 	assert.deepEqual(Array.from(exp.panelsForRole("employee", null)), []);
-	assert.ok(/const shownPanels = panelsForRole\(shellRole, panels\);/.test(fs.readFileSync(CLIENT, "utf8")), "the left column uses it");
+	assert.ok(/const shownPanels = panelsForDesk\(shellRole, panels, chatDock\);/.test(fs.readFileSync(CLIENT, "utf8")), "the left column uses it");
+	assert.deepEqual(Array.from(exp.panelsForDesk("employee", rows, false), (r) => r.id), ["artifacts", "schedules", "company-chat"]);
 }
 const regs = [];
 const tabTypes = [];
@@ -124,7 +133,7 @@ const ctx = new Proxy({}, {
 	},
 });
 exp.apply(ctx);
-return { sandbox, regs, tabTypes, injected, intervals };
+return { sandbox, regs, tabTypes, injected, intervals, exp };
 }
 const { sandbox, regs, tabTypes, injected } = load();
 
@@ -145,9 +154,7 @@ assert.equal(def.id, "company-chat");
 assert.equal(def.kind, "company-chat");
 assert.equal(def.keepMounted, true, "the chat stays connected while other tabs are shown");
 assert.equal(def.title(), "聊天");
-assert.equal(def.guide.length, 1);
-assert.equal(def.guide[0].title(), "聊天");
-assert.ok(def.guide[0].icon, "the start page shows its icon");
+assert.equal(def.guide, undefined, "not on the right sidebar's start page: 聊天 has its own column");
 const body = regs.find((r) => r.opts.name === "sidebar.right.pane.tab" && r.opts.key === "company-chat");
 assert.ok(body, "the tab's body under the type's id");
 
@@ -307,6 +314,138 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 		assert.match(text(tree), says, "says why: " + error);
 		assert.ok(byText(tree, "重试"));
 	}
+
+	// --- company-chat-dock-v1 ----------------------------------------------------------------------------------
+	const SRC = fs.readFileSync(CLIENT, "utf8");
+	const MEDIA = (SRC.match(/const CHAT_DOCK_MEDIA = "([^"]+)";/) || [])[1];
+	assert.equal(MEDIA, "(min-width: 1100px)", "the column from a 1100px window up");
+	assert.match(SRC, /"@media " \+ CHAT_DOCK_MEDIA \+ " \{",/, "the CSS reads the same query as the column");
+	assert.match(SRC, /html\[data-company-chat-dock\] #root \{ box-sizing: border-box; padding-right: var\(--company-chat-dock-width\); \}/,
+		"#root gives up the chat's width: the kernel's frame measures itself and lays its three columns out in the rest");
+	assert.match(SRC, /html\[data-company-chat-dock\] \[data-sidebar-right-panel=fullscreen\] \{ max-width: calc\(100vw - var\(--company-chat-dock-width\)\); \}/,
+		"a fullscreen right sidebar stops at the chat");
+	assert.match(SRC, /html\[data-company-chat-dock\] \{ --company-chat-dock-width: " \+ CHAT_DOCK_WIDTH \+ "; \}/);
+	assert.equal((SRC.match(/const CHAT_DOCK_WIDTH = "([^"]+)";/) || [])[1], "clamp(300px, 26vw, 400px)");
+	assert.match(SRC, /const chatDock = React\.useSyncExternalStore\(chatDockSubscribe, chatDocked\);\n\t*const shownPanels = panelsForDesk/,
+		"the left column follows the column");
+
+	function dockDesk(wide) {
+		const attrs = {};
+		const body = { tag: "body" };
+		const mq = { matches: wide, addEventListener() {}, removeEventListener() {} };
+		const asked = [];
+		const picked = [];
+		const toggled = [];
+		let active = null;
+		const docD = new Proxy({}, { get(t2, k) {
+			if (k === "documentElement") return { setAttribute: (a, v) => { attrs[a] = String(v); }, removeAttribute: (a) => { delete attrs[a]; }, hasAttribute: (a) => a in attrs, style: anything, classList: anything };
+			if (k === "body") return body;
+			if (k === "querySelector") return () => null;
+			if (k === "hasFocus") return () => false;
+			if (k === "visibilityState") return "visible";
+			return anything;
+		} });
+		const answersD = [
+			{ ok: true, count: 1, seq: 1, events: [] },
+			{ ok: true, count: 2, seq: 2, events: [{ id: 2, topic: "usrA", from: "梁风禾", group: false }] },
+		];
+		const notifiedD = [];
+		const d = load({
+			document: docD,
+			window: { matchMedia: (q) => { asked.push(q); return mq; } },
+			reactDom: { createPortal: (child, container) => ({ type: "portal", props: { container }, children: [child] }) },
+			layout: new Proxy({}, { get(t2, k) {
+				if (k === "selectPanel") return (id) => { picked.push(id); active = id; };
+				if (k === "toggleSidebar") return () => toggled.push(1);
+				if (k === "panelInfo") return { getSnapshot: () => ({ activePanelId: active }), subscribe: () => () => {} };
+				return anything;
+			} }),
+			fetch: (url, opt) => {
+				if (String(url).indexOf("/company/chat/unread") === 0) return json(answersD.shift() || { ok: true, count: 2, seq: 2, events: [] });
+				if (url === "/company/chat/notify") { notifiedD.push(JSON.parse(opt.body)); return json({ ok: true }); }
+				return new Promise(() => {});
+			},
+		});
+		const reg = d.regs.find((x) => x.opts.name === "shell.overlay" && x.opts.id === "company-chat-dock");
+		return { d, reg, attrs, body, asked, picked, toggled, notifiedD, setActive: (id) => { active = id; } };
+	}
+	const paint = (reg) => { hookState = []; effects.length = 0; hookAt = 0; return reg.Comp(reg.opts.inject()); };
+
+	// A wide window: the column, on document.body.
+	const W = dockDesk(true);
+	assert.ok(W.reg, "the column comes from the window's overlay");
+	W.setActive("company-chat"); // 聊天 was open in the main area (a narrow window, widened since)
+	const dockTree = paint(W.reg);
+	assert.ok(W.asked.includes(MEDIA), "asks the window the same query as the CSS");
+	assert.equal(dockTree.type, "portal", "drawn outside the kernel's frame");
+	assert.equal(dockTree.props.container, W.body, "on document.body");
+	const aside = dockTree.children[0];
+	assert.equal(aside.type, "aside");
+	assert.equal(aside.props.className, "cs-chat-dock");
+	assert.equal(aside.props["aria-label"], "聊天");
+	assert.equal(aside.children[0].type.name, "ChatFrame", "the same chat page as everywhere else");
+	assert.equal(W.attrs["data-company-chat-dock"], undefined, "nothing given up before it is on screen");
+	const cleanups = effects.slice().map((fn) => fn());
+	assert.equal(W.attrs["data-company-chat-dock"], "1", "on screen: #root gives up its width");
+	assert.deepEqual(W.picked, [null], "the 聊天 in the main area goes back to the conversation: one chat, not two");
+	const rowsD = [{ id: "plugins" }, { id: "schedules" }, { id: "company-chat" }, { id: "company-erp" }];
+	assert.deepEqual(Array.from(W.d.exp.panelsForDesk("employee", rowsD, true), (r) => r.id), ["schedules", "company-erp"], "the left column does not list 聊天 a second time");
+	assert.deepEqual(Array.from(W.d.exp.panelsForDesk("admin", rowsD, true), (r) => r.id), ["plugins", "schedules", "company-erp"]);
+
+	// An old right-sidebar 聊天 tab, brought back with a session's layout, closes itself while the column is there.
+	const tabBody = W.d.regs.find((x) => x.opts.name === "sidebar.right.pane.tab" && x.opts.key === "company-chat");
+	let closedTabs = 0;
+	hookState = []; effects.length = 0; hookAt = 0;
+	const tabOut = tabBody.Comp({ useTabInfo: () => ({ tab: { actions: { close: () => { closedTabs++; } } } }) });
+	assert.equal(tabOut, null, "no second chat in the right sidebar");
+	effects.forEach((fn) => fn());
+	assert.equal(closedTabs, 1, "the tab closes (the last one closes the sidebar with it)");
+
+	// A new message while the column is there: no popup over it; the window in the background still notifies.
+	await settle();
+	W.d.intervals.forEach((fn) => fn());
+	await settle();
+	const toastW = W.d.regs.find((x) => x.opts.name === "shell.overlay" && x.opts.id === "company-chat-toast");
+	assert.equal(paint(toastW), null, "no popup over the chat's own column");
+	assert.deepEqual(W.notifiedD, [{ title: "TDH 聊天", body: "梁风禾 发来新消息" }]);
+
+	// The column goes (the window narrowed): #root has its width back, the old tab is the chat again.
+	cleanups.forEach((fn) => typeof fn === "function" && fn());
+	assert.equal(W.attrs["data-company-chat-dock"], undefined);
+	hookState = []; effects.length = 0; hookAt = 0;
+	assert.equal(tabBody.Comp({}).type.name, "ChatFrame", "without the column the old tab is the chat again");
+
+	// A narrow window: no column at all.
+	const N = dockDesk(false);
+	assert.equal(paint(N.reg), null, "under 1100px: no column");
+	effects.forEach((fn) => fn());
+	assert.equal(N.attrs["data-company-chat-dock"], undefined, "and #root keeps its whole width");
+	assert.deepEqual(N.picked, []);
+
+	// The workspace column: the kernel folds it under 1024px of the frame's own width.
+	const keepT = [];
+	let keep = W.d.exp.workspaceKeeper(() => keepT.push(1));
+	keep(1280, false);           // the frame before the column took its width
+	keep(947, false);            // narrow, the kernel has not folded it yet: wait
+	assert.equal(keepT.length, 0);
+	keep(947, true);             // folded only for the chat's column (a 1280px window): opened again, once
+	assert.equal(keepT.length, 1);
+	keep(947, false);
+	keep(947, true);             // the person folds it (or the right sidebar opens): stays folded
+	keep(900, true);
+	assert.equal(keepT.length, 1);
+	keep(1100, false);           // wide again, open
+	keep(960, true);             // narrow again: opened again
+	assert.equal(keepT.length, 2);
+	keepT.length = 0;
+	keep = W.d.exp.workspaceKeeper(() => keepT.push(1));
+	keep(1200, true);            // folded by the person while the frame was wide
+	keep(980, true);
+	assert.equal(keepT.length, 0, "a workspace the person folded stays folded");
+	keep = W.d.exp.workspaceKeeper(() => keepT.push(1));
+	keep(0, true);
+	assert.equal(keepT.length, 0, "a frame not laid out yet is no measure");
+	assert.equal(W.toggled.length, 0, "no frame in this stand-in page: nothing toggled");
 	console.log("CHAT_DESK_PROVE_OK=1");
 })().catch((err) => {
 	console.error(err);
