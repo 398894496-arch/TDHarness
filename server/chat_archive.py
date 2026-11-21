@@ -80,13 +80,15 @@ def files_of(row: dict) -> list[dict]:
         if not name:
             name = ("图片" if e["tp"] == "IM" else "文件") + MIME_EXT.get(str(d.get("mime") or ""), "")
         item = {"name": name, "kind": kind_of(name)}
-        if d.get("val"):
+        # A picture sent with its upload also carries a small preview in val (2026-11-21: the first round kept 4 KB
+        # previews): the upload is the picture.
+        if d.get("ref") and uploads:
+            item["path"] = str((uploads.pop(0) or {}).get("loc") or "")
+        elif d.get("val"):
             try:
                 item["bytes"] = base64.b64decode(str(d["val"]))
             except (ValueError, TypeError):
                 continue
-        elif d.get("ref") and uploads:
-            item["path"] = str((uploads.pop(0) or {}).get("loc") or "")
         else:
             continue
         out.append(item)
