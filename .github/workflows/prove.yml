@@ -148,6 +148,9 @@ jobs:
       - name: Prove a Mac desk finds the server away from the office, and the login says why it failed
         if: runner.os != 'Windows'
         run: node scripts/prove-mac-offlan-resolve.js
+      - name: Every delta carries the pack's top-level scripts, and the desk takes them (company-delta-top-files-v1)
+        if: runner.os == 'Linux'
+        run: bash scripts/prove-delta-top-files.sh
       - name: Prove people management, including removing an account for good
         if: runner.os == 'Linux'
         run: python3 scripts/prove-people.py

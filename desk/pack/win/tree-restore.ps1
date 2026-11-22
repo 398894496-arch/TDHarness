@@ -55,6 +55,9 @@ function Test-ProductPath([string]$Rel) {
   foreach ($p in $TreePrefixes) {
     if ($n -eq $p.TrimEnd('/') -or $n.StartsWith($p)) { return $true }
   }
+  # company-delta-top-files-v1: every other top-level file the signed pack carries is the desk's too (not
+  # .exe/.dll: a running one is locked). Names missing from the list never arrived (start-app.ps1 stayed old).
+  if ($n -notmatch '/' -and $n -notmatch '\.(exe|dll)$') { return $true }
   return $TreeFiles -contains $n
 }
 

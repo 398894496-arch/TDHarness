@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.22.2
+
+**电脑端更新不再漏文件：以前漏装、漏更新的文件，下一次更新都会补上**
+- **增量更新补齐漏掉的文件**（`company-delta-top-files-v1`，电脑端 Win、Mac，发版服务器上生效）：田总的 Mac 在公司外打不开 TDH，提示「连不上公司服务器」。原因有两层：他的 Tailscale 没连上；TDH 里也一直缺 `mac-resolve.js`，Mac 离开公司时就靠它找服务器。这个文件是 11-19 那版加的，可那次更新是旧的更新程序执行的，它还不认识这个文件名，就没复制；之后的增量更新只带有变化的文件，服务器以为电脑上已经有了，就再也没发过。已经是最新版的 Mac 也缺这个文件。另外 `mac-pin-workspaces.js`、`mcp-one.cjs`（Mac）和 `start-app.ps1`（Win）不在电脑认可的文件名单里，改了也一直是旧的。
+  - 现在每个增量包都固定带上安装目录顶层的小脚本（`.js`、`.sh`、`.command`、`.ps1`、`.json` 等，单个不超过 256 KB），不管这一版有没有变；exe、dll 和 Mac 主程序仍然只在变了的时候才带。增量包大约多 60–70 KB。
+  - 电脑端收下安装包顶层的所有文件，不再只认一份写死的名单（Windows 名单外的 exe、dll 照旧不收，运行中的会被锁住）。签名校验不变，改过的增量包照样被拒、退回整包。
+  - 生效顺序：这一版更新时，每台电脑都会补上 `mac-resolve.js`；名单外的那几个文件要等电脑装上新的更新程序，**下一次**更新时补齐。
+- 当天已用脚本先修好田总那台 Mac（补上文件、重新连上 Tailscale），19:37 登录成功。之后别的 Mac 在公司外连不上，同一个脚本也能修。
+
 ## 2026.11.22
 
 **左栏新增「邮箱」：在 TDH 里收发公司的企业邮箱，也能让 TDH 助手帮你看信、回信**

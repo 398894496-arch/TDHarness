@@ -23,7 +23,10 @@ is_product() {
     prefix|prefix/*|node|node/*|plugins|plugins/*|home/profiles/web/node_modules|home/profiles/web/node_modules/*) return 0 ;;
     skills|skills/*|opencli|opencli/*|peekaboo|peekaboo/*|cua-driver|cua-driver/*|vendor|vendor/*|bin|bin/*) return 0 ;;
     TDHarness.exe|TDHarness|start.ps1|start.command|CompanyDesk.vbs|WebView2Loader.dll|tree-check.js|tree-restore.ps1|tree-restore.sh|pack-update-check.js|sync-skills.js|sync-desk-home.sh|sync-desk-home.ps1|prove-cosmokit.js|desk-lease.js|krouter-hook.js|krouter-hooks.json|mac-mount-company.sh|mac-join-off-lan.sh|mac-pin-settings.js|mac-company-login.js|mac-smb-mount.js|mac-resolve.js|BUILD.json|home/profiles/web/package.json|home/profiles/web/overlay.yml|presets|presets/*) return 0 ;;
-    *) return 1 ;;
+    # company-delta-top-files-v1: every other top-level file the signed pack carries is the desk's too. Names
+    # missing from the list above never arrived (mac-pin-workspaces.js, mcp-one.cjs stayed old on every Mac).
+    */*) return 1 ;;
+    *) return 0 ;;
   esac
 }
 
@@ -162,6 +165,7 @@ if [[ -d "$src/home/profiles/web/node_modules" ]]; then
 fi
 
 wrote=0
+listed=" "
 for f in TDHarness.exe TDHarness start.ps1 start.command CompanyDesk.vbs WebView2Loader.dll \
          tree-check.js tree-restore.ps1 tree-restore.sh pack-update-check.js \
          sync-skills.js sync-desk-home.sh sync-desk-home.ps1 prove-cosmokit.js desk-lease.js krouter-hook.js krouter-hooks.json mac-mount-company.sh mac-join-off-lan.sh \
@@ -171,6 +175,15 @@ for f in TDHarness.exe TDHarness start.ps1 start.command CompanyDesk.vbs WebView
   dest="$ROOT/$f"
   mkdir -p "$(dirname "$dest")"
   cp -a "$src/$f" "$dest"
+  wrote=$((wrote + 1))
+  listed="$listed $f "
+done
+# company-delta-top-files-v1: and every other top-level file of the pack.
+for p in "$src"/*; do
+  f="${p##*/}"
+  [[ -f "$p" || -L "$p" ]] || continue
+  [[ "$listed" == *" $f "* ]] && continue
+  cp -a "$p" "$ROOT/$f"
   wrote=$((wrote + 1))
 done
 
