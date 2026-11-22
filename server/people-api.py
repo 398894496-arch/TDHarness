@@ -31,6 +31,7 @@ import chat_archive  # noqa: E402
 import chat_docs  # noqa: E402
 import erp_sso  # noqa: E402
 import erp_data  # noqa: E402
+import mail_api  # noqa: E402
 import kb_organize  # noqa: E402
 import drawing_watch  # noqa: E402
 
@@ -1815,6 +1816,20 @@ class Handler(BaseHTTPRequestHandler):
             erp_agent_log(login, route, payload, status, body)
             self._send(*json_bytes(body, status))
             return
+        if path.startswith("/company/ext/mail/"):
+            # company-mail-v1: 邮箱, the person's mailboxes (and every one for an admin), for the page and the agent.
+            login = login_from_token(self._token())
+            row = person(login) if login else None
+            if not row or row.get("status", "active") != "active":
+                self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
+                return
+            row = dict(row)
+            row["personal"] = row.get("personal") or str(ROOT / "company" / ("emp-" + login))
+            route = path[len("/company/ext/mail/"):].strip("/")
+            status, body = mail_api.handle(route, payload, row, people_by_login(), TOKEN_STORE.parent, ROOT / "company")
+            mail_log(login, route, payload, status, body)
+            self._send(*json_bytes(body, status))
+            return
         if path.startswith("/company/ext/chat/"):
             # company-chat-read-v1: a person's own chats, for their own agent (Caddy: /company/ext/chat/* here).
             login = login_from_token(self._token())
@@ -2083,6 +2098,16 @@ def card_to_chat(action: str, actor: str, card: dict, people: dict) -> threading
 
 
 ERP_ONCE = erp_sso.Once()
+
+
+def mail_log(login: str, route: str, payload: dict, status: int, body: dict) -> None:
+    """company-mail-v1: who did what to which mailbox, the answer's status; never a message's contents."""
+    try:
+        (ROOT / "logs").mkdir(parents=True, exist_ok=True)
+        with (ROOT / "logs" / "mail.log").open("a", encoding="utf-8") as fh:
+            fh.write(mail_api.log_line(login, route, payload, status, body) + "\n")
+    except OSError:
+        pass
 
 
 def erp_agent_log(login: str, route: str, payload: dict, status: int, body: dict) -> None:

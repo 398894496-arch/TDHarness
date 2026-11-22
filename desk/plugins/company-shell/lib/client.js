@@ -7433,6 +7433,627 @@ window.__ModuleLoader__.load({
 				)
 			);
 		}
+		// company-mail-v1: 邮箱 (the user, 2026-11-21: "在TDH做一个邮箱管理系统 放在左上角跟ERP 工件 插件 定时任务 放在一起
+		// 叫邮箱 ... 登陆多个企业邮箱 ... 可以可视化 也可以直接让AI帮忙管理邮件和回复邮件"). The person's mailboxes (every
+		// one for an admin) at the company server's mail layer (server/mail_api.py, over the provider's IMAP and SMTP),
+		// through this desk's host (/company/mail/call, a header a page elsewhere cannot send here without asking).
+		// Three columns: mailboxes and folders, the list, the mail; writing in place of the mail. 让助手回复 opens a
+		// session with the mail named; the agent shows a preview before it sends (company-mail skill).
+		const MAIL_PANEL = "company-mail";
+		const MAIL_UPLOAD_MAX = 11 * 1024 * 1024;
+		let mailAskFn = null;
+		function mailCall(route, body) {
+			return fetch("/company/mail/call", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Accept": "application/json", "Content-Type": "application/json", "X-TDH-Mail": "1" },
+				body: JSON.stringify({ route: "/" + route, body: body || {} })
+			}).then(function (res) {
+				return res.json().catch(function () { return { ok: false, error: "这台电脑连不上公司服务器。" }; }).then(function (j) {
+					if (j && j.error === "bad-token") j.error = "TDH 的登录过期了，请重新打开 TDH。";
+					if (j && j.error === "header") j.error = "这个页面不能打开邮箱。";
+					return j || { ok: false, error: "没有回答" };
+				});
+			}, function () { return { ok: false, error: "这台电脑连不上公司服务器。" }; });
+		}
+		function mailWho(a) {
+			if (!a) return "";
+			return a.name || a.address || "";
+		}
+		function mailAddr(a) {
+			if (!a || !a.address) return "";
+			return a.name ? a.name + " <" + a.address + ">" : a.address;
+		}
+		function mailWhen(d) {
+			const s = String(d || "");
+			if (!s) return "";
+			const now = new Date();
+			const pad = function (n) { return (n < 10 ? "0" : "") + n; };
+			const today = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+			if (s.slice(0, 10) === today) return s.slice(11, 16);
+			if (s.slice(0, 4) === String(now.getFullYear())) return s.slice(5, 10);
+			return s.slice(0, 10);
+		}
+		function mailSize(n) {
+			n = Number(n) || 0;
+			if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+			if (n >= 1024) return Math.round(n / 1024) + " KB";
+			return n + " B";
+		}
+		function mailAsk(line) {
+			if (mailAskFn) mailAskFn(line);
+		}
+		const MAIL_CSS = [
+			".tm-root { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; overflow: hidden; background: " + T.base + "; color: " + T.label + "; font-family: " + FONT + "; font-size: 13px; }",
+			".tm-col { display: flex; flex-direction: column; min-height: 0; border-right: 0.5px solid " + T.border1 + "; box-sizing: border-box; }",
+			".tm-boxes { width: 188px; flex: none; background: " + T.sidebar + "; }",
+			".tm-list { width: 300px; flex: none; }",
+			".tm-read { flex: 1; min-width: 0; border-right: 0; }",
+			".tm-head { height: 44px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 0.5px solid " + T.border1 + "; box-sizing: border-box; }",
+			".tm-title { font-weight: 600; font-size: 14px; }",
+			".tm-scroll { flex: 1; min-height: 0; overflow-y: auto; }",
+			".tm-btn { height: 28px; padding: 0 10px; border-radius: 7px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }",
+			".tm-btn:hover { background: " + QUIET + "; }",
+			".tm-btn:disabled { opacity: .5; cursor: default; }",
+			".tm-btn.is-main { background: " + T.brand + "; border-color: " + T.brand + "; color: #fff; }",
+			".tm-btn.is-main:hover { filter: brightness(1.06); }",
+			".tm-btn.is-danger { color: " + T.err + "; }",
+			".tm-icon { width: 28px; padding: 0; justify-content: center; }",
+			".tm-acct { padding: 8px 6px 4px; }",
+			".tm-acct-row { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: " + T.label + "; font: inherit; text-align: left; cursor: pointer; }",
+			".tm-acct-row:hover { background: " + QUIET + "; }",
+			".tm-acct-row.is-on { font-weight: 600; }",
+			".tm-acct-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".tm-acct-sub { font-size: 11px; color: " + T.label2 + "; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".tm-gear { opacity: 0; border: 0; background: transparent; color: " + T.label2 + "; cursor: pointer; padding: 0 2px; font-size: 12px; }",
+			".tm-acct-row:hover .tm-gear, .tm-gear:focus { opacity: 1; }",
+			".tm-folder { display: flex; align-items: center; width: 100%; padding: 5px 8px 5px 22px; border: 0; border-radius: 7px; background: transparent; color: " + T.label + "; font: inherit; text-align: left; cursor: pointer; }",
+			".tm-folder:hover { background: " + QUIET + "; }",
+			".tm-folder.is-on { background: " + tint(T.brand, 14) + "; color: " + T.brand + "; font-weight: 600; }",
+			".tm-folder span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".tm-count { font-size: 11px; color: " + T.label2 + "; }",
+			".tm-folder.is-on .tm-count { color: " + T.brand + "; }",
+			".tm-search { flex: 1; min-width: 0; height: 28px; border-radius: 7px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 12.5px; padding: 0 8px; box-sizing: border-box; outline: none; }",
+			".tm-search:focus { border-color: " + T.brand + "; }",
+			".tm-item { display: block; width: 100%; padding: 9px 12px 9px 20px; border: 0; border-bottom: 0.5px solid " + T.border1 + "; background: transparent; color: " + T.label + "; font: inherit; text-align: left; cursor: pointer; position: relative; box-sizing: border-box; }",
+			".tm-item:hover { background: " + QUIET + "; }",
+			".tm-item.is-on { background: " + tint(T.brand, 12) + "; }",
+			".tm-item-top { display: flex; gap: 8px; align-items: baseline; }",
+			".tm-from { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }",
+			".tm-item.is-new .tm-from, .tm-item.is-new .tm-subj { font-weight: 600; }",
+			".tm-item.is-new::before { content: ''; position: absolute; left: 7px; top: 15px; width: 7px; height: 7px; border-radius: 50%; background: " + T.brand + "; }",
+			".tm-date { flex: none; font-size: 11px; color: " + T.label2 + "; }",
+			".tm-subj { margin-top: 2px; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".tm-meta { margin-top: 2px; font-size: 11px; color: " + T.label2 + "; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".tm-empty { padding: 28px 16px; color: " + T.label2 + "; text-align: center; line-height: 1.7; }",
+			".tm-err { margin: 8px 10px; padding: 8px 10px; border-radius: 8px; background: " + tint(T.err, 10) + "; color: " + T.err + "; font-size: 12px; line-height: 1.6; }",
+			".tm-ok { margin: 8px 10px; padding: 8px 10px; border-radius: 8px; background: " + tint(T.ok, 12) + "; color: " + T.ok + "; font-size: 12px; }",
+			".tm-subject { font-size: 17px; font-weight: 600; line-height: 1.4; padding: 14px 18px 4px; word-break: break-word; }",
+			".tm-hdr { padding: 2px 18px; font-size: 12px; color: " + T.label2 + "; line-height: 1.7; word-break: break-all; }",
+			".tm-hdr b { color: " + T.label + "; font-weight: 500; }",
+			".tm-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 18px; border-bottom: 0.5px solid " + T.border1 + "; }",
+			".tm-atts { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 18px 0; }",
+			".tm-att { max-width: 260px; height: 30px; padding: 0 10px; border-radius: 8px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }",
+			".tm-att:hover { background: " + QUIET + "; }",
+			".tm-att span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".tm-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }",
+			".tm-text { padding: 16px 18px 28px; white-space: pre-wrap; word-break: break-word; line-height: 1.7; font-size: 14px; }",
+			".tm-frame { flex: 1; width: 100%; min-height: 0; border: 0; display: block; background: #fff; }",
+			".tm-imgbar { margin: 10px 18px 0; padding: 6px 10px; border-radius: 8px; background: " + QUIET + "; font-size: 12px; color: " + T.label2 + "; display: flex; align-items: center; gap: 8px; }",
+			".tm-form { padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; min-height: 0; }",
+			".tm-field { display: flex; align-items: center; gap: 8px; }",
+			".tm-field > label { width: 64px; flex: none; color: " + T.label2 + "; font-size: 12.5px; }",
+			".tm-in { flex: 1; min-width: 0; height: 30px; border-radius: 7px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 13px; padding: 0 8px; box-sizing: border-box; outline: none; }",
+			".tm-in:focus, .tm-area:focus { border-color: " + T.brand + "; }",
+			"select.tm-in { padding: 0 4px; }",
+			".tm-area { flex: 1; min-height: 220px; border-radius: 7px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 14px; line-height: 1.7; padding: 8px 10px; box-sizing: border-box; outline: none; resize: none; }",
+			".tm-note { font-size: 12px; color: " + T.label2 + "; line-height: 1.6; }",
+			".tm-chips { display: flex; flex-wrap: wrap; gap: 6px; }",
+			".tm-chip { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 9px; border-radius: 13px; background: " + QUIET + "; font-size: 12px; }",
+			".tm-chip button { border: 0; background: transparent; color: " + T.label2 + "; cursor: pointer; font-size: 13px; }",
+			".tm-mask { position: absolute; inset: 0; background: rgba(0,0,0,.28); display: flex; align-items: center; justify-content: center; z-index: 20; }",
+			".tm-dialog { width: min(460px, calc(100% - 32px)); max-height: calc(100% - 40px); overflow-y: auto; border-radius: 12px; background: " + T.base + "; border: 0.5px solid " + T.border2 + "; box-shadow: 0 12px 40px rgba(0,0,0,.25); padding: 18px 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; }",
+			".tm-dialog h3 { margin: 0 0 4px; font-size: 15px; }",
+			".tm-row-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }",
+			".tm-more { display: block; width: calc(100% - 24px); margin: 10px 12px 16px; }"
+		].join("\n");
+		function MailGlyph(props) {
+			const size = (props && props.size) || 16;
+			return React.createElement("svg", {
+				width: size, height: size, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3,
+				strokeLinejoin: "round", strokeLinecap: "round", "aria-hidden": true
+			},
+				React.createElement("rect", { x: 1.8, y: 3.2, width: 12.4, height: 9.6, rx: 1.6 }),
+				React.createElement("path", { d: "M2.3 4.2 8 8.6l5.7-4.4" })
+			);
+		}
+		function mailFrameDoc(html, images) {
+			const csp = "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:" + (images ? " https: http:" : "");
+			return "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"" + csp + "\">" +
+				"<base target=\"_blank\"><style>body{margin:16px 18px 28px;font-family:-apple-system,BlinkMacSystemFont,\"PingFang SC\",\"Microsoft YaHei\",sans-serif;" +
+				"font-size:14px;line-height:1.6;color:#1f1f1f;background:#fff;word-break:break-word}img{max-width:100%;height:auto}" +
+				"pre{white-space:pre-wrap}blockquote{margin:0 0 0 6px;padding-left:10px;border-left:3px solid #ddd;color:#555}</style></head><body>" +
+				html + "</body></html>";
+		}
+		function MailAccountDialog(props) {
+			const info = props.info || {};
+			const edit = props.edit || null;
+			const presets = info.presets || [];
+			const [provider, setProvider] = React.useState(edit ? edit.provider : "exmail");
+			const [address, setAddress] = React.useState(edit ? edit.address : "");
+			const [password, setPassword] = React.useState("");
+			const [label, setLabel] = React.useState(edit ? edit.label : "");
+			const [owner, setOwner] = React.useState(edit ? edit.owner : info.me);
+			const [imapHost, setImapHost] = React.useState(edit ? edit.imap_host : "");
+			const [smtpHost, setSmtpHost] = React.useState(edit ? edit.smtp_host : "");
+			const [busy, setBusy] = React.useState(false);
+			const [err, setErr] = React.useState("");
+			function submit(ev) {
+				if (ev) ev.preventDefault();
+				setErr("");
+				setBusy(true);
+				const body = edit ? { account: edit.id, label: label } : { address: address, password: password, provider: provider, label: label, owner: owner };
+				if (edit && password) body.password = password;
+				if (edit && info.admin && owner !== edit.owner) body.owner = owner;
+				if (provider === "custom") { body.provider = "custom"; body.imap_host = imapHost; body.smtp_host = smtpHost; }
+				mailCall(edit ? "update" : "add", body).then(function (j) {
+					setBusy(false);
+					if (j && j.ok) props.onDone(j.account && j.account.id);
+					else setErr((j && j.error) || "没加上");
+				});
+			}
+			function remove() {
+				if (!window.confirm("从 TDH 里移除 " + edit.address + "？邮箱里的邮件不会动。")) return;
+				setBusy(true);
+				mailCall("remove", { account: edit.id }).then(function (j) {
+					setBusy(false);
+					if (j && j.ok) props.onDone(null);
+					else setErr((j && j.error) || "没移除");
+				});
+			}
+			const h = React.createElement;
+			return h("div", { className: "tm-mask", onMouseDown: function (e) { if (e.target === e.currentTarget && !busy) props.onClose(); } },
+				h("form", { className: "tm-dialog", onSubmit: submit, "data-company-mail-dialog": edit ? "edit" : "add" },
+					h("h3", null, edit ? "邮箱设置" : "添加邮箱"),
+					edit ? null : h("div", { className: "tm-note" },
+						"腾讯企业邮箱：先在网页版「设置 → 客户端设置」里打开 IMAP/SMTP；开了微信安全登录的，到「设置 → 账户 → 客户端专用密码」生成一个，填在下面。密码只存在公司服务器上，加密保存，谁也看不到。"),
+					h("div", { className: "tm-field" }, h("label", null, "服务商"),
+						h("select", { className: "tm-in", value: provider, disabled: !!edit, onChange: function (e) { setProvider(e.target.value); } },
+							presets.map(function (p) { return h("option", { key: p.id, value: p.id }, p.name); }))),
+					h("div", { className: "tm-field" }, h("label", null, "邮箱地址"),
+						h("input", { className: "tm-in", value: address, disabled: !!edit, placeholder: "name@company.com", autoFocus: !edit,
+							onChange: function (e) { setAddress(e.target.value.trim()); } })),
+					h("div", { className: "tm-field" }, h("label", null, edit ? "新密码" : "密码"),
+						h("input", { className: "tm-in", type: "password", value: password, autoComplete: "new-password",
+							placeholder: edit ? "不改就留空" : "客户端专用密码 / 授权码", onChange: function (e) { setPassword(e.target.value); } })),
+					provider === "custom" ? h("div", { className: "tm-field" }, h("label", null, "收信服务器"),
+						h("input", { className: "tm-in", value: imapHost, placeholder: "imap.example.com（端口 993）", onChange: function (e) { setImapHost(e.target.value.trim()); } })) : null,
+					provider === "custom" ? h("div", { className: "tm-field" }, h("label", null, "发信服务器"),
+						h("input", { className: "tm-in", value: smtpHost, placeholder: "smtp.example.com（端口 465）", onChange: function (e) { setSmtpHost(e.target.value.trim()); } })) : null,
+					h("div", { className: "tm-field" }, h("label", null, "显示名称"),
+						h("input", { className: "tm-in", value: label, placeholder: "发信时对方看到的名字，可不填", onChange: function (e) { setLabel(e.target.value); } })),
+					info.admin ? h("div", { className: "tm-field" }, h("label", null, "归谁"),
+						h("select", { className: "tm-in", value: owner, onChange: function (e) { setOwner(e.target.value); } },
+							(info.owners || []).map(function (o) { return h("option", { key: o.login, value: o.login }, o.name + "（" + o.login + "）"); }))) : null,
+					h("div", { className: "tm-note" }, "这个邮箱只有归属人自己和管理员能看。"),
+					err ? h("div", { className: "tm-err", style: { margin: 0 } }, err) : null,
+					h("div", { className: "tm-row-end" },
+						edit ? h("button", { type: "button", className: "tm-btn is-danger", disabled: busy, onClick: remove, style: { marginRight: "auto" } }, "移除") : null,
+						h("button", { type: "button", className: "tm-btn", disabled: busy, onClick: props.onClose }, "取消"),
+						h("button", { type: "submit", className: "tm-btn is-main", disabled: busy || (!edit && (!address || !password)) },
+							busy ? "正在连接邮箱…" : edit ? "保存" : "添加"))
+				)
+			);
+		}
+		function MailCompose(props) {
+			const init = props.init || {};
+			const accounts = props.accounts || [];
+			const [account, setAccount] = React.useState(init.account || (accounts[0] && accounts[0].id) || "");
+			const [to, setTo] = React.useState(init.to || "");
+			const [cc, setCc] = React.useState(init.cc || "");
+			const [bcc, setBcc] = React.useState("");
+			const [showBcc, setShowBcc] = React.useState(false);
+			const [subject, setSubject] = React.useState(init.subject || "");
+			const [text, setText] = React.useState(init.text || "");
+			const [files, setFiles] = React.useState([]);
+			const [busy, setBusy] = React.useState("");
+			const [err, setErr] = React.useState("");
+			const fileRef = React.useRef(null);
+			const h = React.createElement;
+			function pick(ev) {
+				const list = Array.prototype.slice.call((ev.target && ev.target.files) || []);
+				ev.target.value = "";
+				list.forEach(function (f) {
+					const r = new FileReader();
+					r.onload = function () {
+						const s = String(r.result || "");
+						const data = s.slice(s.indexOf(",") + 1);
+						setFiles(function (cur) {
+							const total = cur.reduce(function (n, x) { return n + x.size; }, 0) + f.size;
+							if (total > MAIL_UPLOAD_MAX) {
+								setErr("附件加起来超过 11 MB。大文件请放进公司盘，让 TDH 助手附上。");
+								return cur;
+							}
+							return cur.concat([{ name: f.name, size: f.size, data: data }]);
+						});
+					};
+					r.readAsDataURL(f);
+				});
+			}
+			function body() {
+				const b = { account: account, to: to, cc: cc, bcc: bcc, subject: subject, text: text,
+					attachments: files.map(function (f) { return { name: f.name, data: f.data }; }) };
+				if (init.reply_to) b.reply_to = init.reply_to;
+				if (init.forward) b.forward = init.forward;
+				if (init.draft) b.draft = init.draft;
+				return b;
+			}
+			function send() {
+				setErr("");
+				setBusy("send");
+				mailCall("send", body()).then(function (j) {
+					if (j && j.need_confirm && j.confirm) return mailCall("send", { confirm: j.confirm });
+					return j;
+				}).then(function (j) {
+					setBusy("");
+					if (j && j.ok && j.sent) props.onDone("已发出：" + (j.subject || ""));
+					else setErr((j && j.error) || "没发出去");
+				});
+			}
+			function draft() {
+				setErr("");
+				setBusy("draft");
+				const b = body();
+				if (init.draft) b.replace = init.draft;
+				mailCall("draft", b).then(function (j) {
+					setBusy("");
+					if (j && j.ok) props.onDone("已存进草稿箱");
+					else setErr((j && j.error) || "没存上");
+				});
+			}
+			const title = init.reply_to ? "回复" : init.forward ? "转发" : init.draft ? "编辑草稿" : "写邮件";
+			return h("div", { className: "tm-col tm-read", "data-company-mail-compose": title },
+				h("div", { className: "tm-head" },
+					h("span", { className: "tm-title" }, title),
+					h("span", { style: { flex: 1 } }),
+					h("button", { type: "button", className: "tm-btn", disabled: !!busy, onClick: props.onClose }, "取消"),
+					h("button", { type: "button", className: "tm-btn", disabled: !!busy, onClick: draft }, busy === "draft" ? "正在存…" : "存草稿"),
+					h("button", { type: "button", className: "tm-btn is-main", disabled: !!busy || !account || !(to || cc || bcc || init.reply_to), onClick: send },
+						busy === "send" ? "正在发送…" : "发送")),
+				h("div", { className: "tm-form" },
+					accounts.length > 1 ? h("div", { className: "tm-field" }, h("label", null, "发件邮箱"),
+						h("select", { className: "tm-in", value: account, disabled: !!(init.reply_to || init.forward), onChange: function (e) { setAccount(e.target.value); } },
+							accounts.map(function (a) { return h("option", { key: a.id, value: a.id }, a.address + (a.owner_name ? "（" + a.owner_name + "）" : "")); }))) : null,
+					h("div", { className: "tm-field" }, h("label", null, "收件人"),
+						h("input", { className: "tm-in", value: to, autoFocus: !to, placeholder: "多个用逗号隔开", onChange: function (e) { setTo(e.target.value); } }),
+						showBcc ? null : h("button", { type: "button", className: "tm-btn", onClick: function () { setShowBcc(true); } }, "密送")),
+					h("div", { className: "tm-field" }, h("label", null, "抄送"),
+						h("input", { className: "tm-in", value: cc, onChange: function (e) { setCc(e.target.value); } })),
+					showBcc ? h("div", { className: "tm-field" }, h("label", null, "密送"),
+						h("input", { className: "tm-in", value: bcc, onChange: function (e) { setBcc(e.target.value); } })) : null,
+					h("div", { className: "tm-field" }, h("label", null, "主题"),
+						h("input", { className: "tm-in", value: subject, onChange: function (e) { setSubject(e.target.value); } })),
+					h("div", { className: "tm-field" }, h("label", null, "附件"),
+						h("div", { className: "tm-chips", style: { flex: 1 } },
+							files.map(function (f, i) {
+								return h("span", { key: i, className: "tm-chip" }, f.name + " · " + mailSize(f.size),
+									h("button", { type: "button", "aria-label": "去掉", onClick: function () { setFiles(files.filter(function (_, k) { return k !== i; })); } }, "×"));
+							}),
+							h("button", { type: "button", className: "tm-btn", onClick: function () { if (fileRef.current) fileRef.current.click(); } }, "添加附件"),
+							h("input", { type: "file", multiple: true, ref: fileRef, style: { display: "none" }, onChange: pick }))),
+					init.reply_to ? h("div", { className: "tm-note" }, "原邮件会引用在正文下面。") : null,
+					init.forward ? h("div", { className: "tm-note" }, "原邮件的正文和附件会一起转发。") : null,
+					err ? h("div", { className: "tm-err", style: { margin: 0 } }, err) : null,
+					h("textarea", { className: "tm-area", value: text, autoFocus: !!to, placeholder: "正文", onChange: function (e) { setText(e.target.value); } })
+				)
+			);
+		}
+		function MailPage() {
+			const h = React.createElement;
+			const [info, setInfo] = React.useState(null);
+			const [acct, setAcct] = React.useState("");
+			const [folders, setFolders] = React.useState([]);
+			const [folder, setFolder] = React.useState("");
+			const [list, setList] = React.useState(null);
+			const [sel, setSel] = React.useState(null);
+			const [msg, setMsg] = React.useState(null);
+			const [images, setImages] = React.useState(false);
+			const [q, setQ] = React.useState("");
+			const [searching, setSearching] = React.useState("");
+			const [busy, setBusy] = React.useState("");
+			const [err, setErr] = React.useState("");
+			const [note, setNote] = React.useState("");
+			const [compose, setCompose] = React.useState(null);
+			const [dialog, setDialog] = React.useState(null);
+			const listSeq = React.useRef(0);
+			const accounts = (info && info.accounts) || [];
+			const current = accounts.find(function (a) { return a.id === acct; }) || null;
+			function flash(t) {
+				setNote(t);
+				setTimeout(function () { setNote(function (cur) { return cur === t ? "" : cur; }); }, 4000);
+			}
+			function loadAccounts(pickId) {
+				return mailCall("accounts", {}).then(function (j) {
+					if (!j || !j.ok) { setErr((j && j.error) || "邮箱没打开"); setInfo({ accounts: [], presets: [], owners: [] }); return; }
+					setInfo(j);
+					const ids = (j.accounts || []).map(function (a) { return a.id; });
+					const next = pickId && ids.indexOf(pickId) >= 0 ? pickId : ids.indexOf(acct) >= 0 ? acct : ids[0] || "";
+					setAcct(next);
+					if (!next) { setFolders([]); setList(null); setMsg(null); }
+				});
+			}
+			function loadFolders(id, keep) {
+				return mailCall("folders", { account: id }).then(function (j) {
+					if (!j || !j.ok) { setErr((j && j.error) || "文件夹没打开"); setFolders([]); return ""; }
+					setFolders(j.folders || []);
+					const names = (j.folders || []).map(function (f) { return f.name; });
+					const f = keep && names.indexOf(keep) >= 0 ? keep : ((j.folders || []).find(function (x) { return x.role === "inbox"; }) || {}).name || names[0] || "INBOX";
+					return f;
+				});
+			}
+			function loadList(id, f, before, quiet) {
+				const seq = ++listSeq.current;
+				if (!quiet) setBusy("list");
+				return mailCall("list", { account: id, folder: f, limit: 40, before: before || undefined }).then(function (j) {
+					if (seq !== listSeq.current) return;
+					setBusy("");
+					if (!j || !j.ok) { setErr((j && j.error) || "邮件列表没打开"); if (!before) setList(null); return; }
+					setErr("");
+					const rows = (j.messages || []).map(function (m) { return Object.assign({ folder: j.folder, account: id }, m); });
+					setList(function (cur) {
+						if (before && cur) return Object.assign({}, j, { messages: cur.messages.concat(rows) });
+						return Object.assign({}, j, { messages: rows });
+					});
+				});
+			}
+			function openFolder(id, f) {
+				setFolder(f);
+				setSearching("");
+				setSel(null);
+				setMsg(null);
+				setCompose(null);
+				loadList(id, f);
+			}
+			React.useEffect(function () { loadAccounts(); }, []);
+			React.useEffect(function () {
+				if (!acct) return;
+				setErr("");
+				setList(null);
+				setMsg(null);
+				setSel(null);
+				loadFolders(acct).then(function (f) { if (f) openFolder(acct, f); });
+			}, [acct]);
+			React.useEffect(function () {
+				const t = setInterval(function () {
+					if (document.hidden || !acct || !folder || searching || busy) return;
+					loadList(acct, folder, null, true);
+					loadFolders(acct, folder);
+				}, 120000);
+				return function () { clearInterval(t); };
+			}, [acct, folder, searching, busy]);
+			function openMsg(m) {
+				setSel(m.uid + "@" + m.folder + "@" + m.account);
+				setCompose(null);
+				setImages(false);
+				setMsg({ loading: true, subject: m.subject });
+				if (m.draft || (folders.find(function (f) { return f.name === m.folder; }) || {}).role === "drafts") {
+					mailCall("read", { account: m.account, folder: m.folder, uid: m.uid, view: "page", seen: false }).then(function (j) {
+						if (j && j.ok) {
+							setMsg(null);
+							setCompose({ account: m.account, to: (j.to || []).map(mailAddr).join(", "), cc: (j.cc || []).map(mailAddr).join(", "),
+								subject: j.subject === "（无主题）" ? "" : j.subject, text: j.text || "", draft: m.uid });
+						} else setMsg({ error: (j && j.error) || "没打开" });
+					});
+					return;
+				}
+				mailCall("read", { account: m.account, folder: m.folder, uid: m.uid, view: "page" }).then(function (j) {
+					if (!j || !j.ok) { setMsg({ error: (j && j.error) || "这封邮件没打开" }); return; }
+					setMsg(j);
+					if (!m.seen) {
+						setList(function (cur) {
+							if (!cur) return cur;
+							return Object.assign({}, cur, { messages: cur.messages.map(function (x) { return x === m ? Object.assign({}, x, { seen: true }) : x; }) });
+						});
+						setFolders(function (cur) { return cur.map(function (f) { return f.name === m.folder && f.unread > 0 ? Object.assign({}, f, { unread: f.unread - 1 }) : f; }); });
+					}
+				});
+			}
+			function search(ev) {
+				if (ev) ev.preventDefault();
+				const word = q.trim();
+				if (!word) { if (searching) openFolder(acct, folder); return; }
+				setSearching(word);
+				setSel(null);
+				setMsg(null);
+				setBusy("list");
+				const seq = ++listSeq.current;
+				mailCall("search", { account: acct, q: word, days: 180, limit: 100 }).then(function (j) {
+					if (seq !== listSeq.current) return;
+					setBusy("");
+					if (!j || !j.ok) { setErr((j && j.error) || "没搜到"); return; }
+					setErr("");
+					setList({ messages: j.messages || [], more: false, total: j.found, note: j.note });
+				});
+			}
+			function act(route, body, after) {
+				setBusy(route);
+				return mailCall(route, body).then(function (j) {
+					setBusy("");
+					if (!j || !j.ok) { setErr((j && j.error) || "没做成"); return; }
+					if (after) after(j);
+				});
+			}
+			function removeMsg() {
+				if (!msg || !msg.uid) return;
+				const m = msg;
+				act("move", { account: m.account, folder: m.folder, uids: [m.uid], to: "trash" }, function () {
+					flash("已移到「已删除」");
+					setMsg(null);
+					setSel(null);
+					setList(function (cur) { return cur ? Object.assign({}, cur, { messages: cur.messages.filter(function (x) { return !(x.uid === m.uid && x.folder === m.folder); }) }) : cur; });
+				});
+			}
+			function markUnread() {
+				const m = msg;
+				act("flag", { account: m.account, folder: m.folder, uids: [m.uid], seen: false }, function () {
+					setList(function (cur) { return cur ? Object.assign({}, cur, { messages: cur.messages.map(function (x) { return x.uid === m.uid && x.folder === m.folder ? Object.assign({}, x, { seen: false }) : x; }) }) : cur; });
+					setFolders(function (cur) { return cur.map(function (f) { return f.name === m.folder ? Object.assign({}, f, { unread: (f.unread || 0) + 1 }) : f; }); });
+					flash("已标为未读");
+				});
+			}
+			function download(i, a) {
+				act("attachment", { account: msg.account, folder: msg.folder, uid: msg.uid, index: i }, function (j) {
+					try {
+						const bin = atob(j.data);
+						const bytes = new Uint8Array(bin.length);
+						for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+						const url = URL.createObjectURL(new Blob([bytes], { type: j.type || "application/octet-stream" }));
+						const el = document.createElement("a");
+						el.href = url;
+						el.download = j.name || a.name;
+						document.body.appendChild(el);
+						el.click();
+						el.remove();
+						setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+					} catch (e) { setErr("附件没下载下来，可以点「存到公司盘」。"); }
+				});
+			}
+			function saveAll() {
+				act("save_attachment", { account: msg.account, folder: msg.folder, uid: msg.uid }, function (j) {
+					flash("已存到公司盘：" + (j.files || []).join("、"));
+				});
+			}
+			function reply(all) {
+				const m = msg;
+				const me = String((current && current.address) || "").toLowerCase();
+				const back = (m.reply_to && m.reply_to.length ? m.reply_to : [m.from]).filter(function (a) { return a && a.address; });
+				const have = {};
+				back.forEach(function (a) { have[a.address.toLowerCase()] = 1; });
+				const cc = all ? (m.to || []).concat(m.cc || []).filter(function (a) {
+					const k = String(a.address || "").toLowerCase();
+					if (!k || k === me || have[k]) return false;
+					have[k] = 1;
+					return true;
+				}) : [];
+				const subj = /^(re|回复)\s*[:：]/i.test(m.subject) ? m.subject : "Re: " + m.subject;
+				setCompose({ account: m.account, to: back.map(mailAddr).join(", "), cc: cc.map(mailAddr).join(", "), subject: subj,
+					reply_to: { folder: m.folder, uid: m.uid } });
+			}
+			function forward() {
+				const m = msg;
+				setCompose({ account: m.account, subject: "Fwd: " + m.subject, forward: { folder: m.folder, uid: m.uid } });
+			}
+			function askAgent() {
+				const m = msg;
+				mailAsk("请帮我回复这封邮件：邮箱 " + m.address + "，文件夹 " + m.folder + "，uid " + m.uid + "（主题「" + m.subject + "」，发件人 " +
+					mailAddr(m.from) + "）。先用 company-mail 读这封邮件，按我的口吻写好回复，给我看预览，我确认了再发。");
+			}
+
+			// ---- column 1: mailboxes and folders ----
+			const col1 = h("div", { className: "tm-col tm-boxes" },
+				h("div", { className: "tm-head" },
+					h(MailGlyph, { size: 15 }), h("span", { className: "tm-title" }, "邮箱"), h("span", { style: { flex: 1 } }),
+					h("button", { type: "button", className: "tm-btn is-main", disabled: !accounts.length, onClick: function () { setMsg(null); setSel(null); setCompose({ account: acct }); } }, "写邮件")),
+				h("div", { className: "tm-scroll tm-acct" },
+					accounts.map(function (a) {
+						const on = a.id === acct;
+						return h("div", { key: a.id },
+							h("button", { type: "button", className: "tm-acct-row" + (on ? " is-on" : ""), title: a.address, onClick: function () { if (!on) setAcct(a.id); } },
+								h("span", { className: "tm-acct-name" }, a.label || a.address.split("@")[0],
+									h("div", { className: "tm-acct-sub" }, a.address + (info && info.admin && a.owner !== info.me ? " · " + a.owner_name : ""))),
+								h("span", { className: "tm-gear", role: "button", tabIndex: 0, title: "设置", "aria-label": "设置",
+									onClick: function (e) { e.stopPropagation(); setDialog({ edit: a }); } }, "⋯")),
+							on ? folders.map(function (f) {
+								return h("button", { key: f.name, type: "button", className: "tm-folder" + (f.name === folder && !searching ? " is-on" : ""),
+									onClick: function () { openFolder(a.id, f.name); } },
+									h("span", null, f.label), f.unread ? h("span", { className: "tm-count" }, f.unread) : null);
+							}) : null);
+					}),
+					h("button", { type: "button", className: "tm-btn", style: { margin: "10px 8px", width: "calc(100% - 16px)", justifyContent: "center" },
+						onClick: function () { setDialog({}); } }, "+ 添加邮箱")));
+
+			// ---- column 2: the list ----
+			const rows = (list && list.messages) || [];
+			const listTitle = searching ? "搜索：" + searching : ((folders.find(function (f) { return f.name === folder; }) || {}).label || "");
+			const col2 = h("div", { className: "tm-col tm-list" },
+				h("form", { className: "tm-head", onSubmit: search },
+					h("input", { className: "tm-search", value: q, placeholder: "搜主题、发件人", onChange: function (e) { setQ(e.target.value); } }),
+					h("button", { type: "button", className: "tm-btn tm-icon", title: "刷新", "aria-label": "刷新", disabled: !acct || busy === "list",
+						onClick: function () { setQ(""); if (folder) { loadFolders(acct, folder); openFolder(acct, folder); } } }, "↻")),
+				err ? h("div", { className: "tm-err" }, err) : null,
+				note ? h("div", { className: "tm-ok" }, note) : null,
+				h("div", { className: "tm-scroll", "data-company-mail-list": list ? rows.length : "loading" },
+					listTitle && list ? h("div", { className: "tm-meta", style: { padding: "8px 12px 4px" } },
+						listTitle + (list.total != null ? " · " + list.total + " 封" : "") + (searching && list.note ? "（" + list.note + "）" : "")) : null,
+					!info ? h("div", { className: "tm-empty" }, "正在打开邮箱…")
+						: !accounts.length ? h("div", { className: "tm-empty" }, "还没有邮箱。", h("br"), "点左边「添加邮箱」，填企业邮箱地址和客户端专用密码。")
+							: busy === "list" && !rows.length ? h("div", { className: "tm-empty" }, "正在收取…")
+								: list && !rows.length ? h("div", { className: "tm-empty" }, searching ? "没找到。" : "这里没有邮件。")
+									: rows.map(function (m) {
+										const key = m.uid + "@" + m.folder + "@" + m.account;
+										const sent = (folders.find(function (f) { return f.name === m.folder; }) || {}).role;
+										const who = sent === "sent" || sent === "drafts" ? "给 " + ((m.to || []).map(mailWho).join("、") || "（没写收件人）") : mailWho(m.from);
+										return h("button", { key: key, type: "button", className: "tm-item" + (sel === key ? " is-on" : "") + (m.seen ? "" : " is-new"),
+											onClick: function () { openMsg(m); } },
+											h("div", { className: "tm-item-top" },
+												h("span", { className: "tm-from" }, who),
+												h("span", { className: "tm-date" }, (m.attachments ? "📎 " : "") + mailWhen(m.date))),
+											h("div", { className: "tm-subj" }, (m.answered ? "↩ " : "") + m.subject),
+											searching && accounts.length > 1 ? h("div", { className: "tm-meta" }, m.address) : null);
+									}),
+					list && list.more && !searching ? h("button", { type: "button", className: "tm-btn tm-more", disabled: busy === "list",
+						onClick: function () { loadList(acct, folder, list.next_before); } }, busy === "list" ? "正在收取…" : "更早的邮件") : null));
+
+			// ---- column 3: the mail, or writing ----
+			let col3;
+			if (compose) {
+				col3 = h(MailCompose, { key: JSON.stringify(compose), init: compose, accounts: accounts,
+					onClose: function () { setCompose(null); },
+					onDone: function (t) {
+						setCompose(null);
+						flash(t);
+						if (folder && !searching) { loadList(acct, folder, null, true); loadFolders(acct, folder); }
+					} });
+			} else if (!msg) {
+				col3 = h("div", { className: "tm-col tm-read" }, h("div", { className: "tm-empty", style: { marginTop: 80 } },
+					h(MailGlyph, { size: 30 }), h("br"), accounts.length ? "选一封邮件看。" : ""));
+			} else if (msg.loading || msg.error) {
+				col3 = h("div", { className: "tm-col tm-read" },
+					msg.error ? h("div", { className: "tm-err" }, msg.error) : h("div", { className: "tm-empty", style: { marginTop: 80 } }, "正在打开「" + (msg.subject || "") + "」…"));
+			} else {
+				const remote = /<img[^>]+src\s*=\s*["']?https?:/i.test(msg.html || "");
+				col3 = h("div", { className: "tm-col tm-read", "data-company-mail-read": msg.uid },
+					h("div", { className: "tm-subject" }, msg.subject),
+					h("div", { className: "tm-hdr" }, h("b", null, mailAddr(msg.from)), "　", msg.date),
+					msg.to && msg.to.length ? h("div", { className: "tm-hdr" }, "收件人：" + msg.to.map(mailAddr).join("、")) : null,
+					msg.cc && msg.cc.length ? h("div", { className: "tm-hdr" }, "抄送：" + msg.cc.map(mailAddr).join("、")) : null,
+					h("div", { className: "tm-tools" },
+						h("button", { type: "button", className: "tm-btn", onClick: function () { reply(false); } }, "回复"),
+						h("button", { type: "button", className: "tm-btn", onClick: function () { reply(true); } }, "回复全部"),
+						h("button", { type: "button", className: "tm-btn", onClick: forward }, "转发"),
+						h("button", { type: "button", className: "tm-btn is-main", onClick: askAgent, title: "开一个新会话，让 TDH 助手读这封邮件、写回复，给你看过再发" }, "让助手回复"),
+						h("span", { style: { flex: 1 } }),
+						h("button", { type: "button", className: "tm-btn", disabled: !!busy, onClick: markUnread }, "标为未读"),
+						h("button", { type: "button", className: "tm-btn is-danger", disabled: !!busy, onClick: removeMsg }, "删除")),
+					msg.attachments && msg.attachments.length ? h("div", { className: "tm-atts" },
+						msg.attachments.map(function (a, i) {
+							return h("button", { key: i, type: "button", className: "tm-att", title: "下载 " + a.name, onClick: function () { download(i, a); } },
+								"📎", h("span", null, a.name), h("small", { style: { color: T.label2 } }, mailSize(a.size)));
+						}),
+						h("button", { type: "button", className: "tm-btn", disabled: !!busy, onClick: saveAll }, "存到公司盘")) : null,
+					remote && !images ? h("div", { className: "tm-imgbar" }, "邮件里的网络图片没有显示（打开图片会让发件人知道你看了邮件）。",
+						h("button", { type: "button", className: "tm-btn", onClick: function () { setImages(true); } }, "显示图片")) : null,
+					h("div", { className: "tm-body" },
+						msg.html ? h("iframe", { key: msg.uid + (images ? "i" : ""), className: "tm-frame", title: msg.subject, sandbox: "allow-popups allow-popups-to-escape-sandbox",
+							srcDoc: mailFrameDoc(msg.html, images) })
+							: h("div", { className: "tm-scroll" }, h("div", { className: "tm-text" }, msg.text || "（没有正文）"))));
+			}
+			return h("div", { className: "tm-root", "data-company-mail": info ? accounts.length : "opening", style: { position: "relative" } },
+				h("style", null, MAIL_CSS),
+				col1, col2, col3,
+				dialog ? h(MailAccountDialog, { info: info, edit: dialog.edit, onClose: function () { setDialog(null); },
+					onDone: function (id) { setDialog(null); flash(dialog.edit ? (id ? "已保存" : "已移除") : "邮箱已添加"); loadAccounts(id || undefined); } }) : null);
+		}
 		// company-chat-dock-v1: the right sidebar no longer offers 聊天 (it has its own column). A 聊天 tab a desk
 		// saved before that still comes back with the session's layout: while the column is there, the tab closes
 		// itself (the last tab closes the sidebar with it); in a window too narrow for the column it is the chat.
@@ -7553,6 +8174,33 @@ window.__ModuleLoader__.load({
 				}, ErpGlyph);
 			});
 
+			// company-mail-v1: 邮箱 next to ERPNext; 让助手回复 opens a session in the person's own workspace with the mail named.
+			mailAskFn = function (line) {
+				try { ctx.layout.selectPanel(null); } catch (err) {}
+				startSessionFn(personalWorkspaceId() || undefined);
+				let tries = 0;
+				const put = function () {
+					tries++;
+					if (insertDeskTextFn(line, composerSessionId || undefined, true)) return;
+					if (tries < 8) setTimeout(put, 250);
+				};
+				setTimeout(put, 400);
+			};
+			ctx.slots.inject("main", function () {
+				return ctx.slots.register({
+					name: "main",
+					key: MAIL_PANEL
+				}, MailPage);
+			});
+			ctx.slots.inject("sidebar.panellist", function () {
+				return ctx.slots.register({
+					name: "sidebar.panellist",
+					id: MAIL_PANEL,
+					order: 32,
+					label: function () { return "邮箱"; }
+				}, MailGlyph);
+			});
+
 			// company-chat-desk-v1: 聊天, the company chat (Tinode on the site). company-chat-dock-v1: in a column of
 			// its own at the window's right edge, always there (ChatDock); in a window too narrow for that column, as
 			// a panel in the left column. Both show the chat page this desk's host relays (chat-relay.js), on a port
@@ -7622,7 +8270,7 @@ window.__ModuleLoader__.load({
 			// Global panels (the official plugin manager registers "plugins" here).
 			// The shipped sidebar row used to list them; ours does now, above the
 			// workspaces, the same way.
-			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务", "company-chat": "聊天", "company-erp": "ERPNext" };
+			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务", "company-chat": "聊天", "company-erp": "ERPNext", "company-mail": "邮箱" };
 			const panelSubs = new Set();
 			let panelRows = [];
 			function syncPanels() {
@@ -7785,6 +8433,7 @@ window.__ModuleLoader__.load({
 			return chatDock ? list.filter(function (p) { return p && p.id !== CHAT_PANEL; }) : list;
 		}
 		exports.panelsForRole = panelsForRole;
+		exports.MailPage = MailPage;
 		exports.panelsForDesk = panelsForDesk;
 		exports.workspaceKeeper = workspaceKeeper;
 		exports.apply = apply;

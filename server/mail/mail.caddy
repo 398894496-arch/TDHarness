@@ -1,0 +1,10 @@
+# company-mail-v1: 邮箱. A person's mailboxes (every one for an admin) for the desk's 邮箱 page and their own agent:
+# the people service's server/mail_api.py, over the providers' IMAP and SMTP (company_ext pack "mail").
+handle /company/ext/mail/* {
+	reverse_proxy 127.0.0.1:4181 {
+		transport http {
+			read_timeout 150s
+			write_timeout 150s
+		}
+	}
+}

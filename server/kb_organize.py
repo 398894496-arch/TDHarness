@@ -41,7 +41,7 @@ ARCHIVE_MAX = 2 * 1024 * 1024 * 1024      # a zip of customs papers can be 436 M
 ARCHIVES = {".zip", ".rar", ".7z"}
 DOC = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf", ".xls", ".xlsx", ".xlsm", ".doc", ".docx", ".csv", ".txt", ".md", ".wps", ".et",
        ".dps", ".ppt", ".pptx", ".zip", ".rar", ".7z", ".ofd"}
-SKIP_DIRS = {"聊天文件", "财务单据", "日报", "mfg", "node_modules", "artifacts", "任务卡", "tasks", "__pycache__", "_memory", "已导入", "收件"}
+SKIP_DIRS = {"聊天文件", "邮件附件", "财务单据", "日报", "mfg", "node_modules", "artifacts", "任务卡", "tasks", "__pycache__", "_memory", "已导入", "收件"}
 TEMP = {".partial", ".tmp", ".part", ".crdownload", ".download"}
 FIN_SHEET = re.compile(r"发票|账本|银行收付款|银行流水|报销")
 RULES = [   # (zone, category, pattern over the lower-cased path), the first that matches
