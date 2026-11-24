@@ -307,8 +307,24 @@ svg { display: block; flex: none; }
 :root[data-look="today"] .list, :root[data-look="today"] .chat, :root[data-look="today"] .rail { background: transparent; border-color: transparent; }
 :root[data-look="today"] .a, :root[data-look="today"] .grid { border-radius: 50%; }
 :root[data-look="today"] .a.s28 { border-radius: 50%; }
-:root[data-look="today"] .grid { overflow: hidden; padding: 3px; }
-:root[data-look="today"] .grid i { border-radius: 50%; }
+/* a group: its members' round faces, overlapped (two on a diagonal, three in a triangle, four as two by two) — the user,
+ * 2026-11-24: 「群聊这个头像也好丑」 */
+:root[data-look="today"] .grid { display: block; position: relative; padding: 0; overflow: visible; background: transparent; border-radius: 0; }
+:root[data-look="today"] .grid i { position: absolute; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 10.5px; font-weight: 600;
+	box-shadow: 0 0 0 2px light-dark(#ffffff, #2c2c2e), 0 2px 6px rgba(0, 0, 0, .12); }
+:root[data-look="today"] .grid.n2 i { width: 27px; height: 27px; font-size: 11.5px; }
+:root[data-look="today"] .grid.n2 i:nth-child(1) { left: 0; top: 0; }
+:root[data-look="today"] .grid.n2 i:nth-child(2) { left: 13px; top: 13px; }
+:root[data-look="today"] .grid.n3 i:nth-child(1) { left: 8px; top: 0; }
+:root[data-look="today"] .grid.n3 i:nth-child(2) { left: 0; top: 16px; }
+:root[data-look="today"] .grid.n3 i:nth-child(3) { left: 16px; top: 16px; }
+:root[data-look="today"] .grid:not(.n2):not(.n3) i { width: 22px; height: 22px; font-size: 10px; }
+:root[data-look="today"] .grid:not(.n2):not(.n3) i:nth-child(1) { left: 0; top: 0; }
+:root[data-look="today"] .grid:not(.n2):not(.n3) i:nth-child(2) { left: 18px; top: 0; }
+:root[data-look="today"] .grid:not(.n2):not(.n3) i:nth-child(3) { left: 0; top: 18px; }
+:root[data-look="today"] .grid:not(.n2):not(.n3) i:nth-child(4) { left: 18px; top: 18px; }
+:root[data-look="today"] .grid:not(.n2):not(.n3) i:nth-child(n+5) { display: none; }
+:root[data-look="today"] .grid.s36 { transform: scale(.9); transform-origin: 0 0; }
 :root[data-look="today"] .online { border-color: light-dark(#ffffff, #2c2c2e); }
 /* search: a glass pill */
 :root[data-look="today"] .search { padding: 6px 12px 8px; }

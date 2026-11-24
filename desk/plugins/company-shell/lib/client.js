@@ -413,7 +413,7 @@ window.__ModuleLoader__.load({
 			"  radial-gradient(820px 600px at 58% 36%, rgba(200,220,244,.7), transparent 70%), linear-gradient(180deg, #e9eff7 0%, #f4efe9 100%); }",
 			"body[data-ds-dark-theme] { --look-wash: radial-gradient(1100px 760px at -8% -12%, rgba(31,58,94,.75), transparent 62%), radial-gradient(900px 700px at 108% 112%, rgba(74,54,38,.7), transparent 60%),",
 			"  radial-gradient(760px 560px at 58% 38%, rgba(34,51,73,.5), transparent 70%), linear-gradient(180deg, #17191d 0%, #161618 100%); }",
-			"[class*='_frame'] { background: transparent !important; }",
+			"[class*='_frame'] { background: transparent !important; overflow-x: clip !important; }",
 			"[class*='_centerCol'] [class$='_root'], [class*='_centerCol'] [class*='_root '] { background: transparent !important; }",
 			// the left column: a floating glass card
 			"[class*='_sidebarCol'] { background: transparent !important; border: 0 !important; padding: 10px 0 10px 10px; box-sizing: border-box; }",
@@ -518,7 +518,10 @@ window.__ModuleLoader__.load({
 			".cs-pane-sess [class*='_projectRow'] { display: none !important; }",
 			// ERP / 邮箱 in the middle: a card like the two columns beside it.
 			// The user (2026-11-24): no card behind ERP / 邮箱, the page as the 助手 one; only room under the switch.
-			"[data-company-erp], .tm-root { margin-top: 58px; height: calc(100% - 58px) !important; background: transparent !important; box-sizing: border-box; }",
+			"[data-company-erp], .tm-root { background: transparent !important; box-sizing: border-box; }",
+			// The user (2026-11-24: 「助手 ERP 邮箱遮住了一点对话窗口，往下移动一点」): the whole middle column starts under
+			// the capsule (top 8px + 42px), for the conversation's title row as for ERP and 邮箱.
+			"[class*='_centerCol'] { padding-top: 56px !important; box-sizing: border-box; }",
 			"[data-company-erp] > div:first-child { border-bottom: 0 !important; }",
 			// 邮箱 in the 今天 look (the user, 2026-11-24: 「邮箱这个界面能不能跟我们的UI风格匹配」): glass controls and
 			// pills, the folders as a capsule, rows as rounded cards, the letter on a glass card. Over the mail page's own CSS.
@@ -566,6 +569,20 @@ window.__ModuleLoader__.load({
 			// The user (2026-11-24: 「标准模式的这个模式切换也关掉，以后默认标准模式」): agent-presets default is standard in
 			// both packs' overlay.yml; the picker goes, above the composer (its whole row) and in a session's title row.
 			"[class*='_centerCol'] [class*='_heroWorkspaceRow'] { display: none !important; }",
+			"[data-slot='conversation.session.header.actions'] > span[class$='_label'] { display: none !important; }",
+			// The user (2026-11-24: 「深度求索中前面还有一个鲸鱼尾巴的 logo，这是不是就暴露了，能不能设计一个类似 google 那种思考中的
+			// 动态」): no whale; a four-point star that turns and breathes, and the words in a moving blue-violet-rose light.
+			// The words themselves are changed by thinkWords() (正在思考).
+			"[data-chat-running] [class*='_runningIcon'] > * { display: none !important; }",
+			"[data-chat-running] [class*='_runningIcon'] { contain: none !important; overflow: visible !important; width: 16px !important; height: 16px !important; }",
+			"[data-chat-running] [class*='_runningIcon']::before { content: ''; position: absolute; inset: 0; background: conic-gradient(from 0deg, #4f7cff, #9b6cff, #e86fa8, #f7a35c, #4f7cff);",
+			"  clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); animation: cs-think-star 2.4s cubic-bezier(.45,0,.2,1) infinite; }",
+			"@keyframes cs-think-star { 0% { transform: rotate(0) scale(.82); } 50% { transform: rotate(180deg) scale(1.08); } 100% { transform: rotate(360deg) scale(.82); } }",
+			"[data-chat-running] [class*='_runningText'], [data-chat-running] [class*='_runningText'] * { background-image: linear-gradient(90deg, #4f7cff 0%, #9b6cff 25%, #e86fa8 50%, #9b6cff 75%, #4f7cff 100%) !important;",
+			"  background-size: 200% 100% !important; -webkit-background-clip: text !important; background-clip: text !important; color: transparent !important; -webkit-text-fill-color: transparent !important;",
+			"  animation: cs-think-text 2.2s linear infinite !important; font-weight: 500; }",
+			"@keyframes cs-think-text { from { background-position: 0% 0; } to { background-position: -200% 0; } }",
+			"@media (prefers-reduced-motion: reduce) { [data-chat-running] [class*='_runningIcon']::before, [data-chat-running] [class*='_runningText'] { animation: none !important; } }",
 			"[class*='_centerCol'] [class*='_menuAnchor']:has(> button[class$='_seat']), [class*='_centerCol'] button[class$='_seat'] { display: none !important; }",
 			// 白天 / 夜间 where the right-sidebar button was
 			".cs-theme-btn { position: fixed; top: 12px; z-index: 1500; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;",
@@ -8915,6 +8932,40 @@ window.__ModuleLoader__.load({
 					}
 				}, MidSwitch);
 			});
+			// company-look-today-v1: the running line says 正在思考, not the kernel's 深度求索中 (its dictionary cannot be
+			// registered twice); the clock after it stays. Rewritten where it is drawn, before the frame is painted.
+			try {
+				const thinkWords = function (root) {
+					const rows = root && root.querySelectorAll ? root.querySelectorAll("[data-chat-running]") : [];
+					for (let i = 0; i < rows.length; i++) {
+						const walk = document.createTreeWalker(rows[i], NodeFilter.SHOW_TEXT);
+						for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+							const v = n.nodeValue || "";
+							if (v.indexOf("深度求索中") >= 0) n.nodeValue = v.replace(/深度求索中/g, "正在思考");
+							else if (/Deep diving/.test(v)) n.nodeValue = v.replace(/Deep diving/g, "Thinking");
+						}
+					}
+				};
+				if (typeof MutationObserver === "function" && document.body) {
+					new MutationObserver(function (list) {
+						for (let i = 0; i < list.length; i++) {
+							const tgt = list[i].target;
+							const el = tgt && (tgt.nodeType === 1 ? tgt : tgt.parentElement);
+							if (el && el.closest && el.closest("[data-chat-running]")) { thinkWords(el.closest("[data-chat-running]").parentElement); continue; }
+							if (list[i].addedNodes && list[i].addedNodes.length) thinkWords(el);
+						}
+					}).observe(document.body, { childList: true, subtree: true, characterData: true });
+				}
+			} catch (err) {}
+			// The kernel's right column is 0 wide but its pane still lays out (365px); focusing the composer then scrolled the
+			// whole frame sideways and pushed the left column off the window. The frame never scrolls sideways (CSS clips it
+			// where the engine knows overflow: clip; this puts it back where it does not, e.g. macOS 12's WebKit).
+			try {
+				document.addEventListener("scroll", function (ev) {
+					const el = ev.target;
+					if (el && el.nodeType === 1 && el.scrollLeft && /(^|\s)\S*_frame(\s|$)/.test(String(el.className || ""))) el.scrollLeft = 0;
+				}, true);
+			} catch (err) {}
 			if (typeof ctx.inject === "function") {
 				ctx.inject(["slots", "theme"], function (tctx) {
 					tctx.slots.inject("shell.overlay", function () {
