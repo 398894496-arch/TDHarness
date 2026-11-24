@@ -11,7 +11,10 @@ match the sample exactly once (a newer release that moved one stops here instead
   - its own token key and uid key, made once and kept in runtime/tinode-secrets.json (a new uid key would
     scramble every stored id), and the PostgreSQL password from runtime/tinode-db.secret;
   - no email validation and no clean-up of unvalidated accounts (TDH makes the accounts; they have no email);
-  - uploads under --uploads, files up to 200 MB.
+  - uploads under --uploads, files up to 200 MB;
+  - voice calls (company-chat-call-v1): webrtc on, its ICE servers from runtime/chat-ice.json (a JSON list as
+    tinode.conf has it) or one public STUN server reachable in China (stun.miwifi.com). The desks of the office and of
+    Tailscale reach each other directly; STUN only helps two desks behind different home routers. No TURN server.
 The web page's React, fonts and icons come from CDNs (jsDelivr, Google Fonts), which desks in China often cannot
 reach: index.html loads them from static/vendor instead.
 The page's script loads its language and view chunks from "/umd/" (webpack's public path, written for a page at the
@@ -52,7 +55,38 @@ def keep_secret(path: Path, make) -> dict:
     return val
 
 
-def conf(sample: str, sec: dict, db_pw: str, uploads: str) -> str:
+ICE_DEFAULT = [{"urls": ["stun:stun.miwifi.com:3478"]}]
+
+
+def webrtc(t: str, ice: list) -> str:
+    """tinode.conf's webrtc block: on, with these ICE servers and no ICE servers file (company-chat-call-v1)."""
+    head, mark, tail = t.partition('"webrtc": {')
+    if not mark or tail.find('"webrtc": {') >= 0:
+        raise SystemExit("TINODE_SETUP_FAIL anchor-webrtc")
+    end = tail.find("\n\t}")
+    if end < 0:
+        raise SystemExit("TINODE_SETUP_FAIL anchor-webrtc-end")
+    block, rest = tail[:end], tail[end:]
+    block, n1 = re.subn(r'"enabled":\s*(?:false|true)', '"enabled": true', block, count=1)
+    block, n2 = re.subn(r'"ice_servers":\s*(?:\[[^\n]*\]|\[.*?\n\t\t\]),', lambda _m: '"ice_servers": %s,' % json.dumps(ice), block, count=1, flags=re.S)
+    block, n3 = re.subn(r'"ice_servers_file":\s*"[^"]*"', '"ice_servers_file": ""', block, count=1)
+    if (n1, n2, n3) != (1, 1, 1):
+        raise SystemExit("TINODE_SETUP_FAIL anchor-webrtc-parts %d%d%d" % (n1, n2, n3))
+    return head + mark + block + rest
+
+
+def ice_servers(runtime: Path) -> list:
+    f = Path(runtime) / "chat-ice.json"
+    if not f.is_file():
+        return ICE_DEFAULT
+    got = json.loads(f.read_text(encoding="utf-8-sig"))
+    if not (isinstance(got, list) and got and all(isinstance(x, dict) and isinstance(x.get("urls"), list) and x["urls"]
+                                                 and all(re.match(r"^(stun|turns?):[^\s\"]+$", str(u)) for u in x["urls"]) for x in got)):
+        raise SystemExit("TINODE_SETUP_FAIL chat-ice")
+    return got
+
+
+def conf(sample: str, sec: dict, db_pw: str, uploads: str, ice: list | None = None) -> str:
     t = sample
     t = once(t, r'"listen":\s*":6060"', '"listen": "127.0.0.1:6060"', "listen")
     t = once(t, r'"grpc_listen":\s*":16060"', '"grpc_listen": "127.0.0.1:16060"', "grpc")
@@ -77,6 +111,7 @@ def conf(sample: str, sec: dict, db_pw: str, uploads: str) -> str:
     if n != 1:
         raise SystemExit("TINODE_SETUP_FAIL anchor-email-required")
     t = head + '"acc_validation": {' + tail
+    t = webrtc(t, ice or ICE_DEFAULT)
     head, _, tail = t.partition('"acc_gc_config": {')
     if not tail:
         raise SystemExit("TINODE_SETUP_FAIL anchor-acc-gc")
@@ -217,7 +252,7 @@ def main() -> int:
     db_pw = (rt / "tinode-db.secret").read_text(encoding="utf-8").strip()
     if not re.fullmatch(r"[A-Za-z0-9]{16,}", db_pw):
         raise SystemExit("TINODE_SETUP_FAIL db-secret")
-    out = conf(sample.read_text(encoding="utf-8"), sec, db_pw, a.uploads)
+    out = conf(sample.read_text(encoding="utf-8"), sec, db_pw, a.uploads, ice_servers(rt))
     tmp = tin / "tinode.conf.tmp"
     tmp.write_text(out, encoding="utf-8")
     os.replace(tmp, tin / "tinode.conf")

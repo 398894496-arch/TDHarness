@@ -189,6 +189,12 @@ jobs:
       - name: The chat's display name follows the roster (company-chat-names-v1)
         if: runner.os == 'Linux'
         run: python3 scripts/prove-chat-names.py
+      - name: Voice messages into words, with a gist for long ones (company-chat-voice-v1, company-chat-voice-gist-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-voice.py
+      - name: A voice call's words and minutes in its chat, its to-dos into task cards (company-chat-call-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-chat-call.py
       - name: The agent reads and writes ERPNext as the person who asks (company-erp-data-v1)
         if: runner.os == 'Linux'
         run: python3 scripts/prove-erp-data.py

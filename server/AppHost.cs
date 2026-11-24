@@ -213,6 +213,16 @@ internal static class AppHost
         return (host == "127.0.0.1" || host == "localhost") && u.Port == DeskPort;
     }
 
+    // company-chat-voice-v1: the chat page as this machine's relay serves it (chat-relay.js: 127.0.0.1, 17811-17814).
+    internal static bool IsLocalChatUrl(string uri)
+    {
+        Uri u;
+        if (string.IsNullOrEmpty(uri) || !Uri.TryCreate(uri, UriKind.Absolute, out u)) return false;
+        if (u.Scheme != Uri.UriSchemeHttp) return false;
+        var host = u.Host.ToLowerInvariant();
+        return (host == "127.0.0.1" || host == "localhost") && u.Port >= 17811 && u.Port <= 17814;
+    }
+
     // Web and mail links go to the system's default browser; anything else is
     // dropped (and logged) rather than handed to the shell.
     internal static void OpenOutside(string uri, string why)
@@ -2152,6 +2162,13 @@ internal sealed class ShellForm : Form
             if (AppHost.IsDeskUrl(e.Uri)) return;
             e.Cancel = true;
             AppHost.OpenOutside(e.Uri, "navigation");
+        };
+        // company-chat-voice-v1: the chat (its page on this machine's own relay, 127.0.0.1) records voice messages; the
+        // microphone is allowed there without WebView2's own question each time. Anything else keeps the default.
+        _web.CoreWebView2.PermissionRequested += delegate(object sender, CoreWebView2PermissionRequestedEventArgs e)
+        {
+            if (e.PermissionKind == CoreWebView2PermissionKind.Microphone && AppHost.IsLocalChatUrl(e.Uri))
+                e.State = CoreWebView2PermissionState.Allow;
         };
         _web.CoreWebView2.Navigate(AppHost.WaitDeskNavigateUrl(8000));
     }

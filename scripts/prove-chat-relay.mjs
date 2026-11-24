@@ -40,8 +40,33 @@ let meSubs = [
 function push(sid, m) {
 	sessions.get(sid).push(m);
 }
+const voiceAsked = [];
+const callAsked = [];
 const site = http.createServer((req, res) => {
 	const u = new URL(req.url, "http://x");
+	// company-chat-voice-v1: a voice message's words, asked with the desk's own login.
+	if (u.pathname === "/company/ext/chat/voice") {
+		const chunks = [];
+		req.on("data", (c) => chunks.push(c));
+		req.on("end", () => {
+			voiceAsked.push({ method: req.method, auth: req.headers.authorization, body: JSON.parse(Buffer.concat(chunks).toString() || "{}") });
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ ok: true, text: "明天上午十点开会。", ms: 2100 }));
+		});
+		return;
+	}
+	// company-chat-call-v1: a call's transcription, with the desk's own login.
+	if (u.pathname === "/company/ext/chat/call") {
+		const chunks = [];
+		req.on("data", (c) => chunks.push(c));
+		req.on("end", () => {
+			const body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+			callAsked.push({ method: req.method, auth: req.headers.authorization, body });
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify(body.op === "on" ? { ok: true, on: true } : { ok: true }));
+		});
+		return;
+	}
 	if (u.pathname === "/chat/") {
 		res.writeHead(200, { "content-type": "text/html" });
 		res.end('<!doctype html><html><head><script src="vendor/react.production.min.js"></script></head><body></body></html>');
@@ -132,6 +157,56 @@ assert.ok(port > 0, "the relay listens");
 const pageUrl = new URL(relay.url());
 assert.equal(pageUrl.hostname, "127.0.0.1");
 
+// company-chat-voice-v1: /tdh/voice asks the server with this desk's login; the page holds no token.
+{
+	const k = pageUrl.searchParams.get("k");
+	const ok = await get("/tdh/voice?k=" + k + "&ref=" + encodeURIComponent("/v0/file/s/VoiceOne111.wav"));
+	assert.equal(ok.status, 200, "voice: answered");
+	assert.deepEqual(JSON.parse(ok.body), { ok: true, text: "明天上午十点开会。", ms: 2100 });
+	assert.deepEqual(voiceAsked.at(-1), { method: "POST", auth: "Bearer " + DESK_TOKEN, body: { ref: "/v0/file/s/VoiceOne111.wav" } }, "voice: POST with the desk's login");
+	assert.equal((await get("/tdh/voice?ref=" + encodeURIComponent("/v0/file/s/VoiceOne111.wav"))).status, 403, "voice: no page key, refused");
+	assert.equal((await get("/tdh/voice?k=" + k + "&ref=" + encodeURIComponent("a b<script>"))).status, 400, "voice: an odd ref, refused");
+	assert.equal(voiceAsked.length, 1, "voice: nothing refused reached the server");
+}
+
+// company-chat-call-v1: /tdh/call passes the page's own pieces and its end to the server with this desk's login.
+{
+	const k = pageUrl.searchParams.get("k");
+	const wavBytes = Buffer.concat([Buffer.from("RIFF\x24\x00\x00\x00WAVEfmt ", "latin1"), Buffer.alloc(24), Buffer.from("piece")]);
+	let r = await post("/tdh/call?k=" + k + "&op=on");
+	assert.equal(r.status, 200, "call: on answered");
+	assert.deepEqual(JSON.parse(r.body), { ok: true, on: true });
+	assert.deepEqual(callAsked.at(-1), { method: "POST", auth: "Bearer " + DESK_TOKEN, body: { op: "on" } }, "call: on, with the desk's login");
+	r = await post("/tdh/call?k=" + k + "&op=piece&peer=usrBBB222&seq=21&at=1795561200000&ms=2400", wavBytes, "audio/wav");
+	assert.equal(r.status, 200, "call: a piece passed");
+	assert.deepEqual(callAsked.at(-1).body, { op: "piece", peer: "usrBBB222", seq: 21, at: 1795561200000, ms: 2400, wav: wavBytes.toString("base64") }, "call: the piece as base64, its numbers as numbers");
+	r = await post("/tdh/call?k=" + k + "&op=end&peer=usrBBB222&seq=21");
+	assert.deepEqual(callAsked.at(-1).body, { op: "end", peer: "usrBBB222", seq: 21 }, "call: the end");
+	r = await post("/tdh/call?k=" + k + "&op=text&id=lfh~wang~21");
+	assert.deepEqual(callAsked.at(-1).body, { op: "text", id: "lfh~wang~21" }, "call: a call's words");
+	const n = callAsked.length;
+	assert.equal((await post("/tdh/call?op=on")).status, 403, "call: no page key, refused");
+	assert.equal((await post("/tdh/call?k=" + k + "&op=delete")).status, 400, "call: an unknown op, refused");
+	assert.equal((await post("/tdh/call?k=" + k + "&op=piece&peer=../x&seq=21&at=1&ms=2")).status, 400, "call: an odd peer, refused");
+	assert.equal((await post("/tdh/call?k=" + k + "&op=piece&peer=usrBBB222&seq=x&at=1&ms=2")).status, 400, "call: an odd seq, refused");
+	assert.equal((await post("/tdh/call?k=" + k + "&op=text&id=" + encodeURIComponent("a/../b"))).status, 400, "call: an odd id, refused");
+	assert.equal((await post("/tdh/call?k=" + k + "&op=piece&peer=usrBBB222&seq=21&at=1&ms=2", Buffer.alloc(3 * 1024 * 1024 + 10), "audio/wav")).status, 413, "call: a piece too large, refused");
+	await get("/tdh/call?k=" + k + "&op=on"); // GET is not the endpoint
+	assert.equal(callAsked.length, n, "call: nothing refused reached the server");
+}
+
+function post(p, body, type) {
+	return new Promise((resolve) => {
+		const rq = http.request({ host: "127.0.0.1", port, path: p, method: "POST", headers: { host: "127.0.0.1:" + port, "content-type": type || "text/plain", "content-length": body ? body.length : 0 } }, (r) => {
+			const c = [];
+			r.on("data", (d) => c.push(d));
+			r.on("end", () => resolve({ status: r.statusCode, headers: r.headers, body: Buffer.concat(c).toString() }));
+		});
+		rq.on("error", () => resolve({ status: 0, body: "" }));
+		if (body) rq.write(body);
+		rq.end();
+	});
+}
 function get(p, headers) {
 	return new Promise((resolve) => {
 		http.get({ host: "127.0.0.1", port, path: p, headers: Object.assign({ host: "127.0.0.1:" + port }, headers || {}) }, (r) => {

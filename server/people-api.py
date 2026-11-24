@@ -28,6 +28,8 @@ import notify  # noqa: E402
 import chat_read  # noqa: E402
 import chat_assist  # noqa: E402
 import chat_archive  # noqa: E402
+import chat_voice  # noqa: E402
+import chat_call  # noqa: E402
 import chat_docs  # noqa: E402
 import erp_sso  # noqa: E402
 import erp_data  # noqa: E402
@@ -1965,8 +1967,20 @@ def _chat_login(login: str, ua: str):
 def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
     """company-chat-read-v1 (server/chat_read.py): `login`'s own chats for their agent. what: list | read | search.
     The log has the counts, never what was said."""
+    if what == "call":
+        return chat_call_for(login, payload)
+    if what == "voice":
+        # company-chat-voice-v1: one voice message's words for the chat page (by its recording's file name), only to a
+        # member of its chat or an admin.
+        ref = str(payload.get("ref") or "")
+        if not chat_voice.ref_key(ref):
+            return 400, {"ok": False, "error": "bad-request"}
+        row = person(login) or {}
+        got = chat_voice.text_for(TOKEN_STORE.parent, ref, login, row.get("role") == "admin")
+        return 200, (dict({"ok": True}, **got) if got else {"ok": True, "pending": True})
     if what not in ("list", "read", "search"):
         return 404, {"ok": False, "error": "not-found"}
+    chat_read.VOICE = chat_voice.lookup(TOKEN_STORE.parent)
     links = _tinode_links()
     if not links.get(login):
         return 200, {"ok": False, "error": "no-chat-account", "hint": "你还没有聊天账号：打开一次 TDH 左边的「聊天」，或过 10 分钟再试。"}
@@ -2227,6 +2241,110 @@ def chat_archive_loop() -> None:
             chat_archive_once()
         except Exception as exc:  # noqa: BLE001 - the chat works without it; the next round tries again
             sys.stderr.write("people-api chat-archive failed %s\n" % type(exc).__name__)
+        time.sleep(every)
+
+
+def chat_voice_once() -> dict:
+    """company-chat-voice-v1 (server/chat_voice.py): the chat's new voice messages into text (cloud recogniser),
+    kept with their recordings. Off until runtime/chat-voice.json says on and runtime/dashscope.key is there."""
+    runtime = TOKEN_STORE.parent
+    out = chat_voice.run_once(chat_assist.load_config(runtime), runtime, people_by_login(), ROOT / "company" / "_office", CHAT_BOTS)
+    if out.get("voices"):
+        line = json.dumps(out, ensure_ascii=False)
+        try:
+            (ROOT / "logs").mkdir(parents=True, exist_ok=True)
+            with (ROOT / "logs" / "chat-voice.log").open("a", encoding="utf-8") as fh:
+                fh.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), line))
+        except OSError:
+            pass
+    return out
+
+
+def chat_call_for(login: str, payload: dict) -> tuple[int, dict]:
+    """company-chat-call-v1 (server/chat_call.py), from the person's own chat page through their desk's relay: whether
+    calls are transcribed (on), a piece of their own side of a call (piece), that their side is over (end), and one
+    call's minutes and words (text: the two people of the call, or an admin)."""
+    runtime = TOKEN_STORE.parent
+    op = str(payload.get("op") or "")
+    if op == "on":
+        return 200, {"ok": True, "on": chat_call.on(runtime)}
+    if op == "text":
+        row = person(login) or {}
+        got = chat_call.words_for(runtime, str(payload.get("id") or ""), login, row.get("role") == "admin")
+        return 200, (dict({"ok": True}, **got) if got else {"ok": False, "error": "not-found"})
+    peer_uid = str(payload.get("peer") or "")
+    peer = next((k for k, v in _tinode_links().items() if v and "usr" + v == peer_uid), "")
+    if not peer or peer == login:
+        return 400, {"ok": False, "error": "bad-peer"}
+    if op == "piece":
+        try:
+            data = base64.b64decode(str(payload.get("wav") or ""), validate=True)
+        except ValueError:
+            return 400, {"ok": False, "error": "bad-piece"}
+        ok, why = chat_call.put_piece(runtime, login, peer, payload.get("seq"), payload.get("at"), payload.get("ms"), data)
+    elif op == "end":
+        ok, why = chat_call.put_end(runtime, login, peer, payload.get("seq"))
+    else:
+        return 404, {"ok": False, "error": "not-found"}
+    return (400 if why == "bad-request" else 200), ({"ok": True} if ok else {"ok": False, "error": why})
+
+
+def chat_call_post(poster: str, other: str, text: str, head: dict) -> dict:
+    """The call's minutes into the two people's chat, posted by `poster` (one of them): the deciders as chat ids."""
+    links = _tinode_links()
+    if not links.get(poster) or not links.get(other):
+        return {"ok": False, "why": "no-account"}
+    ai = head.get("tdh_ai") or {}
+    if ai.get("deciders"):
+        ai["deciders"] = ["usr" + links[x] for x in ai["deciders"] if links.get(x)]
+    return chat_post(poster, "usr" + links[other], text, head)
+
+
+def chat_call_once() -> dict:
+    """company-chat-call-v1: the calls' pieces into words, a finished call's minutes into its chat; a call with to-dos
+    is remembered with TDH 助手's proposals, for 转成任务卡 (company-chat-tasks-v1's 记下, _assist_decided)."""
+    runtime = TOKEN_STORE.parent
+    if not (runtime / chat_call.DIR).is_dir():
+        return {}
+    out = chat_call.run_once(chat_assist.load_config(runtime), runtime, people_by_login(), ROOT / "company" / "_office", CHAT_BOTS, chat_call_post)
+    links = _tinode_links()
+    for p in out.pop("posted", []):
+        if p.get("todos") and p.get("seq") and p.get("topic") and links.get(p["post_to"]):
+            with _ASSIST_MU:
+                state = chat_assist.load_state(runtime)
+                state.setdefault("pending", {})["%s:%s" % (p["topic"], p["seq"])] = {
+                    "seq": p["seq"], "type": "call-todos", "todos": p["todos"], "a": p["a"], "b": p["b"], "when": p["when"],
+                    "deciders": [p["a"], p["b"]], "poster": p["poster"], "post_topic": "usr" + links[p["post_to"]], "at": time.time()}
+                chat_assist.save_state(runtime, state)
+    if out.get("pieces") or out.get("notes") or out.get("dropped"):
+        try:
+            (ROOT / "logs").mkdir(parents=True, exist_ok=True)
+            with (ROOT / "logs" / "chat-call.log").open("a", encoding="utf-8") as fh:
+                fh.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), json.dumps(out, ensure_ascii=False)))
+        except OSError:
+            pass
+    return out
+
+
+def chat_call_loop() -> None:
+    time.sleep(float(os.environ.get("TDH_CHAT_CALL_DELAY") or 40))
+    every = float(os.environ.get("TDH_CHAT_CALL_EVERY") or 5)
+    while True:
+        try:
+            chat_call_once()
+        except Exception as exc:  # noqa: BLE001 - the chat works without it; the next round tries again
+            sys.stderr.write("people-api chat-call failed %s\n" % type(exc).__name__)
+        time.sleep(every)
+
+
+def chat_voice_loop() -> None:
+    time.sleep(float(os.environ.get("TDH_CHAT_VOICE_DELAY") or 30))
+    every = float(os.environ.get("TDH_CHAT_VOICE_EVERY") or 5)
+    while True:
+        try:
+            chat_voice_once()
+        except Exception as exc:  # noqa: BLE001 - the chat works without it; the next round tries again
+            sys.stderr.write("people-api chat-voice failed %s\n" % type(exc).__name__)
         time.sleep(every)
 
 
@@ -2606,6 +2724,9 @@ def _assist_decided(state: dict, topic: str, who: str, ok: dict, people: dict, o
     if not p or who not in p["deciders"]:
         return
     del state["pending"][key]
+    if p.get("type") == "call-todos":
+        _call_todos_decided(state, topic, p, ok, people, out)
+        return
     if p.get("type") in ("doc-saved", "doc-ask"):
         _docs_decided(p, ok, people, links or _tinode_links(), out)
         return
@@ -2623,6 +2744,46 @@ def _assist_decided(state: dict, topic: str, who: str, ok: dict, people: dict, o
             else "这张任务卡没建成（%s），请在 TDH 的任务卡里自己建一张。" % why)
     chat_post(p["poster"], p["post_topic"], chat_assist.PREFIX + text, {"tdh_ai": {"v": 1, "of": p["seq"], "kind": "task-made"}})
     out["cards" if tid else "card_failed"] = out.get("cards" if tid else "card_failed", 0) + 1
+
+
+def _call_todos_decided(state: dict, topic: str, p: dict, ok: dict, people: dict, out: dict) -> None:
+    """company-chat-call-v1: 转成任务卡 on a call's minutes, from one of its two people: a card for each to-do, given by
+    the other one of the two (an employee who may not give work to the other: the owner's own to-do, saying so)."""
+    if ok.get("ok") is False:
+        out["declined"] = out.get("declined", 0) + 1
+        return
+    name = lambda x: (people.get(x) or {}).get("name") or x
+    made, failed = [], []
+    for td in p.get("todos") or []:
+        owner = str(td.get("owner") or "")
+        other = p["b"] if owner == p["a"] else p["a"]
+        issuer, owner_row = people.get(other), people.get(owner)
+        if issuer is None or owner_row is None:
+            failed.append(str(td.get("what") or ""))
+            continue
+        if not ticket_board.Board.may_issue(issuer, owner_row):
+            issuer = owner_row
+        body = {"to": owner, "title": str(td.get("what") or "")[:40], "due": td.get("due") or "",
+                "assignment": "%s\n（来自 %s 与 %s 的语音通话纪要，%s）" % (td.get("what") or "", name(p["a"]), name(p["b"]), p.get("when") or "")}
+        try:
+            with BOARD_MU:
+                res = BOARD.apply("issue", issuer, people, body)
+        except ticket_board.Refused:
+            failed.append(str(td.get("what") or ""))
+            continue
+        tid = str(res.get("ticket") or "")
+        if not tid:
+            failed.append(str(td.get("what") or ""))
+            continue
+        state.setdefault("chat_cards", {})[tid] = {"topic": topic, "at": time.time()}
+        made.append("「%s」%s，截止 %s" % (td.get("what"), name(owner), chat_assist.due_text(int(td.get("due") or 0))))
+    text = ("已记成 %d 张任务卡：%s。到期前我会在聊天里提醒。" % (len(made), "；".join(made))) if made else ""
+    if failed:
+        text += ("" if not text else "\n") + "没建成：%s，请在 TDH 的任务卡里自己建。" % "、".join(failed)
+    chat_post(p["poster"], p["post_topic"], chat_assist.PREFIX + text, {"tdh_ai": {"v": 1, "of": p["seq"], "kind": "task-made"}})
+    out["cards"] = out.get("cards", 0) + len(made)
+    if failed:
+        out["card_failed"] = out.get("card_failed", 0) + len(failed)
 
 
 def chat_assist_once() -> dict:
@@ -2912,6 +3073,10 @@ def main() -> None:
         threading.Thread(target=chat_assist_loop, name="chat-assist", daemon=True).start()
     if os.environ.get("TDH_CHAT_ARCHIVE", "1") != "0":
         threading.Thread(target=chat_archive_loop, name="chat-archive", daemon=True).start()
+    if os.environ.get("TDH_CHAT_VOICE", "1") != "0":
+        threading.Thread(target=chat_voice_loop, name="chat-voice", daemon=True).start()
+    if os.environ.get("TDH_CHAT_CALL", "1") != "0":
+        threading.Thread(target=chat_call_loop, name="chat-call", daemon=True).start()
     if os.environ.get("TDH_ERP_SYNC", "1") != "0":
         threading.Thread(target=erp_sync_loop, name="erp-sync", daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)

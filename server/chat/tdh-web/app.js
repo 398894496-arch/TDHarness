@@ -47,6 +47,9 @@
 		search: "",
 		toast: "",
 		alert: null, // { topic, seq }: a message from a chat other than the open one (company-chat-alert-v1)
+		rec: null, // { topic, secs }: a voice message being recorded (company-chat-voice-v1)
+		voice: {}, // recording ref -> { text, gist } | { asking, tries }: its words from the server
+		call: null, // company-chat-call-v1: what the call bar shows { topic, dir, state, started, muted, tx, why, ringing }
 		typing: {}, // topic -> until (ms)
 		recalled: {}, // "topic:seq" -> text, for 重新编辑
 		members: {}, // group -> [uid]
@@ -214,7 +217,7 @@
 		if (t.isGroupType()) q = q.withSub();
 		t.subscribe(q.build()).then(() => {
 			if (t.isGroupType()) rememberMembers(t);
-			if (name !== S.topic) return t.leave(false);
+			if (name !== S.topic && !(call && call.topic === name)) return t.leave(false);
 		}).catch(() => {}).finally(() => {
 			fetching = false;
 			bump();
@@ -339,7 +342,7 @@
 			case "IM": return "[图片]";
 			case "EX": return "[文件] " + ((data && data.name) || "");
 			case "AU": return "[语音]";
-			case "VC": return "[通话]";
+			case "VC": return "[语音通话]";
 			case "VD": return "[视频]";
 			case "HD": return "";
 			default: return flat(values);
@@ -459,7 +462,7 @@
 		const prev = S.topic;
 		if (prev && prev !== name) {
 			const p = client.getTopic(prev);
-			if (p && p.isSubscribed()) p.leave(false).catch(() => {});
+			if (p && p.isSubscribed() && !(call && call.topic === prev)) p.leave(false).catch(() => {});
 			S.drafts[prev] = S.drafts[prev] || "";
 		}
 		if (!again) S.reply = null;
@@ -563,6 +566,9 @@
 		"kb-ask": { label: "TDH 助手 · 知识库", yes: "放进去", no: "不放", sayYes: "放进去", sayNo: "不放", noteYes: " 让 TDH 收进知识库", noteNo: " 说不放进知识库",
 			doneYes: (b) => "✓ " + b + " 让它收进知识库", doneNo: (b) => b + "：不放进知识库", wait: " 决定" },
 		"kb-note": { label: "TDH 助手 · 知识库" },
+		// company-chat-call-v1: a call's minutes; 转成任务卡 makes a card of each to-do in it.
+		"call-note": { label: "TDH 助手 · 通话纪要", yes: "转成任务卡", no: "不用", sayYes: "把纪要里的待办转成任务卡", sayNo: "待办不用转任务卡",
+			noteYes: " 把纪要里的待办转成了任务卡", noteNo: " 说待办不用转任务卡", doneYes: (b) => "✓ " + b + " 转成了任务卡", doneNo: (b) => b + "：不用转任务卡", wait: " 决定" },
 	};
 	function aiWords(a) {
 		return AI_WORDS[(a && a.kind) || ""] || AI_WORDS.data;
@@ -616,6 +622,519 @@
 			.finally(() => { S.shooting = false; bump(); });
 	}
 	function maxUpload() { return client.getServerParam("maxFileUploadSize", 200 * 1048576); }
+	// company-chat-voice-v1 (2026-11-24, the user: 「聊天里增加语音功能 像微信一样 … 可以保存到服务器 AI实时转写」): a voice
+	// message. Recorded here as 16 kHz mono WAV (every browser plays it, the cloud recogniser reads it), at most 60
+	// seconds as in WeChat, sent as Tinode's audio attachment with a waveform; the server turns it into words
+	// (server/chat_voice.py), which show under the bubble and which the agent reads.
+	const VOICE_MAX = 60;
+	const VOICE_RATE = 16000;
+	let rec = null; // { topic, ctx, stream, node, chunks, rate, started, peaks, tick }
+	function voiceStart(topicName) {
+		if (rec) return Promise.resolve(false);
+		if (call) { toast("正在通话，挂断后再录语音"); return Promise.resolve(false); }
+		const md = navigator.mediaDevices;
+		if (!md || !md.getUserMedia) { toast("这里用不了麦克风：请更新 TDH 后再试"); return Promise.resolve(false); }
+		return md.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then((stream) => {
+			const AC = window.AudioContext || window.webkitAudioContext;
+			const ctx = new AC();
+			const src = ctx.createMediaStreamSource(stream);
+			const node = ctx.createScriptProcessor(4096, 1, 1);
+			const r = { topic: topicName, ctx, stream, node, chunks: [], rate: ctx.sampleRate, started: Date.now(), peaks: [], peak: 0, n: 0 };
+			node.onaudioprocess = (e) => {
+				const d = e.inputBuffer.getChannelData(0);
+				r.chunks.push(new Float32Array(d));
+				for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > r.peak) r.peak = a; }
+				r.n += d.length;
+				if (r.n >= r.rate / 10) { r.peaks.push(r.peak); r.peak = 0; r.n = 0; }
+			};
+			src.connect(node);
+			node.connect(ctx.destination);
+			rec = r;
+			S.rec = { topic: topicName, secs: 0 };
+			r.tick = setInterval(() => {
+				const secs = Math.floor((Date.now() - r.started) / 1000);
+				if (secs >= VOICE_MAX) { voiceStop(true); return; }
+				if (S.rec && S.rec.secs !== secs) { S.rec.secs = secs; bump(); }
+			}, 200);
+			bump();
+			return true;
+		}, (err) => {
+			toast(micWhy(err));
+			return false;
+		});
+	}
+	function micWhy(err) {
+		const name = err && err.name;
+		return name === "NotAllowedError" || name === "SecurityError" ? "没有麦克风权限：在系统设置的「隐私与安全性 → 麦克风」里允许 TDH，再试一次"
+			: name === "NotFoundError" ? "没找到麦克风" : name === "NotReadableError" ? "麦克风被别的程序占着" : "";
+	}
+	function voiceStop(send) {
+		const r = rec;
+		if (!r) return;
+		rec = null;
+		clearInterval(r.tick);
+		try { r.node.disconnect(); } catch (e) { /* gone */ }
+		try { r.stream.getTracks().forEach((k) => k.stop()); } catch (e) { /* gone */ }
+		try { r.ctx.close(); } catch (e) { /* gone */ }
+		S.rec = null;
+		bump();
+		if (!send) return;
+		const ms = Math.min(VOICE_MAX * 1000, Date.now() - r.started);
+		if (ms < 1000) { toast("说话时间太短"); return; }
+		const t = client.getTopic(r.topic);
+		if (!t) return;
+		const wav = encodeWav(r.chunks, r.rate, VOICE_RATE);
+		const file = new File([wav], "语音.wav", { type: "audio/wav" });
+		if (file.size > maxUpload()) { toast("语音太长了"); return; }
+		const up = client.getLargeFileHelper();
+		const prom = up.upload(file);
+		const msg = Drafty.appendAudio(null, { mime: "audio/wav", duration: ms, preview: voicePeaks(r.peaks), filename: "语音.wav", size: file.size, urlPromise: prom });
+		t.publishDraft(t.createMessage(msg, true), prom).catch(() => {});
+		bump();
+	}
+	// Float32 chunks at `from` Hz -> 16-bit mono WAV at `to` Hz (each output sample the mean of its input span).
+	function encodeWav(chunks, from, to) {
+		let n = 0;
+		chunks.forEach((c) => { n += c.length; });
+		const all = new Float32Array(n);
+		let o = 0;
+		chunks.forEach((c) => { all.set(c, o); o += c.length; });
+		const k = from / to;
+		const len = Math.floor(n / k);
+		const buf = new ArrayBuffer(44 + len * 2);
+		const v = new DataView(buf);
+		const str = (at, s) => { for (let i = 0; i < s.length; i++) v.setUint8(at + i, s.charCodeAt(i)); };
+		str(0, "RIFF"); v.setUint32(4, 36 + len * 2, true); str(8, "WAVE"); str(12, "fmt ");
+		v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, to, true);
+		v.setUint32(28, to * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, len * 2, true);
+		for (let i = 0; i < len; i++) {
+			const a = Math.floor(i * k);
+			const b = Math.max(a + 1, Math.floor((i + 1) * k));
+			let s = 0;
+			for (let j = a; j < b && j < n; j++) s += all[j];
+			const x = Math.max(-1, Math.min(1, s / (b - a)));
+			v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+		}
+		return new Uint8Array(buf);
+	}
+	// The waveform Tinode carries with a recording: up to 64 bars, 0..255, base64.
+	function voicePeaks(peaks) {
+		const out = [];
+		const m = Math.max(1e-3, Math.max.apply(null, peaks.concat([0])));
+		const bars = Math.min(64, peaks.length) || 1;
+		for (let i = 0; i < bars; i++) {
+			const a = Math.floor(i * peaks.length / bars);
+			const b = Math.max(a + 1, Math.floor((i + 1) * peaks.length / bars));
+			let p = 0;
+			for (let j = a; j < b; j++) p = Math.max(p, peaks[j] || 0);
+			out.push(Math.round(255 * p / m));
+		}
+		let s = "";
+		out.forEach((x) => { s += String.fromCharCode(x); });
+		return btoa(s);
+	}
+	function voiceBars(preview) {
+		try {
+			const s = atob(String(preview || ""));
+			const out = [];
+			for (let i = 0; i < s.length; i++) out.push(s.charCodeAt(i));
+			return out;
+		} catch (e) {
+			return [];
+		}
+	}
+	// The words of a recording, asked from this desk (the relay's /tdh/voice): again while the server is on it.
+	const voiceAsk = {};
+	function voiceText(ref) {
+		if (!ref || !PAGE_KEY) return null;
+		const have = S.voice[ref];
+		if (have && (have.text != null || have.asking || have.wait)) return have;
+		const tries = (have && have.tries) || 0;
+		if (tries >= 12) return have || null;
+		S.voice[ref] = { asking: true, tries: tries + 1 };
+		fetch("/tdh/voice?k=" + encodeURIComponent(PAGE_KEY) + "&ref=" + encodeURIComponent(ref)).then((r) => r.json()).then((j) => {
+			if (j && j.ok && typeof j.text === "string") S.voice[ref] = { text: j.text, gist: typeof j.gist === "string" ? j.gist : "" };
+			else S.voice[ref] = { tries: tries + 1, wait: true };
+		}, () => { S.voice[ref] = { tries: tries + 1, wait: true }; }).then(() => {
+			bump();
+			const v = S.voice[ref];
+			if (v && v.text == null && v.tries < 12) {
+				clearTimeout(voiceAsk[ref]);
+				voiceAsk[ref] = setTimeout(() => { if (S.voice[ref]) S.voice[ref].wait = false; voiceText(ref); bump(); }, 4000);
+			}
+		});
+		return S.voice[ref];
+	}
+	let playing = null; // { ref, audio }
+	function voicePlay(d) {
+		const ref = d.ref;
+		if (playing) { try { playing.audio.pause(); } catch (e) { /* gone */ } }
+		if (playing && playing.ref === ref) { playing = null; bump(); return; }
+		const src = mediaUrl(d);
+		if (!src) return;
+		const audio = new Audio(src);
+		playing = { ref, audio };
+		audio.onended = audio.onerror = () => { if (playing && playing.audio === audio) { playing = null; bump(); } };
+		audio.play().catch(() => { playing = null; toast("这条语音放不出来"); bump(); });
+		bump();
+	}
+
+	// company-chat-call-v1 (2026-11-23, the user: 「语音通话以后 转写后总结本次语音通话的重点」): a one-to-one voice call
+	// on Tinode's own signalling (a message with head webrtc "started", then info events ringing / accept / offer /
+	// answer / ice-candidate / hang-up on that seq), the sound going straight between the two desks (WebRTC). While it
+	// lasts, and when the server transcribes calls (/tdh/call op=on), each side cuts its own microphone into pieces at
+	// the pauses (at most 50 seconds) and hands them to its desk's relay with when each began; both sides see that the
+	// call is transcribed. After the call the server writes its minutes into the chat (server/chat_call.py). Nothing
+	// here is recorded otherwise.
+	const CALL_RING_MS = 40000;
+	const CALL_AUDIO = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false };
+	const PIECE_MAX_MS = 50000;
+	const PIECE_GAP_MS = 800;
+	const PIECE_MIN_MS = 1200;
+	let call = null; // { topic, peer, seq, dir, state, stream, pc, ice, setup, started, tx, cap, muted, audio, timers }
+	function mmss(secs) {
+		secs = Math.max(0, secs | 0);
+		return (secs >= 3600 ? Math.floor(secs / 3600) + ":" + pad(Math.floor(secs / 60) % 60) : Math.floor(secs / 60)) + ":" + pad(secs % 60);
+	}
+	function callShow() {
+		S.call = call ? { topic: call.topic, dir: call.dir, state: call.state, started: call.started || 0, muted: !!call.muted, tx: !!call.tx,
+			ringing: !!call.peerRinging, why: "" } : null;
+		bump();
+	}
+	function stopStream(s) {
+		try { if (s) s.getTracks().forEach((k) => k.stop()); } catch (e) { /* gone */ }
+	}
+	function callRing(c) {
+		clearInterval(c.ring);
+		ding();
+		c.ring = setInterval(() => { if (call === c) ding(); }, 1600);
+	}
+	function callTopicOf(name) { return client.getTopic(name); }
+	function callSignal(c, event, payload) {
+		const t = callTopicOf(c.topic);
+		if (t && c.seq) {
+			try { t.videoCall(event, c.seq, payload); } catch (e) { /* the connection is gone; Tinode ends the call itself */ }
+		}
+	}
+	function callStart(name) {
+		const t = client.getTopic(name);
+		if (!t || !(t.isP2PType && t.isP2PType())) return Promise.resolve(false);
+		if (call) { toast("正在通话中"); return Promise.resolve(false); }
+		if (rec) voiceStop(false);
+		const md = navigator.mediaDevices;
+		if (!md || !md.getUserMedia || !window.RTCPeerConnection) { toast("这里打不了语音通话：请更新 TDH 后再试"); return Promise.resolve(false); }
+		const c = { topic: name, peer: name, seq: 0, dir: "out", state: "dialing", ice: [] };
+		call = c;
+		callShow();
+		return md.getUserMedia(CALL_AUDIO).then((stream) => {
+			if (call !== c) { stopStream(stream); return false; }
+			c.stream = stream;
+			const pub = t.createMessage(Drafty.videoCall(true), false);
+			pub.head = Object.assign({}, pub.head || {}, { webrtc: "started", aonly: true });
+			return t.publishDraft(pub).then((ctrl) => {
+				const seq = ctrl && ctrl.params && ctrl.params.seq;
+				if (!seq) throw new Error("no-seq");
+				c.seq = seq | 0;
+				if (call !== c) { callSignal(c, "hang-up"); return false; }
+				callRing(c);
+				c.timer = setTimeout(() => { if (call === c && c.state === "dialing") callHangup("对方没有接听"); }, CALL_RING_MS);
+				callShow();
+				return true;
+			});
+		}).catch((err) => { if (call === c) callHangup(micWhy(err) || "没打通"); return false; });
+	}
+	// A call to me: the message that began it (on any of my chats, attached or not). Old ones (a chat's history) and
+	// ones already over do not ring; a second call while one is going is turned down.
+	function callIncoming(d) {
+		if (!d || !d.head || d.head.webrtc !== "started" || !d.from || d.from === S.meId || !Tinode.isP2PTopicName(d.topic)) return false;
+		const ts = d.ts ? new Date(d.ts).getTime() : 0;
+		if (!ts || Math.abs(Date.now() - ts) > 45000) return false;
+		const t = client.getTopic(d.topic);
+		const v = t && t.latestMsgVersion ? t.latestMsgVersion(d.seq) : null;
+		if (v && v.head && v.head.webrtc && v.head.webrtc !== "started") return false;
+		if (call) {
+			if (!(call.topic === d.topic && call.seq === (d.seq | 0))) { try { t.videoCall("hang-up", d.seq | 0); } catch (e) { /* gone */ } }
+			return false;
+		}
+		const c = { topic: d.topic, peer: d.topic, seq: d.seq | 0, dir: "in", state: "ringing", ice: [] };
+		call = c;
+		callSignal(c, "ringing");
+		callRing(c);
+		c.timer = setTimeout(() => { if (call === c && c.state === "ringing") callEnd("未接来电"); }, CALL_RING_MS);
+		callShow();
+		return true;
+	}
+	function callInfo(info) {
+		const c = call;
+		if (!c || !info || info.what !== "call") return;
+		if (info.from === S.meId) {
+			// Another of my own windows answered or turned down the call ringing here.
+			if (c.dir === "in" && c.state === "ringing" && (info.seq | 0) === c.seq && (info.event === "accept" || info.event === "hang-up")) callEnd("", true);
+			return;
+		}
+		if (info.topic !== c.topic || (info.seq | 0) !== c.seq) return;
+		switch (info.event) {
+		case "ringing": if (c.dir === "out") { c.peerRinging = true; callShow(); } break;
+		case "accept": if (c.dir === "out" && c.state === "dialing") callAccepted(c); break;
+		case "offer": if (c.dir === "in" && info.payload) callOffer(c, info.payload); break;
+		case "answer": if (c.dir === "out" && c.pc && info.payload) callAnswer(c, info.payload); break;
+		case "ice-candidate": if (info.payload) callIce(c, info.payload); break;
+		case "hang-up": callEnd(c.state === "live" ? "对方已挂断" : c.dir === "out" ? "对方没有接通" : "对方已取消"); break;
+		default: break;
+		}
+	}
+	function waitAttached(name, ms) {
+		return new Promise((ok, no) => {
+			const t0 = Date.now();
+			const tick = () => {
+				const t = client.getTopic(name);
+				if (t && t.isSubscribed()) ok();
+				else if (Date.now() - t0 > ms) no(new Error("not-attached"));
+				else setTimeout(tick, 100);
+			};
+			tick();
+		});
+	}
+	function callAccept() {
+		const c = call;
+		if (!c || c.dir !== "in" || c.state !== "ringing") return Promise.resolve(false);
+		c.state = "connecting";
+		clearInterval(c.ring);
+		clearTimeout(c.timer);
+		callShow();
+		const md = navigator.mediaDevices;
+		if (!md || !md.getUserMedia || !window.RTCPeerConnection) { callHangup("这里接不了语音通话：请更新 TDH 后再试"); return Promise.resolve(false); }
+		return md.getUserMedia(CALL_AUDIO).then((stream) => {
+			if (call !== c) { stopStream(stream); return false; }
+			c.stream = stream;
+			if (S.topic !== c.topic) openTopic(c.topic);
+			return waitAttached(c.topic, 8000).then(() => {
+				if (call !== c) return false;
+				callSignal(c, "accept");
+				c.timer = setTimeout(() => { if (call === c && c.state !== "live") callHangup("没连上"); }, 25000);
+				return true;
+			});
+		}).catch((err) => { if (call === c) callHangup(micWhy(err) || "没连上"); return false; });
+	}
+	function callPc(c) {
+		const ice = client.getServerParam("iceServers", null);
+		const pc = ice ? new RTCPeerConnection({ iceServers: ice }) : new RTCPeerConnection();
+		c.pc = pc;
+		pc.onicecandidate = (e) => { if (e.candidate && call === c) callSignal(c, "ice-candidate", e.candidate.toJSON()); };
+		pc.onnegotiationneeded = () => {
+			if (c.dir !== "out" || call !== c) return;
+			pc.createOffer().then((o) => pc.setLocalDescription(o)).then(() => { if (call === c) callSignal(c, "offer", pc.localDescription.toJSON()); })
+				.catch(() => callHangup("没连上"));
+		};
+		pc.ontrack = (e) => { if (call === c) callAudioOut(c, e.streams && e.streams[0] ? e.streams[0] : new MediaStream([e.track])); };
+		pc.oniceconnectionstatechange = () => {
+			if (call !== c) return;
+			const s = pc.iceConnectionState;
+			if (s === "connected" || s === "completed") callLive(c);
+			else if (s === "failed") callHangup("没连上：两台电脑互相连不到（对方不在公司网络或 Tailscale 上？）");
+			else if (s === "disconnected") {
+				clearTimeout(c.lost);
+				c.lost = setTimeout(() => { if (call === c && pc.iceConnectionState === "disconnected") callHangup("网络断了"); }, 8000);
+			}
+		};
+		return pc;
+	}
+	function callAccepted(c) {
+		clearTimeout(c.timer);
+		clearInterval(c.ring);
+		c.state = "connecting";
+		callShow();
+		const pc = callPc(c);
+		c.stream.getAudioTracks().forEach((k) => pc.addTrack(k, c.stream));
+		c.timer = setTimeout(() => { if (call === c && c.state !== "live") callHangup("没连上"); }, 25000);
+	}
+	function callOffer(c, desc) {
+		if (!c.stream) return;
+		const pc = c.pc || callPc(c);
+		pc.setRemoteDescription(new RTCSessionDescription(desc)).then(() => {
+			if (!c.added) { c.stream.getAudioTracks().forEach((k) => pc.addTrack(k, c.stream)); c.added = true; }
+			return pc.createAnswer();
+		}).then((a) => pc.setLocalDescription(a)).then(() => {
+			if (call !== c) return;
+			callSignal(c, "answer", pc.localDescription.toJSON());
+			c.setup = true;
+			callDrainIce(c);
+		}).catch(() => callHangup("没连上"));
+	}
+	function callAnswer(c, desc) {
+		c.pc.setRemoteDescription(new RTCSessionDescription(desc)).then(() => { c.setup = true; callDrainIce(c); }).catch(() => callHangup("没连上"));
+	}
+	function callIce(c, cand) {
+		if (c.pc && c.setup) c.pc.addIceCandidate(new RTCIceCandidate(cand)).catch(() => {});
+		else c.ice.push(cand);
+	}
+	function callDrainIce(c) {
+		c.ice.splice(0).forEach((x) => c.pc.addIceCandidate(new RTCIceCandidate(x)).catch(() => {}));
+	}
+	function callAudioOut(c, stream) {
+		if (!c.audio) {
+			c.audio = document.createElement("audio");
+			c.audio.autoplay = true;
+			c.audio.style.display = "none";
+			document.body.appendChild(c.audio);
+		}
+		c.audio.srcObject = stream;
+		const p = c.audio.play && c.audio.play();
+		if (p && p.catch) p.catch(() => {});
+	}
+	function callLive(c) {
+		clearTimeout(c.lost);
+		if (c.state === "live") return;
+		clearTimeout(c.timer);
+		c.state = "live";
+		c.started = Date.now();
+		c.tick = setInterval(bump, 1000);
+		callShow();
+		if (!PAGE_KEY) return;
+		callPost({ op: "on" }, 2).then((j) => {
+			if (call !== c || !j || !j.on) return;
+			c.tx = true;
+			callShow();
+			try { callCapture(c); } catch (e) { /* no transcription this time; the call goes on */ }
+		});
+	}
+	function callMute() {
+		const c = call;
+		if (!c || !c.stream) return;
+		c.muted = !c.muted;
+		c.stream.getAudioTracks().forEach((k) => { k.enabled = !c.muted; });
+		callShow();
+	}
+	function callUrl(op, q) {
+		let u = "/tdh/call?k=" + encodeURIComponent(PAGE_KEY) + "&op=" + op;
+		Object.keys(q || {}).forEach((k) => { u += "&" + k + "=" + encodeURIComponent(q[k]); });
+		return u;
+	}
+	function callPost(job, n) {
+		return fetch(callUrl(job.op, job.q), { method: "POST", headers: job.body ? { "Content-Type": "audio/wav" } : {}, body: job.body || "" })
+			.then((r) => r.json())
+			.catch(() => (n < 2 ? new Promise((ok) => setTimeout(ok, 1500)).then(() => callPost(job, n + 1)) : null));
+	}
+	// One after another, so the server has them in order and the end comes last.
+	function callSend(c, job) {
+		c.sendq = (c.sendq || Promise.resolve()).then(() => callPost(job, 0));
+		return c.sendq;
+	}
+	// This side's microphone in pieces, cut at a pause of PIECE_GAP_MS once a piece has PIECE_MIN_MS, or at
+	// PIECE_MAX_MS; a piece with almost no voice in it (a click, a cough) is not sent. When muted, nothing is.
+	function callCapture(c) {
+		const AC = window.AudioContext || window.webkitAudioContext;
+		const ctx = new AC();
+		const src = ctx.createMediaStreamSource(c.stream);
+		const node = ctx.createScriptProcessor(4096, 1, 1);
+		const cap = { ctx, src, node, rate: ctx.sampleRate, buf: [], pre: [], start: 0, len: 0, voiced: 0, quiet: 0, floor: 0.004 };
+		c.cap = cap;
+		node.onaudioprocess = (e) => callHear(c, new Float32Array(e.inputBuffer.getChannelData(0)), Date.now());
+		src.connect(node);
+		node.connect(ctx.destination);
+	}
+	function callHear(c, d, now) {
+		const cap = c.cap;
+		if (!cap) return;
+		const ms = d.length / cap.rate * 1000;
+		let s = 0;
+		for (let i = 0; i < d.length; i++) s += d[i] * d[i];
+		const rms = Math.sqrt(s / Math.max(1, d.length));
+		const voiced = !c.muted && rms > Math.max(0.012, cap.floor * 3);
+		if (!voiced && !c.muted) cap.floor = Math.min(0.05, cap.floor * 0.95 + rms * 0.05); // the room's own noise
+		if (!cap.buf.length) {
+			if (voiced) {
+				cap.buf = cap.pre.concat([d]);
+				cap.len = ms * cap.buf.length;
+				cap.start = now - cap.len;
+				cap.voiced = ms;
+				cap.quiet = 0;
+				cap.pre = [];
+			} else {
+				cap.pre.push(d);
+				if (cap.pre.length > 3) cap.pre.shift();
+			}
+			return;
+		}
+		cap.buf.push(d);
+		cap.len += ms;
+		if (voiced) { cap.voiced += ms; cap.quiet = 0; } else cap.quiet += ms;
+		if ((cap.quiet >= PIECE_GAP_MS && cap.len >= PIECE_MIN_MS) || cap.len >= PIECE_MAX_MS) callPiece(c);
+	}
+	function callPiece(c) {
+		const cap = c.cap;
+		if (!cap || !cap.buf.length) return null;
+		const chunks = cap.buf;
+		const at = Math.round(cap.start);
+		const len = Math.round(cap.len);
+		const voiced = cap.voiced;
+		cap.buf = [];
+		cap.len = 0;
+		cap.voiced = 0;
+		cap.quiet = 0;
+		if (voiced < 400) return null;
+		const wav = encodeWav(chunks, cap.rate, VOICE_RATE);
+		return callSend(c, { op: "piece", q: { peer: c.peer, seq: c.seq, at, ms: Math.min(Math.max(len, 300), 65000) }, body: wav });
+	}
+	function callHangup(why) {
+		const c = call;
+		if (!c) return;
+		callSignal(c, "hang-up");
+		callEnd(why);
+	}
+	function callEnd(why, quiet) {
+		const c = call;
+		if (!c) return;
+		call = null;
+		clearTimeout(c.timer);
+		clearTimeout(c.lost);
+		clearInterval(c.tick);
+		clearInterval(c.ring);
+		if (c.cap) {
+			callPiece(c);
+			try { c.cap.node.disconnect(); c.cap.src.disconnect(); c.cap.ctx.close(); } catch (e) { /* gone */ }
+		}
+		if (c.tx && c.seq) callSend(c, { op: "end", q: { peer: c.peer, seq: c.seq } });
+		if (c.pc) { try { c.pc.close(); } catch (e) { /* gone */ } }
+		stopStream(c.stream);
+		if (c.audio) { c.audio.srcObject = null; if (c.audio.parentNode) c.audio.parentNode.removeChild(c.audio); }
+		const secs = c.started ? Math.round((Date.now() - c.started) / 1000) : 0;
+		if (c.topic !== S.topic) {
+			const t = client.getTopic(c.topic);
+			if (t && t.isSubscribed()) t.leave(false).catch(() => {});
+		}
+		S.call = quiet ? null : { topic: c.topic, state: "ended", why: why || (secs ? "通话结束 " + mmss(secs) : "已挂断"), tx: !!(c.tx && secs > 0) };
+		bump();
+		if (!quiet) setTimeout(() => { if (S.call && S.call.state === "ended") { S.call = null; bump(); } }, c.tx && secs > 0 ? 6000 : 2500);
+	}
+	// What a call left in the chat: its message, as the message that replaced it says it ended.
+	function callNote(t, msg) {
+		const v = (t.latestMsgVersion && t.latestMsgVersion(msg.seq)) || msg;
+		const hd = (v && v.head) || msg.head || {};
+		const mine = msg.from === S.meId || !msg.from;
+		const ms = hd["webrtc-duration"] | 0;
+		switch (hd.webrtc) {
+		case "finished": return "语音通话" + (ms ? " " + mmss(Math.round(ms / 1000)) : "");
+		case "missed": return mine ? "对方未接听" : "未接的语音通话";
+		case "declined": return mine ? "对方已拒绝" : "已拒绝语音通话";
+		case "busy": return "对方忙";
+		case "disconnected": return "语音通话中断";
+		case "accepted": return "语音通话中";
+		default: return mine ? "发起了语音通话" : "邀请你语音通话";
+		}
+	}
+	// A call's minutes and words (TDH 助手's card 看全文), from the server through this desk.
+	function callWords(id) {
+		if (!PAGE_KEY || !id) return;
+		callPost({ op: "text", q: { id } }, 2).then((j) => {
+			if (!j || !j.ok) { toast("全文还没有，或者你看不到这次通话"); return; }
+			S.dialog = { kind: "words", note: String(j.note || ""), words: String(j.words || "") };
+			bump();
+		});
+	}
+	client.onDataMessage = (d) => { callIncoming(d); };
+	client.onInfoMessage = (info) => { callInfo(info); };
+
 	function sendFiles(files) {
 		const t = S.topic && client.getTopic(S.topic);
 		if (!t) return;
@@ -772,6 +1291,10 @@
 		image: () => I([{ t: "rect", a: { x: 3.5, y: 5.5, width: 17, height: 13, rx: 1.5 } }, { t: "circle", a: { cx: 9, cy: 10, r: 1.5 } }, "M20.5 15.5l-5-4.5-8 7.5"]),
 		mute: () => I("M6 10a6 6 0 0 1 9.5-4.9M18 10v4l1.5 2.5H8M10 19.5a2 2 0 0 0 4 0M3 3l18 18", { s: 13, w: 1.8 }),
 		close: () => I("M6 6l12 12M18 6L6 18", { s: 14, w: 2 }),
+		mic: () => I(["M12 3.5a3 3 0 0 1 3 3V12a3 3 0 0 1-6 0V6.5a3 3 0 0 1 3-3z", "M6 11.5a6 6 0 0 0 12 0", "M12 17.5V20.5"]),
+		play: () => I("M8 5.5v13l10.5-6.5z", { s: 14, fill: true }),
+		pause: () => I("M7.5 5.5h3v13h-3zM13.5 5.5h3v13h-3z", { s: 14, fill: true }),
+		phone: (s) => I("M6.6 3.5h2.6l1.4 4-2 1.3a11 11 0 0 0 6.6 6.6l1.3-2 4 1.4v2.6a2 2 0 0 1-2.2 2A17 17 0 0 1 4.6 5.7a2 2 0 0 1 2-2.2z", { s }),
 	};
 
 	// ---- Components. ---------------------------------------------------------------------------------------------
@@ -888,8 +1411,8 @@
 			case "MN": return h("span", { key, className: (values && String(values).startsWith("➦")) ? "fwd" : "mention" + (data && data.val === S.meId ? " me" : "") }, values);
 			case "IM": count++; only = only || "IM"; return h(Picture, { key, data });
 			case "EX": count++; only = only || "EX"; return h(FileCard, { key, data });
-			case "AU": return h("span", { key }, "[语音]");
-			case "VC": return h("span", { key }, "[通话]");
+			case "AU": return h(Voice, { key, data });
+			case "VC": return h("span", { key }, "[语音通话]");
 			case "VD": return h("span", { key }, "[视频]");
 			case "HD": return null;
 			default: return h("span", { key }, values);
@@ -908,6 +1431,23 @@
 		const style = w && ht ? { width: Math.round(w * k) + "px", height: Math.round(ht * k) + "px" } : null;
 		const src = mediaUrl(d);
 		return h("img", { className: "img", src, alt: d.name || "图片", style, onClick: () => { S.viewer = { src, name: d.name || "图片.png" }; bump(); } });
+	}
+	function Voice(props) {
+		const d = props.data || {};
+		const secs = Math.max(1, Math.round((d.duration | 0) / 1000));
+		const bars = voiceBars(d.preview);
+		const on = !!(playing && d.ref && playing.ref === d.ref);
+		const said = d.ref && !d._processing ? voiceText(d.ref) : null;
+		const width = Math.min(220, 70 + secs * 4);
+		return h("span", { className: "voice" + (on ? " on" : ""), "data-voice": d.ref || "" },
+			h("button", { className: "vplay", title: on ? "暂停" : "播放", disabled: !!d._processing, onClick: () => voicePlay(d) },
+				on ? ICON.pause() : ICON.play(),
+				h("span", { className: "vbars", style: { width: width + "px" } }, (bars.length ? bars : [40, 80, 60, 90, 50, 70, 40]).map((b, i) => h("i", { key: i, style: { height: Math.max(3, Math.round(b / 255 * 18)) + "px" } }))),
+				h("span", { className: "vlen" }, d._processing ? "发送中…" : secs + "″")),
+			// company-chat-voice-gist-v1: a long one's gist from the model, above its words.
+			said && said.gist ? h("span", { className: "vgist" }, h("b", null, "要点"), said.gist) : null,
+			said && said.text != null ? h("span", { className: "vtext" }, said.text || "（没有识别出文字）")
+				: said && said.tries < 12 ? h("span", { className: "vtext wait" }, "正在转文字…") : null);
 	}
 	function FileCard(props) {
 		const d = props.data || {};
@@ -967,7 +1507,7 @@
 				return;
 			}
 			if (msg.head && msg.head.webrtc) {
-				nodes.push(h("div", { key: "c" + msg.seq, className: "note" }, "语音通话"));
+				nodes.push(h("div", { key: "c" + msg.seq, className: "note call" }, callNote(t, msg)));
 				return;
 			}
 			const ts = msg.ts ? new Date(msg.ts).getTime() : Date.now();
@@ -1001,7 +1541,8 @@
 					h("div", { className: "a s36 ai-av" }, "TDH"),
 					h("div", { className: "col" },
 						h("div", { className: "who" }, w.label),
-						h("div", { className: "b" }, aiText(t, msg)),
+						h("div", { className: "b" }, aiText(t, msg),
+							ai.kind === "call-note" && ai.call ? h("button", { className: "ai-link", onClick: () => callWords(String(ai.call)) }, "看全文") : null),
 						foot)));
 				return;
 			}
@@ -1151,7 +1692,13 @@
 				h("button", { className: "icon-btn", title: "发送文件", onClick: () => files.current && files.current.click() }, ICON.folder()),
 				h("button", { className: "icon-btn" + (S.shooting ? " busy" : ""), title: canShoot() ? (S.shooting ? "正在截图…" : "截图") : "截图",
 					onClick: () => { if (canShoot()) { setPanel(null); shoot(t.name); } else setPanel(panel === "cut" ? null : "cut"); } }, ICON.cut()),
-				h("button", { className: "icon-btn", title: "发送图片", onClick: () => images.current && images.current.click() }, ICON.image())),
+				h("button", { className: "icon-btn", title: "发送图片", onClick: () => images.current && images.current.click() }, ICON.image()),
+				h("button", { className: "icon-btn" + (S.rec ? " busy" : ""), title: "语音消息", "data-voice-rec": "1", disabled: !!S.rec, onClick: () => { setPanel(null); voiceStart(t.name); } }, ICON.mic())),
+			S.rec && S.rec.topic === t.name ? h("div", { className: "recbar", role: "status" },
+				h("i", { className: "rdot" }), h("span", null, "正在录音 " + Math.floor(S.rec.secs / 60) + ":" + String(S.rec.secs % 60).padStart(2, "0")),
+				h("span", { className: "rmax" }, "最长 " + VOICE_MAX + " 秒"),
+				h("button", { className: "rcancel", onClick: () => voiceStop(false) }, "取消"),
+				h("button", { className: "rsend", onClick: () => voiceStop(true) }, "发送")) : null,
 			h("input", { ref: files, type: "file", multiple: true, hidden: true, onChange: (e) => { sendFiles(e.target.files); e.target.value = ""; } }),
 			h("input", { ref: images, type: "file", accept: "image/*", multiple: true, hidden: true, onChange: (e) => { sendFiles(e.target.files); e.target.value = ""; } }),
 			pend.length ? h("div", { className: "pending" }, pend.map((p, i) => h("div", { key: i, className: "pend" + (p.url ? "" : " file") },
@@ -1173,6 +1720,31 @@
 			ICON.back(), n ? h("span", { className: "count" }, n > 99 ? "99+" : String(n)) : null);
 	}
 
+	function CallBar() {
+		const k = S.call;
+		if (!k) return null;
+		const who = nameOf(client.getTopic(k.topic));
+		const open = () => { if (S.topic !== k.topic) openTopic(k.topic); };
+		if (k.state === "ended") {
+			return h("div", { className: "callbar ended", role: "status" }, h("span", { className: "cb-ic" }, ICON.phone(16)), h("b", null, who),
+				h("span", { className: "cb-line" }, k.why + (k.tx ? " · 纪要稍后发在聊天里" : "")));
+		}
+		if (k.dir === "in" && k.state === "ringing") {
+			return h("div", { className: "callbar ring", role: "alertdialog", "data-call-state": "ringing" }, h("span", { className: "cb-ic" }, ICON.phone(16)),
+				h("b", null, who), h("span", { className: "cb-line" }, "邀请你语音通话"),
+				h("button", { className: "cb-no", onClick: () => callHangup("已拒绝") }, "拒绝"),
+				h("button", { className: "cb-yes", onClick: callAccept }, "接听"));
+		}
+		const live = k.state === "live";
+		const line = live ? "通话中 " + mmss(Math.floor((Date.now() - k.started) / 1000))
+			: k.dir === "out" && k.state === "dialing" ? (k.ringing ? "等待对方接听…" : "正在呼叫…") : "正在连接…";
+		return h("div", { className: "callbar" + (live ? " live" : ""), role: "status", "data-call-state": k.state },
+			h("span", { className: "cb-ic" }, ICON.phone(16)), h("b", { onClick: open }, who), h("span", { className: "cb-line" }, line),
+			live && k.tx ? h("span", { className: "cb-tx" }, "本通话将转写，挂断后生成纪要") : null,
+			live ? h("button", { className: "cb-mute" + (k.muted ? " on" : ""), onClick: callMute }, k.muted ? "取消静音" : "静音") : null,
+			h("button", { className: "cb-no", onClick: () => callHangup("") }, "挂断"));
+	}
+
 	function AlertBar() {
 		const a = S.alert;
 		const t = a && alertText(a);
@@ -1191,6 +1763,8 @@
 			h("div", { className: "head" },
 				h(BackButton),
 				h("div", { className: "title" }, nameOf(t), group && count ? h("span", null, "（" + count + "）") : null, typing ? h("span", { className: "typing" }, "正在输入…") : null),
+				!group && t.isP2PType && t.isP2PType() ? h("button", { className: "icon-btn", title: S.call ? "正在通话" : "语音通话", "data-call": "1", disabled: !!S.call,
+					onClick: () => callStart(t.name) }, ICON.phone()) : null,
 				h("button", { className: "icon-btn", title: group ? "群聊信息" : "聊天信息", onClick: () => { S.dialog = { kind: "info" }; bump(); } }, ICON.more())),
 			S.status !== "ready" ? h("div", { className: "banner" }, S.status === "offline" ? "网络断了，正在重连…" : "正在连接…") : null,
 			h(Messages, { topic: t }),
@@ -1285,6 +1859,15 @@
 				group && !owner ? h("button", { className: "btn danger", onClick: () => leaveGroup(t) }, "退出群聊") : null,
 				h("button", { className: "btn", onClick: close }, "完成"))));
 	}
+	function WordsDialog(props) {
+		const close = () => { S.dialog = null; bump(); };
+		return h("div", { className: "veil", onClick: close }, h("div", { className: "dialog words", onClick: (e) => e.stopPropagation() },
+			h("h3", null, "通话全文"),
+			h("div", { className: "wtext" }, props.words || "（没有识别出文字）"),
+			h("div", { className: "acts" },
+				h("button", { className: "btn", onClick: () => copy(props.note + "\n\n" + props.words) }, "复制纪要和全文"),
+				h("button", { className: "btn", onClick: close }, "关闭"))));
+	}
 	function Dialogs() {
 		const d = S.dialog;
 		if (!d) return null;
@@ -1292,6 +1875,7 @@
 		if (d.kind === "forward") return h(ForwardDialog);
 		if (d.kind === "info" && S.topic) return h(InfoDialog, { key: S.topic });
 		if (d.kind === "invite" && S.topic) return h(InviteDialog, { topic: client.getTopic(S.topic) });
+		if (d.kind === "words") return h(WordsDialog, { note: d.note, words: d.words });
 		return null;
 	}
 	function Viewer() {
@@ -1324,7 +1908,7 @@
 				h(Search),
 				S.view === "contacts" ? h(Contacts) : h(ChatList)),
 			h(ChatPane, { narrow }),
-			h(Menu), h(Dialogs), h(Viewer), h(AlertBar),
+			h(Menu), h(Dialogs), h(Viewer), h(AlertBar), h(CallBar),
 			S.toast ? h("div", { className: "toast" }, S.toast) : null);
 	}
 
@@ -1333,5 +1917,6 @@
 	window.__tdhChat = { S, client, bump, open: openTopic,
 		act: { sendText, sendFiles, recall, quote, createGroup, togglePin, toggleMute, forwardTo, leaveGroup },
 		// company-chat-client-test-v1: the page's own logic, for scripts/prove-chat-client.js and prove-chat-composer.js (CI)
-		fn: { atDraft, plain, mentionsMe, mentionedUnread, allMessages, contentOf, renderContent, safeUrl, listed, unread, alertOther, otherUnread, alertText, ding, Composer, Search, Messages, aiOf, aiConfirmation } }; // for checks in the desk's tests and a person's own debugging
+		fn: { atDraft, plain, mentionsMe, mentionedUnread, allMessages, contentOf, renderContent, safeUrl, listed, unread, alertOther, otherUnread, alertText, ding, encodeWav, voicePeaks, voiceBars, voiceText, Voice, Composer, Search, Messages, aiOf, aiConfirmation,
+			callStart, callIncoming, callInfo, callAccept, callHangup, callMute, callHear, callPiece, callNote, callWords, CallBar, mmss, call: () => call } }; // for checks in the desk's tests and a person's own debugging
 })();

@@ -135,6 +135,7 @@ export async function chatLogin(base, login, deskToken) {
 // chosen files to the page; a download is written to ~/Downloads and shown in Finder. Only with the page's key,
 // only files the person chose, only into Downloads. Windows' window (WebView2) does both itself.
 const MAX_FILE = 200 * 1024 * 1024; // the chat's own limit (tinode.conf media.max_size)
+const CALL_PIECE_MAX = 3 * 1024 * 1024; // company-chat-call-v1: a piece of a call, at most a minute of 16 kHz WAV
 const TYPES = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
 	".heic": "image/heic", ".pdf": "application/pdf", ".txt": "text/plain", ".csv": "text/csv", ".zip": "application/zip",
 	".mp4": "video/mp4", ".mov": "video/quicktime", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".wav": "audio/wav",
@@ -753,6 +754,82 @@ export function startChatRelay(opts) {
 		}
 		if (p === "/chat/" || p === "/chat/index.html") {
 			page(req, res, u).catch(() => { if (!res.headersSent) plain(res, 500, "聊天页面出错了。"); });
+			return;
+		}
+		// company-chat-voice-v1: a voice message's words (server/chat_voice.py), asked with this desk's own login, so the
+		// page never holds a token; the server answers members of that chat only.
+		if (p === "/tdh/voice" && req.method === "GET") {
+			if (u.searchParams.get("k") !== pageKey) {
+				plain(res, 403, "forbidden");
+				return;
+			}
+			const ref = String(u.searchParams.get("ref") || "");
+			const dt = deskToken();
+			if (!/^[A-Za-z0-9_\/.:-]{4,200}$/.test(ref) || !dt) {
+				json(res, 400, { ok: false, error: "bad-request" });
+				return;
+			}
+			const body = Buffer.from(JSON.stringify({ ref }), "utf8");
+			fetchSite(site(), "/company/ext/chat/voice", "POST", body, { "Content-Type": "application/json", Authorization: "Bearer " + dt }, 15000)
+				.then((r) => {
+					let j = null;
+					try { j = JSON.parse(r.body.toString("utf8")); } catch { j = null; }
+					json(res, r.status === 200 && j ? 200 : 502, j && r.status === 200 ? j : { ok: false, error: "server-" + r.status });
+				})
+				.catch(() => { if (!res.headersSent) json(res, 502, { ok: false, error: "server" }); });
+			return;
+		}
+		// company-chat-call-v1: a call's transcription (server/chat_call.py), with this desk's own login: whether it is on
+		// (op=on), a piece of this person's own side (op=piece, the recording as the body), that their side is over
+		// (op=end), one call's minutes and words (op=text).
+		if (p === "/tdh/call" && req.method === "POST") {
+			if (u.searchParams.get("k") !== pageKey) {
+				plain(res, 403, "forbidden");
+				return;
+			}
+			const q = (k) => String(u.searchParams.get(k) || "");
+			const op = q("op");
+			const dt = deskToken();
+			const num = (k) => (/^\d{1,15}$/.test(q(k)) ? Number(q(k)) : null);
+			const out = { op };
+			if (op === "piece" || op === "end") {
+				if (!/^usr[A-Za-z0-9_-]{4,40}$/.test(q("peer")) || num("seq") == null) { json(res, 400, { ok: false, error: "bad-request" }); return; }
+				out.peer = q("peer");
+				out.seq = num("seq");
+				if (op === "piece") {
+					if (num("at") == null || num("ms") == null) { json(res, 400, { ok: false, error: "bad-request" }); return; }
+					out.at = num("at");
+					out.ms = num("ms");
+				}
+			} else if (op === "text") {
+				if (!/^[A-Za-z0-9._~-]{3,140}$/.test(q("id"))) { json(res, 400, { ok: false, error: "bad-request" }); return; }
+				out.id = q("id");
+			} else if (op !== "on") {
+				json(res, 400, { ok: false, error: "bad-request" });
+				return;
+			}
+			if (!dt) { json(res, 400, { ok: false, error: "no-login" }); return; }
+			const chunks = [];
+			let n = 0;
+			let over = false;
+			req.on("data", (c) => {
+				n += c.length;
+				if (n > CALL_PIECE_MAX) { over = true; return; }
+				if (op === "piece") chunks.push(c);
+			});
+			req.on("end", () => {
+				if (over) { json(res, 413, { ok: false, error: "too-large" }); return; }
+				if (op === "piece") out.wav = Buffer.concat(chunks).toString("base64");
+				const body = Buffer.from(JSON.stringify(out), "utf8");
+				fetchSite(site(), "/company/ext/chat/call", "POST", body, { "Content-Type": "application/json", Authorization: "Bearer " + dt }, 30000)
+					.then((r) => {
+						let j = null;
+						try { j = JSON.parse(r.body.toString("utf8")); } catch { j = null; }
+						json(res, j ? (r.status === 200 ? 200 : r.status) : 502, j || { ok: false, error: "server-" + r.status });
+					})
+					.catch(() => { if (!res.headersSent) json(res, 502, { ok: false, error: "server" }); });
+			});
+			req.on("error", () => { if (!res.headersSent) json(res, 400, { ok: false, error: "bad-request" }); });
 			return;
 		}
 		if (p.indexOf("/tdh/") === 0) {

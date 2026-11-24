@@ -24,6 +24,10 @@ TEXT_MAX = 500
 BUDGET = 12000          # characters of message text in one answer; the desk shows the agent at most 20000
 
 
+# company-chat-voice-v1: a recording's ref -> its words; the people service points it at chat_voice.lookup.
+VOICE = None
+
+
 def plain(content) -> str:
     if content is None:
         return ""
@@ -45,6 +49,13 @@ def plain(content) -> str:
             extra.append("[图片]")
         elif tp == "EX":
             extra.append("[文件] " + str((e.get("data") or {}).get("name") or ""))
+        elif tp == "AU":
+            # company-chat-voice-v1: a voice message reads as its words once the recogniser has them (chat_voice.py).
+            secs = round(int((e.get("data") or {}).get("duration") or 0) / 1000)
+            said = VOICE((e.get("data") or {}).get("ref")) if VOICE else ""
+            extra.append(("[语音 %d秒]" % secs if secs else "[语音]") + ((" " + said.strip()) if said.strip() else ""))
+        elif tp == "VC":
+            extra.append("[语音通话]")     # company-chat-call-v1: its minutes come as TDH 助手's message after it
     out = (("（引用：%s）" % re.sub(r"\s+", " ", quote).strip()[:60]) if quote.strip() else "") + rest.strip()
     return " ".join(x for x in [out] + extra if x)[:TEXT_MAX]
 
