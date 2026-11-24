@@ -522,11 +522,53 @@ window.__ModuleLoader__.load({
 			// The user (2026-11-24: 「助手 ERP 邮箱遮住了一点对话窗口，往下移动一点」): the whole middle column starts under
 			// the capsule (top 8px + 42px), for the conversation's title row as for ERP and 邮箱.
 			"[class*='_centerCol'] { padding-top: 56px !important; box-sizing: border-box; }",
+			// company-flow-motion-v1: the three regions a switch can change, and how each one goes (blur out, focus in, a soft
+			// spring); a region that did not change crossfades with itself and so stands still. The page itself does not fade.
+			"[class*='_centerCol'] { view-transition-name: cs-mid; }",
+			// company-dock-art-v1: the kernel's right column inside the chat column's 工件 page (under its 今天 / 聊天 / 工件),
+			// hidden on the other two; its resize handle goes with it. Only while the chat column is there (wide windows).
+			"html[data-company-chat-dock] [data-rightbar-col] { position: fixed !important; top: 66px; right: 11px; bottom: 11px; width: calc(var(--company-chat-dock-width) - 2px) !important;",
+			"  z-index: 6; border-radius: 0 0 23px 23px; overflow: hidden; background: var(--look-card); visibility: hidden; opacity: 0; pointer-events: none; }",
+			"html[data-company-chat-dock][data-cs-dock-page='art'] [data-rightbar-col]:has([data-sidebar-right-open='true']) { visibility: visible; opacity: 1; pointer-events: auto; animation: cs-flow-in .5s cubic-bezier(.22,1,.36,1) both; }",
+			"html[data-company-chat-dock] [data-rightbar-col] [data-sidebar-right-panel] { width: 100% !important; height: 100%; }",
+			"html[data-company-chat-dock] [class*='_frame'] > [class*='_handle'] ~ [class*='_handle'] { display: none !important; }",
+			".cs-dock-art-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--look-ink2); font-size: 13.5px; }",
+			".cs-dock-art-empty p { margin: 0; }",
+			".cs-dock-art-empty button { height: 34px; padding: 0 18px; border-radius: 17px; border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink); cursor: pointer;",
+			"  font: 500 13.5px/1 " + FONT + "; transition: transform .3s " + LOOK_SPRING + "; }",
+			".cs-dock-art-empty button:hover { transform: scale(1.05); }",
+			".cs-side { view-transition-name: cs-side; }",
+			".cs-look-dock { view-transition-name: cs-dock; }",
+			"::view-transition-old(root), ::view-transition-new(root) { animation: none; }",
+			"::view-transition-group(cs-mid), ::view-transition-group(cs-side), ::view-transition-group(cs-dock) { animation-duration: .6s; animation-timing-function: cubic-bezier(.22,1,.36,1); }",
+			"::view-transition-old(cs-mid), ::view-transition-old(cs-side), ::view-transition-old(cs-dock) { animation: cs-flow-out .32s cubic-bezier(.4,0,1,1) both; }",
+			"::view-transition-new(cs-mid), ::view-transition-new(cs-side), ::view-transition-new(cs-dock) { animation: cs-flow-in .62s cubic-bezier(.22,1,.36,1) both; }",
+			"@keyframes cs-flow-out { to { opacity: 0; filter: blur(14px); transform: scale(.985); } }",
+			"@keyframes cs-flow-in { from { opacity: 0; filter: blur(16px); transform: translateY(8px) scale(.985); } }",
+			"html.cs-vt-morph::view-transition-group(cs-mid), html.cs-vt-morph::view-transition-group(cs-side), html.cs-vt-morph::view-transition-group(cs-dock) { animation-duration: .55s; animation-timing-function: cubic-bezier(.32,.72,0,1); }",
+			"html.cs-vt-morph::view-transition-old(cs-mid), html.cs-vt-morph::view-transition-old(cs-side), html.cs-vt-morph::view-transition-old(cs-dock) { animation: cs-flow-fade-out .3s ease both; height: 100%; object-fit: none; object-position: left top; }",
+			"html.cs-vt-morph::view-transition-new(cs-mid), html.cs-vt-morph::view-transition-new(cs-side), html.cs-vt-morph::view-transition-new(cs-dock) { animation: cs-flow-fade-in .45s ease both; height: 100%; object-fit: none; object-position: left top; }",
+			"@keyframes cs-flow-fade-out { to { opacity: 0; } }",
+			"@keyframes cs-flow-fade-in { from { opacity: 0; } }",
+			// What newly appears comes into focus too, one after another (the 今天 cards, mail rows, ERP / 邮箱, a menu).
+			".cs-today-card, [data-company-erp], .tm-root, html body .tm-row { animation: cs-flow-in .62s cubic-bezier(.22,1,.36,1) both; }",
+			".cs-today-card:nth-child(2) { animation-delay: .06s; } .cs-today-card:nth-child(3) { animation-delay: .12s; } .cs-today-card:nth-child(4) { animation-delay: .18s; }",
+			"html body .tm-row:nth-child(2) { animation-delay: .03s; } html body .tm-row:nth-child(3) { animation-delay: .06s; } html body .tm-row:nth-child(4) { animation-delay: .09s; }",
+			"html body .tm-row:nth-child(5) { animation-delay: .12s; } html body .tm-row:nth-child(6) { animation-delay: .15s; } html body .tm-row:nth-child(7) { animation-delay: .18s; }",
+			"html body .tm-row:nth-child(8) { animation-delay: .21s; } html body .tm-row:nth-child(n+9) { animation-delay: .24s; }",
+			".cs-me-menu.is-open { animation: cs-flow-pop .5s " + LOOK_SPRING + " both; }",
+			"@keyframes cs-flow-pop { from { opacity: 0; filter: blur(10px); transform: scale(.7); } }",
+			"@media (prefers-reduced-motion: reduce) { .cs-today-card, [data-company-erp], .tm-root, html body .tm-row, .cs-me-menu.is-open { animation: none !important; } }",
 			"[data-company-erp] > div:first-child { border-bottom: 0 !important; }",
 			// 邮箱 in the 今天 look (the user, 2026-11-24: 「邮箱这个界面能不能跟我们的UI风格匹配」): glass controls and
 			// pills, the folders as a capsule, rows as rounded cards, the letter on a glass card. Over the mail page's own CSS.
 			"html body .tm-head, html body .tm-tabs, html body .tm-col, html body .tm-tools { border-color: transparent !important; }",
-			"html body .tm-wrap { padding: 6px 14px; gap: 8px; }",
+			// The user (2026-11-24: 「写邮件能不能放在同一行右边」): one row; the account and search boxes give way first.
+			"html body .tm-wrap { padding: 6px 14px; gap: 8px; flex-wrap: nowrap !important; }",
+			"html body .tm-wrap .tm-acct-pick { flex: 0 1 260px; min-width: 120px; }",
+			"html body .tm-wrap .tm-searchbox { flex: 1 1 180px; min-width: 96px; }",
+			"html body .tm-wrap .tm-btn { flex: none; }",
+			"html body .tm-wrap .tm-btn.is-main { order: 99; margin-left: 2px; }",
 			"html body .tm-btn, html body .tm-acct-pick, html body .tm-in, html body select.tm-in { height: 34px; border-radius: 12px; border: 1px solid var(--look-glass-line); background: var(--look-glass);",
 			"  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 1px 2px rgba(0,0,0,.04); color: var(--look-ink); transition: transform .3s " + LOOK_SPRING + ", background .2s; }",
 			"html body .tm-btn:hover:not(:disabled) { background: var(--look-card); transform: translateY(-1px); }",
@@ -570,6 +612,11 @@ window.__ModuleLoader__.load({
 			// both packs' overlay.yml; the picker goes, above the composer (its whole row) and in a session's title row.
 			"[class*='_centerCol'] [class*='_heroWorkspaceRow'] { display: none !important; }",
 			"[data-slot='conversation.session.header.actions'] > span[class$='_label'] { display: none !important; }",
+			// The user (2026-11-24): no 对话 / 轨迹 / 工件 above the conversation (工件 is the chat column's page), and under
+			// an answer only 复制, 用量 and the time (no 好的回答 / 有问题的回答, no 在新对话中分支).
+			"[class*='_centerCol'] [class*='_header'] [role='tablist'][class$='_tabs'] { display: none !important; }",
+			"[class*='_centerCol'] button[aria-label='好的回答'], [class*='_centerCol'] button[aria-label='有问题的回答'], [class*='_centerCol'] button[aria-label='取消标记'],",
+			"[class*='_centerCol'] button[aria-label='在新对话中分支'], [class*='_centerCol'] button[aria-label^='仅可从已完成轮次'] { display: none !important; }",
 			// The user (2026-11-24: 「深度求索中前面还有一个鲸鱼尾巴的 logo，这是不是就暴露了，能不能设计一个类似 google 那种思考中的
 			// 动态」): no whale; a four-point star that turns and breathes, and the words in a moving blue-violet-rose light.
 			// The words themselves are changed by thinkWords() (正在思考).
@@ -3308,7 +3355,7 @@ window.__ModuleLoader__.load({
 					className: "cs-icon-btn",
 					type: "button",
 					"aria-label": wide ? "收起侧栏" : "展开侧栏",
-					onClick: function () { props.toggleSidebar(); }
+					onClick: function () { flowSwap(function () { props.toggleSidebar(); }, "morph"); }
 				}, React.createElement(P.IconPanelLeftOutline16, { size: 18 }))
 			);
 			const panels = React.useSyncExternalStore(props.panelStore ? props.panelStore.subscribe : noSubscribe, props.panelStore ? props.panelStore.getSnapshot : noPanels);
@@ -3589,12 +3636,14 @@ window.__ModuleLoader__.load({
 					panels: shownPanels,
 					renderSlot: renderSlot,
 					onTab: function (id) {
-						if (props.selectPanel) props.selectPanel(null);
-						if (id === "tasks") closeDetailsQuiet();
-						setTab(id);
-						if (collapsed) props.toggleSidebar();
+						flowSwap(function () {
+							if (props.selectPanel) props.selectPanel(null);
+							if (id === "tasks") closeDetailsQuiet();
+							setTab(id);
+							if (collapsed) props.toggleSidebar();
+						});
 					},
-					onPanel: function (id, on) { props.selectPanel(on ? null : id); }
+					onPanel: function (id, on) { flowSwap(function () { props.selectPanel(on ? null : id); }); }
 				}),
 
 				wide
@@ -3736,6 +3785,30 @@ window.__ModuleLoader__.load({
 			}).map(function (p) {
 				return { id: p.id, label: LOOK_RAIL_PANELS[p.id] || (/artifact/i.test(String(p.id) + String(p.label)) ? "工件" : p.label) };
 			});
+		}
+		// company-flow-motion-v1 (the user, 2026-11-24, a clip of a glass dashboard: 「所有动画展开等等一切都是这样流式非线性
+		// 动画」): a switch is a View Transition — the region that changes blurs out and the new one comes into focus (CSS
+		// below names the regions: the left card, the middle, the chat column; the rest stands still). React renders inside
+		// the transition (flushSync) so the browser has both pictures. No View Transitions (older WebKit), reduced motion,
+		// or one already running: the switch happens at once.
+		let flowBusy = false;
+		function flowSwap(fn, mode) {
+			const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+			if (flowBusy || reduce || typeof document.startViewTransition !== "function" || document.visibilityState !== "visible") { fn(); return; }
+			flowBusy = true;
+			// The switch must happen even when the engine skips the transition without calling back (a hidden page).
+			let ran = false;
+			const run = function () { if (ran) return; ran = true; try { ReactDOM.flushSync(fn); } catch (err) { fn(); } };
+			setTimeout(function () { if (!ran) { run(); flowBusy = false; } }, 400);
+			// "morph": a size change (the left column folding) — the regions slide to their new size on the same curve and
+			// crossfade, no blur.
+			const root = document.documentElement;
+			if (mode === "morph") root.classList.add("cs-vt-morph");
+			try {
+				const vt = document.startViewTransition(run);
+				const done = function () { flowBusy = false; root.classList.remove("cs-vt-morph"); };
+				if (vt && vt.finished && typeof vt.finished.then === "function") vt.finished.then(done, done); else done();
+			} catch (err) { flowBusy = false; fn(); }
 		}
 		function TodayNav(props) {
 			const wide = props.wide;
@@ -3951,7 +4024,7 @@ window.__ModuleLoader__.load({
 						role: "tab",
 						"aria-selected": i === onIndex,
 						className: "cs-mid-tab" + (i === onIndex ? " is-on" : ""),
-						onClick: function () { if (props.selectPanel) props.selectPanel(x.id); }
+						onClick: function () { if (props.selectPanel && i !== onIndex) flowSwap(function () { props.selectPanel(x.id); }); }
 					}, x.label);
 				})), document.body);
 		}
@@ -3998,7 +4071,7 @@ window.__ModuleLoader__.load({
 				style: { left: posHook[0] + "px" },
 				"aria-label": dark ? "切换到白天" : "切换到夜间",
 				title: dark ? "白天" : "夜间",
-				onClick: function () { try { props.theme.setTheme(dark ? "light" : "dark"); } catch (err) {} }
+				onClick: function () { flowSwap(function () { try { props.theme.setTheme(dark ? "light" : "dark"); } catch (err) {} }); }
 			}, icon), document.body);
 		}
 		// 今天, the chat column's first page: what is due today or late, and what waits for my verdict.
@@ -7864,6 +7937,47 @@ window.__ModuleLoader__.load({
 				if (mo) mo.disconnect();
 			};
 		}
+		// company-dock-art-v1: the kernel's right column, by its own buttons and markers (stable across its builds).
+		let lastUserAct = 0;
+		try {
+			const mark = function () { lastUserAct = Date.now(); };
+			window.addEventListener("pointerdown", mark, true);
+			window.addEventListener("keydown", mark, true);
+		} catch (err) {}
+		// The kernel's right-sidebar service (ctx.sidebarRight), for opening the artifact list itself.
+		let rightbarService = null;
+		// The user (2026-11-24: 「工件直接就放工件列表，不要放侧边栏列表」): 工件 opens dsh-artifact's list tab, not the
+		// sidebar's start page; the plain toggle only when that is not possible.
+		function rightbarOpenArtifacts() {
+			const show = function () {
+				try { if (rightbarService && typeof rightbarService.openTab === "function") rightbarService.openTab("artifact"); } catch (err) {}
+			};
+			// openTab places the tab but does not unfold a folded column: unfold it first, then show the list.
+			if (!rightbarOpen()) { rightbarToggle(true); setTimeout(show, 150); } else show();
+		}
+		function rightbarOpen() {
+			try { return !!document.querySelector('[data-sidebar-right-open="true"]'); } catch (err) { return false; }
+		}
+		function rightbarToggle(open) {
+			try {
+				const b = document.querySelector('button[aria-label="' + (open ? "打开右侧边栏" : "收起右侧边栏") + '"], button[aria-label="' + (open ? "Open right sidebar" : "Collapse right sidebar") + '"]');
+				if (b) b.click();
+			} catch (err) {}
+		}
+		// "280px minmax(400px, 1fr) minmax(0px, 471px)" -> its three tracks (spaces inside parentheses kept).
+		function gridTracks(text) {
+			const out = [];
+			let depth = 0;
+			let cur = "";
+			String(text || "").split("").forEach(function (ch) {
+				if (ch === "(") depth++;
+				if (ch === ")") depth--;
+				if (ch === " " && depth === 0) { if (cur) out.push(cur); cur = ""; return; }
+				cur += ch;
+			});
+			if (cur) out.push(cur);
+			return out;
+		}
 		function ChatDock(props) {
 			const wide = React.useSyncExternalStore(chatDockSubscribe, chatDockWide);
 			React.useEffect(function () {
@@ -7886,6 +8000,54 @@ window.__ModuleLoader__.load({
 			}, [wide]);
 			const pageHook = React.useState("today");
 			const page = pageHook[0];
+			const pageRef = React.useRef(page);
+			pageRef.current = page;
+			// company-dock-art-v1 (the user, 2026-11-24: 「任务就不展开了，如果有工件，展开在今天 / 聊天 / 工件这边」「deepseek
+			// harness 底层那个侧边栏默认再也不打开」): the kernel's right column (files, artifacts, browser, terminal) is the
+			// column's third page, 工件, laid over it (CSS: [data-rightbar-col]); it no longer takes a column of its own.
+			// Going to 工件 opens it; leaving closes it. When the kernel opens it right after a click or a key (an artifact
+			// link), the column turns to 工件; when it opens by itself (a restored session, a job), it is closed again.
+			const artHook = React.useState(rightbarOpen());
+			React.useEffect(function () {
+				if (!wide) return undefined;
+				const root = document.documentElement;
+				root.setAttribute("data-cs-dock-page", page);
+				if (page === "art") rightbarOpenArtifacts();
+				if (page !== "art" && rightbarOpen()) rightbarToggle(false);
+				return function () { root.removeAttribute("data-cs-dock-page"); };
+			}, [wide, page]);
+			React.useEffect(function () {
+				if (!wide || typeof MutationObserver === "undefined" || !document.body) return undefined;
+				let was = rightbarOpen();
+				const mo = new MutationObserver(function () {
+					const now = rightbarOpen();
+					if (now === was) return;
+					was = now;
+					artHook[1](now);
+					if (!now || pageRef.current === "art") return;
+					if (Date.now() - lastUserAct < 1500) flowSwap(function () { pageHook[1]("art"); });
+					else rightbarToggle(false);
+				});
+				mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-sidebar-right-open"] });
+				// The frame keeps no column for it: its third track is set to nothing whenever the kernel writes it.
+				let frame = null;
+				let fmo = null;
+				function squeeze() {
+					const f = document.querySelector('[class*="_frame"]');
+					if (f !== frame) {
+						if (fmo) fmo.disconnect();
+						frame = f;
+						fmo = f ? new MutationObserver(squeeze) : null;
+						if (fmo) fmo.observe(f, { attributes: true, attributeFilter: ["style"] });
+					}
+					if (!f || !document.documentElement.hasAttribute("data-company-chat-dock")) return;
+					const tracks = gridTracks(f.style.gridTemplateColumns);
+					if (tracks.length === 3 && tracks[2] !== "0px") f.style.gridTemplateColumns = tracks[0] + " minmax(0px, 1fr) 0px";
+				}
+				squeeze();
+				const tick = setInterval(squeeze, 1500);
+				return function () { mo.disconnect(); if (fmo) fmo.disconnect(); clearInterval(tick); };
+			}, [wide]);
 			const segBox = React.useRef(null);
 			const segThumb = React.useRef(null);
 			React.useLayoutEffect(function () {
@@ -7906,15 +8068,18 @@ window.__ModuleLoader__.load({
 					React.createElement("div", { className: "cs-dock-head" },
 						React.createElement("div", { className: "cs-dock-seg", ref: segBox, role: "tablist" },
 							React.createElement("span", { className: "cs-dock-thumb", ref: segThumb, "aria-hidden": "true" }),
-							[["today", "今天"], ["chat", "聊天"]].map(function (x) {
+							[["today", "今天"], ["chat", "聊天"], ["art", "工件"]].map(function (x) {
 								return React.createElement("button", {
 									key: x[0], type: "button", role: "tab", "data-page": x[0], "aria-selected": page === x[0],
 									className: "cs-dock-tab" + (page === x[0] ? " is-on" : ""),
-									onClick: function () { pageHook[1](x[0]); }
+									onClick: function () { if (page !== x[0]) flowSwap(function () { pageHook[1](x[0]); }); }
 								}, x[1], x[0] === "chat" && unread > 0 && page !== "chat" ? React.createElement("i", { className: "cs-dock-dot" }) : null);
 							}))),
 					React.createElement("div", { className: "cs-dock-body" + (page === "today" ? " is-today" : "") },
 						page === "today" ? React.createElement(TodayPane) : null,
+						page === "art" && !artHook[0] ? React.createElement("div", { className: "cs-dock-art-empty" },
+							React.createElement("p", null, "打开的工件、文件和网页会显示在这里"),
+							React.createElement("button", { type: "button", onClick: function () { rightbarOpenArtifacts(); } }, "打开工件列表")) : null,
 						React.createElement("div", { className: "cs-dock-chat", style: page === "chat" ? null : { visibility: "hidden" } }, React.createElement(ChatFrame)))
 				),
 				document.body
@@ -8967,6 +9132,10 @@ window.__ModuleLoader__.load({
 				}, true);
 			} catch (err) {}
 			if (typeof ctx.inject === "function") {
+				ctx.inject(["sidebarRight"], function (sctx) {
+					rightbarService = sctx.sidebarRight || null;
+					if (typeof sctx.effect === "function") sctx.effect(function () { return function () { rightbarService = null; }; }, "company-shell: right sidebar service");
+				});
 				ctx.inject(["slots", "theme"], function (tctx) {
 					tctx.slots.inject("shell.overlay", function () {
 						return tctx.slots.register({

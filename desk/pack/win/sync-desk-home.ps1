@@ -36,6 +36,16 @@ if (Test-Path -LiteralPath $settingsFrom) {
   $st = [IO.File]::ReadAllText($settingsTo)
   $st2 = [regex]::Replace($st, '(?m)^([ \t]*agentTerminalTools:\s*)\S+', '${1}true')
   $st2 = [regex]::Replace($st2, '(?m)^([ \t]*agentOpenTools:\s*)\S+', '${1}true')
+  # company-look-today-v1 (the user, 2026-11-24: 「任务就不展开了」): the side column does not open by itself.
+  foreach ($k in @('autoOpenSubagent', 'autoOpenJobs')) {
+    if ($st2 -match ('(?m)^[ \t]*' + $k + ':')) {
+      $st2 = [regex]::Replace($st2, ('(?m)^([ \t]*' + $k + ':\s*)\S+'), '${1}false')
+    } elseif ($st2 -match '(?m)^dsh-better-sidebar:') {
+      $st2 = [regex]::Replace($st2, '(?m)^dsh-better-sidebar:[ \t]*\r?$', ("dsh-better-sidebar:`r`n  " + $k + ': false'), 1)
+    } else {
+      $st2 = $st2.TrimEnd() + "`r`ndsh-better-sidebar:`r`n  " + $k + ": false`r`n"
+    }
+  }
   $st3 = [regex]::Replace($st2, '(?m)^(permissionPresets:\r?\n  defaultPreset:\s*)\S+', '${1}danger-full-access')
   if ($st3 -eq $st2 -and $st2 -notmatch '(?m)^permissionPresets:') {
     $st3 = "permissionPresets:`r`n  defaultPreset: danger-full-access`r`n" + $st2

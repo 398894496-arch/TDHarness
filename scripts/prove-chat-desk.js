@@ -400,11 +400,12 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 	assert.equal(aside.props["aria-label"], "聊天");
 	// company-look-today-v1: 今天 / 聊天 on top; the chat page stays mounted under 今天 (hidden), so it keeps ringing.
 	const tabsD = aside.children[0].children[0].children.slice(1);
-	assert.deepEqual(tabsD.map((b) => b.props["data-page"]), ["today", "chat"], "今天 and 聊天");
+	assert.deepEqual(tabsD.map((b) => b.props["data-page"]), ["today", "chat", "art"], "今天, 聊天 and 工件 (company-dock-art-v1: the kernel's right column)");
 	assert.equal(tabsD[0].props["aria-selected"], true, "opens on 今天");
 	const dockBody = aside.children[1];
 	assert.equal(dockBody.children[0].type.name, "TodayPane");
-	const chatBox = dockBody.children[1];
+	assert.equal(dockBody.children[1], null, "工件's empty note only on 工件");
+	const chatBox = dockBody.children[2];
 	assert.equal(chatBox.props.style.visibility, "hidden", "the chat page waits, mounted");
 	assert.equal(chatBox.children[0].type.name, "ChatFrame", "the same chat page as everywhere else");
 	assert.equal(W.attrs["data-company-chat-dock"], undefined, "nothing given up before it is on screen");

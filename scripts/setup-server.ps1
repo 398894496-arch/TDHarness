@@ -207,6 +207,13 @@ if (-not (Test-Path -LiteralPath $gwEnv)) {
 foreach ($n in @('_office', '_shared', '_skills', '_control', 'content', '_handbook', '_handbook\_company')) {
   New-Item -ItemType Directory -Force -Path (Join-Path $Company $n) | Out-Null
 }
+# company-agent-identity-v1: every session reads the share root's AGENTS.md (agent-instructions stops at .company-root):
+# the assistant is TDHarness, and does not name its model or the harness under it. A site's own edits are kept.
+$rootAgents = Join-Path $Company 'AGENTS.md'
+if (-not (Test-Path -LiteralPath $rootAgents)) {
+  Copy-Item -LiteralPath (Join-Path $Server 'company-root\AGENTS.md') -Destination $rootAgents
+  Write-Output 'COMPANY_AGENTS_SEEDED=1'
+}
 
 $share = Get-SmbShare -Name 'dsh-company' -ErrorAction SilentlyContinue
 if (-not $share) {
