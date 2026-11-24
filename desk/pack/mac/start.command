@@ -26,7 +26,7 @@ case "$ROOT" in
     mkdir -p "$HOME/.dsh-company-rc8/desk-home"
     printf '%s\n' "Error: 请把 TDHarness 拖到「应用程序」后再打开。不要从下载文件夹或磁盘映像里直接开。" > "$HOME/.dsh-company-rc8/desk-home/web-runtime.err"
     boot_status fail
-    osascript -e 'display dialog "请把 TDHarness 拖到「应用程序」后再打开。不要从下载文件夹或磁盘映像里直接开。" buttons {"OK"} default button "OK" with title "TDHarness"' >/dev/null 2>&1 || true
+    [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ] || osascript -e 'display dialog "请把 TDHarness 拖到「应用程序」后再打开。不要从下载文件夹或磁盘映像里直接开。" buttons {"OK"} default button "OK" with title "TDHarness"' >/dev/null 2>&1 || true
     echo "BLOCKED=app-translocation" >&2
     exit 2
     ;;
@@ -82,12 +82,10 @@ esac
 unset DEEPSEEK_API_KEY
 TOKFILE="${HOME}/.dsh-company-rc8/gw.token"
 LOGIN_URL="https://{{TDH_HOST}}:8443/company/login"
-# JOIN_BEFORE_LOGIN=1
-# Off-LAN must be on 100.x before this POST hits the office login URL.
-# Run with bash, so the file need not carry an execute bit (company-mac-tailnet-join-v1).
-if [ -f "$ROOT/mac-join-off-lan.sh" ]; then
-  bash "$ROOT/mac-join-off-lan.sh" "$ROOT" || true
-fi
+# company-no-tailnet-prompt-v1 (the user, 2026-11-25: 「任何客户端都不要弹出这个窗口，默认连接新买的服务器」): no more
+# 「加入公司的加密网络（Tailscale）」 dialog (mac-join-off-lan.sh). Away from the office the desk reaches the server
+# through the company's own tunnel (mac-tunnel.sh below, its service up from boot); a Mac still on Tailscale keeps
+# using it until then, without being asked.
 # company-login-screen-update-v1
 # Update ON the login path, BEFORE roster password. Do not wait for LOGIN_OK.
 NODEBIN="$ROOT/node/bin/node"
@@ -99,14 +97,20 @@ if [ -f "$ROOT/pack-update-check.js" ] && [ -f "$ROOT/BUILD.json" ]; then
     *UPDATE_AVAILABLE=1*)
       SERVED_MARK="$(printf '%s\n' "$UPD_OUT" | awk -F= '/^SERVED_MARK=/{print $2; exit}')"
       boot_status updating
-      CHOICE="$(osascript -e 'button returned of (display dialog "公司已发新版。点「现在更新」一键更新，不用打开下载页。" buttons {"退出","稍后再说","现在更新"} default button "现在更新" with title "TDHarness")' || true)"
+      # company-login-page-v1 (the user, 2026-11-24: 「更新什么的这些弹窗能省则省，更新也做到 UI 里」): a shell that shows
+      # the page updates without asking; the progress is on its waiting page. Older shells keep the question.
+      if [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ]; then
+        CHOICE="现在更新"
+      else
+        CHOICE="$(osascript -e 'button returned of (display dialog "公司已发新版。点「现在更新」一键更新，不用打开下载页。" buttons {"退出","稍后再说","现在更新"} default button "现在更新" with title "TDHarness")' || true)"
+      fi
       case "$CHOICE" in
         退出)
           boot_status quit
           exit 2
           ;;
         现在更新)
-          osascript -e 'display dialog "正在下载并安装新版，进度显示在 TDHarness 窗口里。" buttons {"好"} giving up after 3 with title "TDHarness"' >/dev/null 2>&1 || true
+          [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ] || osascript -e 'display dialog "正在下载并安装新版，进度显示在 TDHarness 窗口里。" buttons {"好"} giving up after 3 with title "TDHarness"' >/dev/null 2>&1 || true
           if lsof -nP -iTCP:17803 -sTCP:LISTEN >/dev/null 2>&1; then
             kill $(lsof -nP -t -iTCP:17803 -sTCP:LISTEN) 2>/dev/null || true
             sleep 1
@@ -129,13 +133,15 @@ if [ -f "$ROOT/pack-update-check.js" ] && [ -f "$ROOT/BUILD.json" ]; then
               *UPDATE_AVAILABLE=1*)
                 boot_status fail
                 echo "TREE_RESTORE_FAIL=1"
-                osascript -e 'display dialog "更新失败。程序没有换掉。看 ~/Library/Logs/TDHarness.log" buttons {"OK"} with title "TDHarness"' >/dev/null 2>&1 || true
+                mkdir -p "$HOME/.dsh-company-rc8/desk-home"
+                printf '%s\n' "Error: 更新没有完成，程序没有换掉。请重新打开再试一次；一直这样请找管理员。" > "$HOME/.dsh-company-rc8/desk-home/web-runtime.err"
+                [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ] || osascript -e 'display dialog "更新失败。程序没有换掉。看 ~/Library/Logs/TDHarness.log" buttons {"OK"} with title "TDHarness"' >/dev/null 2>&1 || true
                 exit 2
                 ;;
             esac
             echo "TREE_RESTORE_REUSED=1"
           fi
-          osascript -e 'display dialog "更新完成。请重新登录。" buttons {"好"} giving up after 3 with title "TDHarness"' >/dev/null 2>&1 || true
+          [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ] || osascript -e 'display dialog "更新完成。请重新登录。" buttons {"好"} giving up after 3 with title "TDHarness"' >/dev/null 2>&1 || true
           exec /bin/bash "$ROOT/start.command"
           ;;
         *)
@@ -282,6 +288,13 @@ mkdir -p "$HOME/Library/Fonts" "$DSH_HOME/work"
 FONT_SRC="$ROOT/fonts/NotoSansCJKsc-Regular.otf"
 [[ -f "$FONT_SRC" ]] || { echo "bundled-font-missing" >&2; exit 2; }
 cp "$FONT_SRC" "$HOME/Library/Fonts/NotoSansCJKsc-Regular.otf"
+# company-login-page-v1: the slow steps say themselves on the shell's waiting page (share, lease, agent).
+# company-wg-desk-v1 (mac-tunnel.sh): the company tunnel, installed once and enrolled with this sign-in's token.
+if [ -f "$ROOT/mac-tunnel.sh" ]; then
+  boot_status share
+  BOOT_STATUS="$BOOT_STATUS" bash "$ROOT/mac-tunnel.sh" "$ROOT" "$NODEBIN" "https://{{TDH_HOST}}:8443" || true
+fi
+boot_status share
 if [ -x "$ROOT/mac-mount-company.sh" ]; then
   if ! bash "$ROOT/mac-mount-company.sh"; then
     boot_status fail
@@ -311,6 +324,16 @@ do
     break
   fi
 done
+# company-desk-skills-v1 (desk-store.js skills): the company's skills over HTTPS, one tar and only when they changed,
+# into a copy beside the cache; the share (SMB, 35 s for 12 files away from the office) only when that fails.
+if [ -f "$ROOT/desk-store.js" ]; then
+  SKILL_SHARE_COPY="$HOME/.dsh-company-rc8/skills-share"
+  if "$ROOT/node/bin/node" "$ROOT/desk-store.js" skills --out "$SKILL_SHARE_COPY" --site "https://{{TDH_HOST}}:8443"; then
+    SHARE_SKILLS="$SKILL_SHARE_COPY"
+  else
+    echo "SKILLS_FETCH=share"
+  fi
+fi
 if [ -f "$ROOT/sync-skills.js" ]; then
   "$ROOT/node/bin/node" "$ROOT/sync-skills.js" --cache "$SKILL_CACHE" \
     --share "$SHARE_SKILLS" --seed "$ROOT/skills" \
@@ -406,14 +429,30 @@ LEASE_JS="$ROOT/desk-lease.js"
 LEASE_SITE="https://{{TDH_HOST}}:8443"
 PIN_ORG=""
 [[ -f "$HOME/.dsh-company-rc8/work.org" ]] && PIN_ORG="$(tr -d '\r\n' < "$HOME/.dsh-company-rc8/work.org")"
+# company-desk-store-v1 (desk-store.js): the chats in a disk in this Mac's memory while the desk runs, taken whole from
+# the server at the seat and sent back within a second or two of each change; nothing of them on this Mac's disk.
+# TDH_DESK_STORE=0 keeps the old way (the kernel reads them on the share). No memory disk: the old way too.
+STORE_ARGS=()
+STORE_DIR="$HOME/.dsh-company-rc8/desk-mem"
+if [ "${TDH_DESK_STORE:-1}" = 1 ] && [ -f "$ROOT/mac-ramdisk.sh" ] && [ -f "$ROOT/desk-store.js" ]; then
+  if /bin/bash "$ROOT/mac-ramdisk.sh" up "$STORE_DIR" 512; then STORE_ARGS=(--store-dir "$STORE_DIR"); else echo "STORE_OFF=ramdisk"; fi
+fi
 if [ -f "$LEASE_JS" ]; then
-  osascript -e 'display dialog "正在交接会话。" buttons {"OK"} giving up after 1 with title "TDHarness"' >/dev/null 2>&1 || true
-  if ! "$NODEBIN" "$LEASE_JS" acquire --personal "$WORK" --org "$PIN_ORG" --home "$DSH_HOME" --site "$LEASE_SITE"; then
+  boot_status lease
+  [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ] || osascript -e 'display dialog "正在交接会话。" buttons {"OK"} giving up after 1 with title "TDHarness"' >/dev/null 2>&1 || true
+  if ! "$NODEBIN" "$LEASE_JS" acquire --personal "$WORK" --org "$PIN_ORG" --home "$DSH_HOME" --site "$LEASE_SITE" "${STORE_ARGS[@]+"${STORE_ARGS[@]}"}"; then
     boot_status fail
     printf '%s\n' "Error: 拿不到座位，或公司盘太慢。没有开桌。" > "$DSH_HOME/web-runtime.err"
-    osascript -e 'display dialog "拿不到座位，或公司盘太慢。没有开桌。" buttons {"OK"} with title "TDHarness"' >/dev/null 2>&1 || true
+    [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ] || osascript -e 'display dialog "拿不到座位，或公司盘太慢。没有开桌。" buttons {"OK"} with title "TDHarness"' >/dev/null 2>&1 || true
     echo "BLOCKED=desk-lease" >&2
     exit 2
+  fi
+  # The seat took the chats into the memory disk: send its changes from now on (the lease watch keeps this alive).
+  if [ -f "$HOME/.dsh-company-rc8/desk-store.on" ] && [ -f "$ROOT/desk-store.js" ]; then
+    nohup "$NODEBIN" "$ROOT/desk-store.js" sync --dir "$(tr -d '\r\n' < "$HOME/.dsh-company-rc8/desk-store.on")" --site "$LEASE_SITE" >> "$DSH_HOME/desk-store.log" 2>&1 &
+    echo "STORE_SYNC_PID=$!"
+  elif [ ${#STORE_ARGS[@]} -gt 0 ]; then
+    /bin/bash "$ROOT/mac-ramdisk.sh" down "$STORE_DIR" >/dev/null 2>&1 || true
   fi
 fi
 # Leftover 17803 keeps the overlay from the last boot. After a wipe of
@@ -427,12 +466,26 @@ if lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1; then
     sleep 0.25
   done
 fi
+boot_status agent
+# company-desk-fresh-url-v1 (the user, 2026-11-24: 「登陆进去以后没拿到我的会话啊」): the window opens the last
+# "dsh web: …?token=" line of web-runtime.out. The desk opens its port minutes before it prints that line when the
+# share is slow (through a relay), and the file keeps the last run's lines, so the window took the last run's token:
+# a desk that never connects, no sessions. This run's lines only, and ready only once this run's address is out.
+if [[ -s "$DSH_HOME/web-runtime.out" ]]; then mv -f "$DSH_HOME/web-runtime.out" "$DSH_HOME/web-runtime.out.prev" || true; fi
+: > "$DSH_HOME/web-runtime.out"
 DESK_CWD="$DESK_CWD" DESK_OUT="$DSH_HOME/web-runtime.out" DESK_ERR="$DSH_HOME/web-runtime.err" \
   "$NODEBIN" "$ROOT/mac-desk-spawn.js" "$BIN" --profile web --patch "$OV" \
     --host 127.0.0.1 --port "$PORT" --no-open \
     --trusted-host 127.0.0.1 --trusted-host localhost
 for i in $(seq 1 40); do
   lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 && break
+  sleep 1
+done
+# The address: up to 15 minutes (a cold start over the relay took 8); the window keeps its waiting page meanwhile.
+for i in $(seq 1 900); do
+  grep -q "^dsh web: http://127.0.0.1:$PORT/" "$DSH_HOME/web-runtime.out" 2>/dev/null && break
+  lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 || break
+  [[ "$(cat "$BOOT_STATUS" 2>/dev/null)" == "quit" ]] && exit 2
   sleep 1
 done
 PIN_PERSONAL=""

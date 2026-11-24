@@ -93,7 +93,21 @@ function systemLookup(host, opts, cb) {
   };
 }
 
-// cb(address, how): how is lan | tailnet | vendor, or "" with no address. lookup may return a function that ends it.
+// company-wg-desk-v1 (tdh-tunnel, mac-tunnel.sh): the company's own tunnel, when this Mac has it and it is up, is how
+// the server is reached away from the office (before Tailscale, which it replaces). Up: the service's status and a
+// route to the server through a utun interface.
+const TUNNEL_DIR = process.env.TDH_TUNNEL_DIR || "/Library/Application Support/TDHarness/tunnel";
+const TUNNEL_SERVER = process.env.TDH_TUNNEL_SERVER || "10.66.0.2";
+function tunnelUp() {
+  try {
+    if (!fs.existsSync(path.join(TUNNEL_DIR, "status.json"))) return false;
+    const r = require("child_process").spawnSync("/sbin/route", ["-n", "get", "-inet", TUNNEL_SERVER], { encoding: "utf8", timeout: 1500 });
+    return r.status === 0 && /interface: utun\d+/.test(String(r.stdout || ""));
+  } catch {
+    return false;
+  }
+}
+// cb(address, how): how is lan | tunnel | tailnet | vendor, or "" with no address. lookup may return a function that ends it.
 function find(lookup, cb) {
   let done = false;
   let waited = false;
@@ -111,6 +125,7 @@ function find(lookup, cb) {
   };
   const settle = () => {
     if (lan) return finish(lan, "lan");
+    if ((waited || lanDone) && tunnelUp()) return finish(TUNNEL_SERVER, "tunnel");
     if (ts && (waited || lanDone)) return finish(ts, "tailnet");
     if (lanDone && tsDone) {
       const v = vendorIp();

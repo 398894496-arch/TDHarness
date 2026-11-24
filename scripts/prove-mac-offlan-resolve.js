@@ -8,6 +8,9 @@
 // anything else 6); start.command, tree-restore.sh and mac-mount-company.sh use it. Needs openssl (a test cert).
 // Ends with MAC_OFFLAN_RESOLVE_PROVE_OK=1.
 'use strict';
+// company-wg-desk-v1: this Mac's own company tunnel must not answer for the fake server here (mac-resolve.js asks the
+// tunnel before Tailscale); point its status at nothing.
+process.env.TDH_TUNNEL_DIR = '/nonexistent-tdh-tunnel-for-prove';
 
 const assert = require('assert');
 const crypto = require('crypto');

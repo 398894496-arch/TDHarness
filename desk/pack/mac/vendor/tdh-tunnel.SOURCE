@@ -1,0 +1,1 @@
+tdh-tunnel: desk/tunnel (this repository), built universal arm64+amd64 with CGO off, -trimpath. It embeds wireguard-go b3bc704 (https://git.zx2c4.com/wireguard-go, MIT, see wireguard-go.LICENSE) and golang.org/x/{crypto,net,sys} (BSD-3-Clause).

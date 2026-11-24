@@ -22,6 +22,8 @@ from html import escape as html_escape
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import desk_lease  # noqa: E402
+import desk_store  # noqa: E402
+import wg_peers  # noqa: E402
 import tickets as ticket_board  # noqa: E402
 import daily_report  # noqa: E402
 import notify  # noqa: E402
@@ -1365,6 +1367,107 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return data if isinstance(data, dict) else None
 
+    def _wg(self, what: str, payload: dict) -> None:
+        """company-wg-enroll-v1 (wg_peers.py): a desk's tunnel key (enroll, with its sign-in token) and the hub's list
+        of desks (peers, with the hub's own token). Under /company/desk-lease so the site's Caddy route reaches it."""
+        runtime = TOKEN_STORE.parent
+        store = runtime / "wg-peers.json"
+        if what == "peers":
+            if not wg_peers.hub_token_ok(runtime, self._token()):
+                self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
+                return
+            def active(login: str) -> bool:
+                row = person(login) if login else None
+                return bool(row) and row.get("status", "active") == "active"
+            self._send(*json_bytes({"ok": True, "peers": wg_peers.peers_for_hub(store, active)}))
+            return
+        login = login_from_token(self._token())
+        row = person(login) if login else None
+        if not row or row.get("status", "active") != "active":
+            self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
+            return
+        hub = wg_peers.hub_config(runtime)
+        if not hub:
+            self._send(*json_bytes({"ok": False, "error": "no-hub"}, 503))
+            return
+        if what == "hub":  # what a desk installs its tunnel with, before it has a key to enroll
+            self._send(*json_bytes({"ok": True, "hub_pubkey": hub["pubkey"], "endpoint": hub["endpoint"],
+                                    "allowed": wg_peers.NET + "0/24", "server": hub["server"]}))
+            return
+        try:
+            got = wg_peers.enroll(store, login, str(payload.get("device_id") or ""), str(payload.get("pubkey") or ""))
+        except wg_peers.PeerError as e:
+            self._send(*json_bytes({"ok": False, "error": e.code}, e.status))
+            return
+        sys.stderr.write("people-api wg enroll %s %s\n" % (login, got["address"]))
+        self._send(*json_bytes({"ok": True, "address": got["address"], "hub_pubkey": hub["pubkey"],
+                                "endpoint": hub["endpoint"], "allowed": wg_peers.NET + "0/24", "server": hub["server"]}))
+
+    def _desk_skills(self, payload: dict) -> None:
+        """company-desk-skills-v1 (the user, 2026-11-25: 「还能再优化吗 启动时间」): the company's skills (company/_skills)
+        as one tar for any signed-in person, with its digest; when the desk already holds that digest, only "same".
+        A desk copied the 12 files over SMB at every open: 35 s away from the office, for 269 KB."""
+        login = login_from_token(self._token())
+        row = person(login) if login else None
+        if not row or row.get("status", "active") != "active":
+            self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
+            return
+        try:
+            raw = desk_store.pack(ROOT / "company" / "_skills")
+        except OSError as e:
+            sys.stderr.write("people-api desk-skills error %s\n" % str(e)[:200])
+            self._send(*json_bytes({"ok": False, "error": "io"}, 500))
+            return
+        tag = hashlib.sha256(raw).hexdigest()[:32]
+        if str(payload.get("etag") or "") == tag:
+            self._send(*json_bytes({"ok": True, "same": True, "etag": tag}))
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-tar")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Desk-Etag", tag)
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _desk_store(self, what: str, payload: dict) -> None:
+        """company-desk-store-v1 (desk_store.py): the person's chats whole (pull) and back in pieces (push), only for
+        the device that holds their seat. Under /company/desk-lease so the site's Caddy route already reaches it."""
+        login = login_from_token(self._token())
+        row = person(login) if login else None
+        if not row or row.get("status", "active") != "active":
+            self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
+            return
+        personal = str(row.get("personal") or "").strip()
+        if not personal:
+            self._send(*json_bytes({"ok": False, "error": "no-personal"}, 404))
+            return
+        device = str(payload.get("device_id") or "").strip()
+        lease = desk_lease.load_lease(desk_lease.lease_path(login), login)
+        desk_lease.expire(lease, int(time.time()))
+        if not device or str(lease.get("holder") or "") != device:
+            self._send(*json_bytes({"ok": False, "error": "not-holder"}, 409))
+            return
+        root = desk_store.root_of(personal)
+        try:
+            if what == "pull":
+                raw = desk_store.pack(root)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/x-tar")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+                sys.stderr.write("people-api desk-store pull %s %d bytes\n" % (login, len(raw)))
+                return
+            body = desk_store.apply_ops(root, payload.get("ops"))
+            self._send(*json_bytes(body, 200 if body.get("ok") else 409))
+        except desk_store.StoreError as e:
+            self._send(*json_bytes({"ok": False, "error": e.code, "detail": e.detail}, e.status))
+        except OSError as e:
+            sys.stderr.write("people-api desk-store %s %s error %s\n" % (what, login, str(e)[:200]))
+            self._send(*json_bytes({"ok": False, "error": "io"}, 500))
+
     def _login_more(self, what: str, payload: dict) -> None:
         """company-login-sms-v1 / company-login-remember-v1: a text code (sms-code), signing in with it (sms), a
         remembered device (resume), forgetting it (forget). Reached through Caddy's /company/login*."""
@@ -1903,6 +2006,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             login_succeeded(name, src)
             self._send(*json_bytes(with_remember(hit, payload, "password")))
+            return
+        if path in ("/company/desk-lease/wg/enroll", "/company/desk-lease/wg/peers", "/company/desk-lease/wg/hub"):
+            self._wg(path.rsplit("/", 1)[-1], payload)
+            return
+        if path == "/company/desk-lease/store/skills":
+            self._desk_skills(payload)
+            return
+        if path in ("/company/desk-lease/store/pull", "/company/desk-lease/store/push"):
+            self._desk_store(path.rsplit("/", 1)[-1], payload)
             return
         if path == "/company/desk-lease":
             login = login_from_token(self._token())

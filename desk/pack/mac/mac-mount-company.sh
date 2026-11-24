@@ -61,7 +61,9 @@ pick_host() {
     if [ -f "$HERE/mac-resolve.js" ]; then
       how="$( { NODE_OPTIONS= "$NODE" "$HERE/mac-resolve.js" --how 2>/dev/null || true; } | awk '{ print $2 }')"
     fi
-    if [ "$how" != "tailnet" ] && [ "$how" != "vendor" ] && host_up "$LAN"; then echo "$LAN"; return 0; fi
+    # company-wg-desk-v1: through the company's own tunnel (tdh-tunnel) when that is how the server is reached.
+    if [ "$how" = "tunnel" ] && host_up "10.66.0.2"; then echo "10.66.0.2"; return 0; fi
+    if [ "$how" != "tailnet" ] && [ "$how" != "vendor" ] && [ "$how" != "tunnel" ] && host_up "$LAN"; then echo "$LAN"; return 0; fi
     if [[ "$TS" != "$LAN" ]] && host_up "$TS"; then echo "$TS"; return 0; fi
     return 1
   fi
@@ -73,6 +75,35 @@ pick_host() {
   return 1
 }
 
+# company-smb-single-channel-v1 (2026-11-25): no SMB multichannel. The company server offers every network it is on
+# (the office LAN, Tailscale, the company tunnel) and macOS opened a second channel over the old Tailscale route while
+# the first ran through the tunnel: every step on the share took 2-3 s instead of 0.5 s. One channel, the way the mount
+# was asked for. Set in this user's own nsmb.conf (no password); a mount made before it is mounted again.
+NSMB="${NSMB_CONF:-$HOME/Library/Preferences/nsmb.conf}"
+if ! grep -qiE '^[[:space:]]*mc_on[[:space:]]*=[[:space:]]*no' "$NSMB" 2>/dev/null; then
+  mkdir -p "$(dirname "$NSMB")"
+  if grep -qi '^\[default\]' "$NSMB" 2>/dev/null; then
+    /usr/bin/sed -i '' '/^\[[Dd][Ee][Ff][Aa][Uu][Ll][Tt]\]/a\
+mc_on=no
+' "$NSMB"
+  else
+    printf '[default]\nmc_on=no\n' >> "$NSMB"
+  fi
+  echo "SMB_MULTICHANNEL_OFF=1"
+fi
+smb_multichannel_on() { /usr/bin/smbutil multichannel -m "$MNT" 2>/dev/null | grep -q "Multichannel ON: yes"; }
+# A live SMB mount holds a TCP connection to the server's 445; none established means the mount is a leftover.
+smb_alive() {
+  local host
+  host="$(/sbin/mount | awk -v m=" on $MNT (" 'index($0, m) && /\(smbfs/ { sub(/^\/\/[^@]*@/, "", $1); sub(/\/.*/, "", $1); print $1; exit }')"
+  [ -n "$host" ] || return 0
+  local ip="$host"
+  if ! [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    ip="$( { dscacheutil -q host -a name "$host" 2>/dev/null || true; } | awk '/^ip_address:/ { print $2; exit }')"
+  fi
+  [ -n "$ip" ] || return 0
+  /usr/sbin/netstat -an -p tcp 2>/dev/null | awk -v t="$ip.445" '$5 == t && $6 == "ESTABLISHED" { f = 1 } END { exit f ? 0 : 1 }'
+}
 mkdir -p "$MNT"
 if is_smb; then
   have="$(mounted_smb_user || true)"
@@ -82,6 +113,15 @@ if is_smb; then
     echo "MOUNT_REAUTH=$have->$SMB_USER"
     /sbin/umount "$MNT" 2>/dev/null || diskutil unmount "$MNT" >/dev/null || {
       echo "BLOCKED=mount-reauth-busy|$have" >&2
+      exit 2
+    }
+  elif ! smb_alive || smb_multichannel_on; then
+    # company-mount-stale-v1 (2026-11-25): mounted, but its connection to the server is gone (the route to the server
+    # changed under it: Tailscale to the company tunnel, a hand-made tunnel to the service). macOS keeps such a mount
+    # and every step on the share waits seconds for it (8.6 s to write a small file). Let it go and mount again.
+    echo "MOUNT_STALE=1"
+    /sbin/umount "$MNT" 2>/dev/null || /usr/sbin/diskutil unmount force "$MNT" >/dev/null 2>&1 || {
+      echo "BLOCKED=mount-stale-busy" >&2
       exit 2
     }
   else

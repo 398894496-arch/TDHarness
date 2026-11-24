@@ -14,7 +14,7 @@ const path = require('path');
 const zlib = require('zlib');
 const { spawn, spawnSync } = require('child_process');
 
-const DESK_PORT = 17803;
+const DESK_PORT = Number(process.env.TDH_DESK_PORT || 17803);  // tests point it at a demo desk
 const KICK_WAIT_MS = 50000;
 const HEARTBEAT_MS = 12000;
 // company-lease-derp-hb-v1: over DERP one TLS handshake to 8443 is ~2s and
@@ -1511,10 +1511,11 @@ function seatNote(why) {
 }
 
 function notify(msg) {
+  // company-login-page-v1: the shell says it in its own window (it reads lease.note).
+  // company-no-dialogs-v1 (the user, 2026-11-25: 「还在弹窗口，能不能以后不弹这个窗口」): never a system dialog,
+  // whatever started this. A dialog also held this process until someone pressed OK, and the seat's last steps
+  // (the chats' last send, giving the memory disk back) waited behind it.
   writeAscii(path.join(rcDir(), 'lease.note'), msg);
-  if (process.platform === 'darwin') {
-    spawnSync('osascript', ['-e', 'display dialog ' + JSON.stringify(msg) + ' buttons {"OK"} with title "TDHarness"'], { stdio: 'ignore' });
-  }
 }
 
 function deskUp() {
@@ -1542,14 +1543,74 @@ function stopDesk() {
   ], { stdio: 'ignore' });
 }
 
+// company-desk-store-v1 (desk-store.js, mac-ramdisk.sh, server/desk_store.py): the chats in a memory disk while the
+// desk runs, taken whole from the server at the seat and sent back as they change. Off the share's SMB for the
+// kernel's own session logs: that was all of a slow open (190 s against 23 s for the same 51 sessions).
+function storeMarker() { return path.join(rcDir(), 'desk-store.on'); }
+function storeScript() { return path.join(__dirname, 'desk-store.js'); }
+function storeArgs(cmd, dir) {
+  const a = [storeScript(), cmd, '--dir', dir];
+  if (arg('site')) a.push('--site', arg('site'));
+  if (arg('rc')) a.push('--rc', arg('rc'));
+  return a;
+}
+function storeDirOn() {
+  const d = readTrim(storeMarker());
+  return d && fs.existsSync(path.join(d, '.desk-store')) ? d : '';
+}
+function storePull(dir) {
+  const r = spawnSync(process.execPath, storeArgs('pull', dir), { encoding: 'utf8', timeout: 180000, env: process.env });
+  process.stdout.write(String(r.stdout || ''));
+  return r.status == null ? 9 : r.status;
+}
+function storeSyncPid(dir) {
+  const pid = Number(readTrim(path.join(dir, '.desk-store', 'sync.pid')) || 0);
+  if (!pid) return 0;
+  try { process.kill(pid, 0); return pid; } catch { return 0; }
+}
+function storeSyncStart(dir) {
+  if (storeSyncPid(dir)) return;
+  const log = fs.openSync(path.join(deskHome(), 'desk-store.log'), 'a');
+  const c = spawn(process.execPath, storeArgs('sync', dir), { stdio: ['ignore', log, log], detached: true, env: process.env });
+  c.unref();
+  process.stdout.write('STORE_SYNC_STARTED=' + c.pid + '\n');
+}
+// Send what is left, then give the memory back. Kept when something could not be sent: the next open sends it first.
+async function storeStop() {
+  const dir = storeDirOn();
+  if (!dir) return;
+  const pid = storeSyncPid(dir);
+  if (pid) {
+    try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ }
+    const end = Date.now() + 30000;
+    while (Date.now() < end) {
+      try { process.kill(pid, 0); } catch { break; }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  const f = spawnSync(process.execPath, storeArgs('flush', dir), { encoding: 'utf8', timeout: 60000, env: process.env });
+  process.stdout.write(String(f.stdout || ''));
+  if (f.status === 0) {
+    const sh = path.join(__dirname, 'mac-ramdisk.sh');
+    if (process.platform === 'darwin' && fs.existsSync(sh)) spawnSync('/bin/bash', [sh, 'down', dir], { stdio: 'ignore', timeout: 30000 });
+    try { fs.unlinkSync(storeMarker()); } catch { /* */ }
+    process.stdout.write('STORE_CLOSED=1\n');
+  } else {
+    process.stdout.write('STORE_KEPT=' + (f.status == null ? 'timeout' : f.status) + '\n');
+    toast('还有对话没传到公司服务器（网络断了）。下次打开 TDHarness 会先自动补传，别重启电脑。');
+  }
+}
+
 async function cmdAcquire() {
   const personal = personalPath();
   const org = orgPath();
   const home = deskHome();
   if (!personal || !fs.existsSync(personal)) throw new Error('company-workspace-missing');
   assertShareWritable(personal);
-  const derp = officeViaDerp();
-  const slowShare = derp || shareTooSlow(personal);
+  const storeDir = arg('store-dir') || '';
+  // With the memory disk the kernel never reads the share for chats: no probe of it, no mirror onto this disk.
+  const derp = storeDir ? false : officeViaDerp();
+  const slowShare = storeDir ? false : (derp || shareTooSlow(personal));
   if (derp) process.stdout.write('SHARE_VIA_DERP=1\n');
   if (slowShare && !derp) process.stdout.write('SHARE_TOO_SLOW=1\n');
   harvestThenWipe(home, personal, { wipe: !slowShare, skipShare: slowShare });
@@ -1578,12 +1639,24 @@ async function cmdAcquire() {
         const role = loginRole();
         // company-lease-catalog-follows-pin-v1
         let localPin = false;
+        let storeOn = '';
+        if (storeDir) {
+          const rc = storePull(storeDir);
+          if (rc === 0) storeOn = storeDir;
+          else if (rc === 4 && fs.existsSync(path.join(storeDir, '.desk-store', 'sent.json'))) {
+            // Changes from last time still not on the server, and it does not answer: work on them, send them later.
+            storeOn = storeDir;
+            process.stdout.write('STORE_STALE=1\n');
+          } else process.stdout.write('STORE_OFF=pull-' + rc + '\n');
+          if (storeOn) { writeAscii(storeMarker(), storeOn); process.stdout.write('STORE_ON=' + storeOn + '\n'); }
+          else { try { fs.unlinkSync(storeMarker()); } catch { /* */ } }
+        }
         if (fs.existsSync(ov)) {
           // Slow share (DERP or hotspot RTT): pin local only after bodies
           // landed. Empty local pin = empty sidebar. Fast share stays chair.
           sweepBadLocalZstd(home);
-          localPin = slowShare && countSessionLogs(path.join(home, 'sessions')) > 0;
-          pinOverlay(ov, personal, localPin ? home : '');
+          localPin = !storeOn && slowShare && countSessionLogs(path.join(home, 'sessions')) > 0;
+          pinOverlay(ov, personal, storeOn || (localPin ? home : ''));
           if (localPin) process.stdout.write('OVERLAY_PIN_LOCAL=1\n');
           pinPresetRoot(ov, role);
           pinInstrScope(ov);
@@ -1591,7 +1664,7 @@ async function cmdAcquire() {
           pinRoleUi(ov, role);
           pinClickOneHand(ov);
         }
-        remapDesk(personal, org, localPin ? home : '');
+        remapDesk(personal, org, storeOn || (localPin ? home : ''));
         plantCompanyRootMarker(personal);
         pinUserSettings(home, personal);
         pinAgentPresets(home, role);
@@ -1685,6 +1758,12 @@ async function cmdWatch() {
     notify(seatNote(why));
     if (why === 'flush' || why === 'kicked') {
       stopDesk();
+      // The kernel writes its last events as it stops: wait for it, so they are in the memory disk before the last send.
+      for (let i = 0; i < 20 && (await deskUp()); i++) await new Promise((r) => setTimeout(r, 500));
+    }
+    try { await storeStop(); } catch (e) { process.stdout.write('STORE_STOP_FAIL=' + ((e && e.message) || e) + '\n'); }
+    if (why === 'flush' || why === 'kicked') {
+      stopDesk();
       if (why === 'flush') {
         try { await postLease('flushed'); } catch { /* */ }
       }
@@ -1734,6 +1813,8 @@ async function cmdWatch() {
       process.stdout.write('DESK_PROBE_RECOVERED=1\n');
     }
     macShareTick();
+    const sd = storeDirOn();
+    if (sd) storeSyncStart(sd);
     await new Promise((r) => setTimeout(r, HEARTBEAT_MS));
   }
 }
