@@ -557,6 +557,22 @@ window.__ModuleLoader__.load({
 			"@keyframes cs-art-ghost { from { opacity: .55; } to { opacity: 1; } }",
 			".cs-art-empty { margin: 40px 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; color: var(--look-ink2); font-size: 13px; }",
 			".cs-art-empty b { color: var(--look-ink); font-size: 15px; font-weight: 600; }",
+			".cs-art-view { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 0 12px 12px; gap: 10px; font-family: " + FONT + "; animation: cs-flow-in .5s cubic-bezier(.22,1,.36,1) both; }",
+			".cs-art-bar { flex: none; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 4px 0 4px; }",
+			".cs-art-bar-back { flex: none; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink);",
+			"  display: grid; place-items: center; cursor: pointer; transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-art-bar-back:hover { transform: scale(1.08) translateX(-1px); }",
+			".cs-art-bar-title { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; color: var(--look-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-art-sheet { position: relative; flex: 1; min-height: 0; border-radius: 18px; overflow: hidden; background: #fff; border: 1px solid var(--look-glass-line); box-shadow: var(--look-shadow); }",
+			"body[data-ds-dark-theme] .cs-art-sheet { background: #1c1c1e; }",
+			".cs-art-sheet iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; }",
+			".cs-art-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13.5px; color: var(--look-ink2); }",
+			".cs-art-lava { position: relative; display: inline-block; width: 34px; height: 20px; }",
+			".cs-art-loading .cs-lava { position: absolute; inset: 0; filter: url(#cs-goo); }",
+			".cs-art-loading .cs-lava i { position: absolute; border-radius: 50%; }",
+			".cs-art-loading .cs-lava i:nth-child(1) { width: 11px; height: 11px; top: 4px; background: #4f7cdc; animation: cs-lava1 2.3s ease-in-out infinite alternate; }",
+			".cs-art-loading .cs-lava i:nth-child(2) { width: 8px; height: 8px; top: 6px; background: #8fbcef; animation: cs-lava2 3.1s ease-in-out infinite alternate; }",
+			".cs-art-loading .cs-lava i:nth-child(3) { width: 7px; height: 7px; top: 6.5px; background: #f0b98a; animation: cs-lava3 1.7s ease-in-out infinite alternate; }",
 			".cs-art-back { position: absolute; z-index: 7; top: 0; left: 12px; right: 12px; height: 34px; display: flex; align-items: center; gap: 4px; padding: 0 12px; border-radius: 17px;",
 			"  border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink); font: 500 13.5px/1 " + FONT + "; cursor: pointer; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }",
 			".cs-art-back:hover { background: var(--look-card); }",
@@ -8038,11 +8054,70 @@ window.__ModuleLoader__.load({
 				});
 			});
 		}
-		function artOpen(path) {
-			const show = function () {
-				try { if (rightbarService && typeof rightbarService.openTab === "function") rightbarService.openTab("artifact", { params: { path: path } }); } catch (err) {}
-			};
-			if (!rightbarOpen()) { rightbarToggle(true); setTimeout(show, 150); } else show();
+		// The user (2026-11-24: 「缓存时间还是好久啊」): the list is fetched in the background from start-up (and every
+		// 5 minutes, and on coming back to the window at most once a minute), so 工件 opens on a list already there.
+		const artStore = { list: artCacheRead(), busy: false, fail: "", at: 0, subs: new Set() };
+		function artEmit() { artStore.snap = { list: artStore.list, busy: artStore.busy, fail: artStore.fail }; artStore.subs.forEach(function (f) { try { f(); } catch (err) {} }); }
+		artStore.snap = { list: artStore.list, busy: false, fail: "" };
+		function artSubscribe(f) { artStore.subs.add(f); return function () { artStore.subs.delete(f); }; }
+		function artSnapshot() { return artStore.snap; }
+		function artRefresh() {
+			if (artStore.busy) return;
+			artStore.busy = true;
+			artEmit();
+			artFetch().then(function (list) {
+				artStore.list = list;
+				artStore.fail = "";
+				artStore.at = Date.now();
+				artCacheWrite(list);
+			}, function (err) {
+				artStore.fail = String((err && err.message) || err);
+			}).then(function () { artStore.busy = false; artEmit(); });
+		}
+		// The user (2026-11-24: 「点开依然是在我们的UI里的，能不能完美融合而不是单独又打开了侧边栏」): an artifact opens in this
+		// page — dsh-artifact's readArtifact, the HTML in a sandboxed frame (its scripts run, it cannot reach the desk).
+		const artBodies = new Map();
+		function artRead(path) {
+			if (artBodies.has(path)) return Promise.resolve(artBodies.get(path));
+			let remote = null;
+			try { remote = artifactRemoteGet ? artifactRemoteGet() : null; } catch (err) { remote = null; }
+			if (!remote || typeof remote.readArtifact !== "function") return Promise.reject(new Error("no-artifacts"));
+			return Promise.resolve(remote.readArtifact({ path: path })).then(function (reply) {
+				let r = reply;
+				for (let k = 0; k < 3 && r && r.ok === true && r.value && typeof r.value === "object" && "ok" in r.value; k++) r = r.value;
+				if (!r || r.ok !== true || !r.value || typeof r.value.content !== "string") throw new Error((r && r.error && r.error.code) || "read-failed");
+				const body = { content: r.value.content, title: String(r.value.title || "") };
+				artBodies.set(path, body);
+				if (artBodies.size > 30) artBodies.delete(artBodies.keys().next().value);
+				return body;
+			});
+		}
+		function ArtView(props) {
+			const a = props.item;
+			const stHook = React.useState(artBodies.get(a.path) || null);
+			const failHook = React.useState("");
+			const load = React.useCallback(function (fresh) {
+				if (fresh) artBodies.delete(a.path);
+				failHook[1]("");
+				if (!artBodies.has(a.path)) stHook[1](null);
+				artRead(a.path).then(function (b) { stHook[1](b); }, function (err) { failHook[1](String((err && err.message) || err)); });
+			}, [a.path]);
+			React.useEffect(function () { load(false); }, [load]);
+			const body = stHook[0];
+			return React.createElement("div", { className: "cs-art-view" },
+				React.createElement("div", { className: "cs-art-bar" },
+					React.createElement("button", { type: "button", className: "cs-art-bar-back", "aria-label": "返回全部工件", onClick: props.onBack },
+						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M15 18l-6-6 6-6" }))),
+					React.createElement("span", { className: "cs-art-bar-title", title: a.title }, (body && body.title) || a.title),
+					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "重新读取", title: "重新读取", onClick: function () { load(true); } },
+						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
+							React.createElement("path", { d: "M20 11a8 8 0 1 0-2.3 5.7" }), React.createElement("path", { d: "M20 4v7h-7" })))),
+				React.createElement("div", { className: "cs-art-sheet" },
+					body ? React.createElement("iframe", { key: a.path, title: a.title, sandbox: "allow-scripts allow-popups allow-forms allow-modals", srcDoc: body.content, referrerPolicy: "no-referrer" }) :
+					failHook[0] ? React.createElement("div", { className: "cs-art-empty" }, React.createElement("b", null, "这个工件没有读出来"), React.createElement("span", null, "公司盘可能还没连上，稍后点右上角重新读取。")) :
+					React.createElement("div", { className: "cs-art-loading", "data-chat-running": "" },
+						React.createElement("span", { className: "cs-art-lava" }, React.createElement("span", { className: "cs-lava", "aria-hidden": "true" }, React.createElement("i"), React.createElement("i"), React.createElement("i"))),
+						React.createElement("span", null, "正在打开…"))));
 		}
 		function artWhen(ms) {
 			if (!ms) return "";
@@ -8064,22 +8139,13 @@ window.__ModuleLoader__.load({
 			return "更早";
 		}
 		function ArtPane() {
-			const listHook = React.useState(artCacheRead);
-			const busyHook = React.useState(true);
-			const failHook = React.useState("");
-			const refresh = React.useCallback(function () {
-				busyHook[1](true);
-				artFetch().then(function (list) {
-					listHook[1](list);
-					artCacheWrite(list);
-					failHook[1]("");
-				}, function (err) {
-					failHook[1](String((err && err.message) || err));
-				}).then(function () { busyHook[1](false); });
-			}, []);
-			React.useEffect(function () { refresh(); }, [refresh]);
-			const list = listHook[0];
-			const busy = busyHook[0];
+			const snap = React.useSyncExternalStore(artSubscribe, artSnapshot);
+			const openHook = React.useState(null);
+			const refresh = artRefresh;
+			React.useEffect(function () { if (Date.now() - artStore.at > 60000) artRefresh(); }, []);
+			const list = snap.list;
+			const busy = snap.busy;
+			const failHook = [snap.fail];
 			const groups = [];
 			(list || []).forEach(function (a) {
 				const g = artGroup(a.modified);
@@ -8087,6 +8153,7 @@ window.__ModuleLoader__.load({
 				if (!row) { row = { name: g, items: [] }; groups.push(row); }
 				row.items.push(a);
 			});
+			if (openHook[0]) return React.createElement(ArtView, { item: openHook[0], onBack: function () { flowSwap(function () { openHook[1](null); }); } });
 			return React.createElement("div", { className: "cs-art" },
 				React.createElement("div", { className: "cs-art-head" },
 					React.createElement("b", null, "全部工件"),
@@ -8107,7 +8174,7 @@ window.__ModuleLoader__.load({
 						return React.createElement(React.Fragment, { key: g.name },
 							React.createElement("div", { className: "cs-art-group" }, g.name),
 							g.items.map(function (a) {
-								return React.createElement("button", { key: a.path, type: "button", className: "cs-art-card", title: a.title, onClick: function () { artOpen(a.path); } },
+								return React.createElement("button", { key: a.path, type: "button", className: "cs-art-card", title: a.title, onClick: function () { flowSwap(function () { openHook[1](a); }); } },
 									React.createElement("span", { className: "cs-art-icon", "aria-hidden": "true" },
 										React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" },
 											React.createElement("path", { d: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" }), React.createElement("path", { d: "M14 3v5h5M9 13h6M9 17h4" }))),
@@ -8168,6 +8235,11 @@ window.__ModuleLoader__.load({
 					else rightbarToggle(false);
 				});
 				mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-sidebar-right-open"] });
+				// The artifact list, fetched before anyone asks for it.
+				const first = setTimeout(artRefresh, 2500);
+				const every = setInterval(artRefresh, 5 * 60000);
+				const onFocus = function () { if (Date.now() - artStore.at > 60000) artRefresh(); };
+				window.addEventListener("focus", onFocus);
 				// The frame keeps no column for it: its third track is set to nothing whenever the kernel writes it.
 				let frame = null;
 				let fmo = null;
@@ -8185,7 +8257,7 @@ window.__ModuleLoader__.load({
 				}
 				squeeze();
 				const tick = setInterval(squeeze, 1500);
-				return function () { mo.disconnect(); if (fmo) fmo.disconnect(); clearInterval(tick); };
+				return function () { mo.disconnect(); if (fmo) fmo.disconnect(); clearInterval(tick); clearTimeout(first); clearInterval(every); window.removeEventListener("focus", onFocus); };
 			}, [wide]);
 			const segBox = React.useRef(null);
 			const segThumb = React.useRef(null);
