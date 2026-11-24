@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.24.3
+
+**Mac 也能发语音、打语音电话了（Mac 和 Win、Mac 和 Mac 互通）**
+- **Mac 外壳声明麦克风**（`company-mac-shell-refresh-v1`，电脑端 Mac，这一版更新后**关掉重开一次 TDH** 生效）：用户：「为什么mac不行 我要mac也可以跟win win也可以跟win」。Mac 上点麦克风或电话，提示「这里用不了麦克风」。原因：Mac 版 TDH 的外壳 `Info.plist` 里没有声明麦克风用途，苹果的网页引擎就把麦克风接口整个藏起来，网页里拿不到；打电话用的接口本来就有。
+  - 外壳加上麦克风声明（「在聊天里发语音、打语音电话要用麦克风」），并对本机聊天页（`127.0.0.1` 的 17811–17814 端口）的麦克风请求直接同意，网页引擎不再每次问；对方的声音不用点击就能播。第一次用时系统会问一次「TDHarness 想访问麦克风」，点允许。
+  - **已装好的 Mac 自动换外壳**：以前自动更新只换 app 里的内容（`Contents/Resources`），外壳本身（`Contents/MacOS/TDHarness`、`Contents/Info.plist`）装上后就再没变过。现在安装包里带着外壳（`mac-shell.bin`、`mac-shell.plist`），每次打开 TDH 时 `mac-shell-refresh.sh` 比一下，不一样就换上，下次打开生效。换之前先核对：必须在 .app 里面、能写、是通用版程序、plist 能读且是同一个 app；任何一项不对就不换，也不影响打开。做了什么记在 `~/Library/Logs/TDHarness.log`。
+  - 外壳换了以后，系统可能还会再问一次「网络宗卷」权限，点允许即可。
+- 聊天页里「用不了麦克风」「打不了语音通话」的提示改成：请更新 TDH，再关掉重开一次 TDH 后再试。
+
 ## 2026.11.24.2
 
 **聊天里能发语音、打语音电话：语音自动转成文字，长语音和通话结束后由模型写要点和纪要**

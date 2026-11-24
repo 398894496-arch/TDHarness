@@ -17,6 +17,11 @@ runs `site-cs.py mac-app-zip`, which writes `TDHarness-mac.zip`: a `TDHarness/` 
   simply unsigned: on first open the person allows it once in 系统设置 → 隐私与安全性 → 仍要打开.
   Without a prompt at all needs an Apple Developer ID and notarization.
 - `Info.plist`, `AppIcon.icns` (made from `server/tdharness.ico`).
+- company-mac-shell-refresh-v1: the shell and `Info.plist` also ride in the Mac pack as `mac-shell.bin` and
+  `mac-shell.plist` (site-cs.py `pack_sources`); `start.command` runs `mac-shell-refresh.sh` on every open, which puts
+  them in place in an installed app when they differ (next open runs them). So a change here reaches every Mac with
+  the next publish; the download is no longer the only way. The x86_64 slice is linked with `-Xlinker -adhoc_codesign`
+  so both slices keep the linker's own signature.
 - `src/`: the shell's source as it came from the earlier client repository (dsh-saas
   `scripts/p-client-app/mac/`); `CompanyDesk.swift` and `build-mac.sh` are the older thin client,
   kept for reference.

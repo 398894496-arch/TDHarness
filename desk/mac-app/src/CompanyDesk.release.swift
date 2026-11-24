@@ -156,7 +156,7 @@ func installMenus() {
   NSApp.mainMenu = main
 }
 
-final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
   var window: NSWindow!
   var web: WKWebView?
   var status: NSTextField!
@@ -351,9 +351,12 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
   func showDesk() {
     status.removeFromSuperview()
     let cfg = WKWebViewConfiguration()
+    // company-chat-call-v1: a call's sound plays as soon as it comes, not after a click.
+    cfg.mediaTypesRequiringUserActionForPlayback = []
     web = WKWebView(frame: window.contentView!.bounds, configuration: cfg)
     web!.autoresizingMask = [.width, .height]
     web!.navigationDelegate = self
+    web!.uiDelegate = self
     window.contentView?.addSubview(web!)
     window.makeFirstResponder(web)
     web!.load(URLRequest(url: Self.deskUrl()))
@@ -382,6 +385,17 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         self.leaveDeadDesk("desk-down")
       }
     }
+  }
+
+  // company-chat-voice-v1 / company-chat-call-v1: the chat page as this Mac's own relay serves it (chat-relay.js:
+  // http://127.0.0.1, ports 17811-17814) records voice messages and makes calls; its microphone is allowed here
+  // without WebKit asking again each time (macOS still asks once, for the app: NSMicrophoneUsageDescription).
+  // Anything else gets WebKit's own question.
+  @available(macOS 12.0, *)
+  func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo,
+               type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+    let local = origin.protocol == "http" && (origin.host == "127.0.0.1" || origin.host == "localhost") && (17811...17814).contains(origin.port)
+    decisionHandler(local && type == .microphone ? .grant : .prompt)
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

@@ -31,6 +31,11 @@ case "$ROOT" in
     exit 2
     ;;
 esac
+# company-mac-shell-refresh-v1: the app's own shell (microphone declaration and all) follows the pack; the next open
+# runs the new one. Never stops the open.
+if [ -f "$ROOT/mac-shell-refresh.sh" ]; then
+  bash "$ROOT/mac-shell-refresh.sh" --root "$ROOT" || true
+fi
 if [ -x "$ROOT/sync-desk-home.sh" ]; then
   bash "$ROOT/sync-desk-home.sh" --root "$ROOT"
 fi

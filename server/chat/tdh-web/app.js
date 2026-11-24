@@ -633,7 +633,7 @@
 		if (rec) return Promise.resolve(false);
 		if (call) { toast("正在通话，挂断后再录语音"); return Promise.resolve(false); }
 		const md = navigator.mediaDevices;
-		if (!md || !md.getUserMedia) { toast("这里用不了麦克风：请更新 TDH 后再试"); return Promise.resolve(false); }
+		if (!md || !md.getUserMedia) { toast("这里用不了麦克风：请更新 TDH，再关掉重开一次 TDH 后再试"); return Promise.resolve(false); }
 		return md.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then((stream) => {
 			const AC = window.AudioContext || window.webkitAudioContext;
 			const ctx = new AC();
@@ -822,7 +822,7 @@
 		if (call) { toast("正在通话中"); return Promise.resolve(false); }
 		if (rec) voiceStop(false);
 		const md = navigator.mediaDevices;
-		if (!md || !md.getUserMedia || !window.RTCPeerConnection) { toast("这里打不了语音通话：请更新 TDH 后再试"); return Promise.resolve(false); }
+		if (!md || !md.getUserMedia || !window.RTCPeerConnection) { toast("这里打不了语音通话：请更新 TDH，再关掉重开一次 TDH 后再试"); return Promise.resolve(false); }
 		const c = { topic: name, peer: name, seq: 0, dir: "out", state: "dialing", ice: [] };
 		call = c;
 		callShow();
@@ -903,7 +903,7 @@
 		clearTimeout(c.timer);
 		callShow();
 		const md = navigator.mediaDevices;
-		if (!md || !md.getUserMedia || !window.RTCPeerConnection) { callHangup("这里接不了语音通话：请更新 TDH 后再试"); return Promise.resolve(false); }
+		if (!md || !md.getUserMedia || !window.RTCPeerConnection) { callHangup("这里接不了语音通话：请更新 TDH，再关掉重开一次 TDH 后再试"); return Promise.resolve(false); }
 		return md.getUserMedia(CALL_AUDIO).then((stream) => {
 			if (call !== c) { stopStream(stream); return false; }
 			c.stream = stream;

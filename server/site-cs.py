@@ -687,6 +687,12 @@ def pack_sources(pack: Path, plat: str) -> dict:
         for f in sorted(root.rglob("*")):
             if f.is_file() and not f.name.startswith("._") and f.name != ".DS_Store":
                 out["CompanyDesk/" + f.relative_to(root).as_posix()] = f
+    # company-mac-shell-refresh-v1: the Mac app's own shell rides in the pack, so a Mac installed once follows it
+    # (mac-shell-refresh.sh, from start.command); the download's app is made from the same two files (mac_app_zip).
+    shell = pack.parent / "mac-app"
+    if plat == "mac" and (shell / "TDHarness").is_file() and (shell / "Info.plist").is_file():
+        out["CompanyDesk/mac-shell.bin"] = shell / "TDHarness"
+        out["CompanyDesk/mac-shell.plist"] = shell / "Info.plist"
     return out
 
 
