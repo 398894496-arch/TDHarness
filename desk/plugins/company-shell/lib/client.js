@@ -392,6 +392,191 @@ window.__ModuleLoader__.load({
 			".cs-tc-form .cs-field > span { font-weight: 500; }",
 			".cs-tc-err { margin-top: 8px; font-size: 12px; color: " + T.err + "; }"
 		].join("\n");
+		const LOOK_SPRING = "cubic-bezier(.32,1.45,.6,1)";
+		// company-look-today-v1 (the user, 2026-11-24: 「today 这个界面就很好」, 极简, 液态玻璃的选中, 胶囊放大): the desk on a warm
+		// off-white page; the left column a floating glass card; the middle switched by a glass capsule; the chat column
+		// a sky-to-apricot page with 今天 / 聊天. The kernel's own parts are found by the stable part of their class
+		// names ("_frame", "_sidebarCol", "_centerCol"), never the hashed whole. Dark: body[data-ds-dark-theme].
+		const TODAY_CSS = [
+			"body { --look-page: #f0f0ef; --look-glass: rgba(255,255,255,.62); --look-glass-line: rgba(255,255,255,.78); --look-card: #fff;",
+			"  --look-ink: #1c1c1e; --look-ink2: #6e6e73; --look-ink3: #a1a1a6; --look-soft: rgba(120,120,128,.10); --look-thumb: rgba(120,120,128,.14);",
+			"  --look-sky: #a9cbef; --look-mist: #cfe0f2; --look-peach: #f7dcc0; --look-accent: #2f6fe4; --look-red: #ff453a;",
+			"  --look-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06); --look-float: 0 2px 8px rgba(0,0,0,.08), 0 10px 30px rgba(0,0,0,.08); }",
+			"body[data-ds-dark-theme] { --look-page: #161618; --look-glass: rgba(40,40,44,.6); --look-glass-line: rgba(255,255,255,.08); --look-card: #232326;",
+			"  --look-ink: #f2f2f4; --look-ink2: #a1a1a8; --look-ink3: #6c6c72; --look-soft: rgba(255,255,255,.07); --look-thumb: rgba(255,255,255,.14);",
+			"  --look-sky: #1f3a5e; --look-mist: #223349; --look-peach: #4a3626; --look-accent: #79a6ff;",
+			"  --look-shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.3); --look-float: 0 2px 8px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35); }",
+			// The user (2026-11-24): 「左边能不能是毛玻璃，中间渐变也优化一下」 — the page is soft light (sky at the top left,
+			// apricot at the bottom right, mist between, as the chat column), so the left card has something to frost.
+			"html, body { background-color: var(--look-page) !important; background-image: var(--look-wash) !important; background-attachment: fixed !important; }",
+			"body { --look-wash: radial-gradient(1200px 820px at -8% -12%, rgba(150,190,236,.95), transparent 62%), radial-gradient(1000px 760px at 108% 112%, rgba(245,208,170,.95), transparent 60%),",
+			"  radial-gradient(820px 600px at 58% 36%, rgba(200,220,244,.7), transparent 70%), linear-gradient(180deg, #e9eff7 0%, #f4efe9 100%); }",
+			"body[data-ds-dark-theme] { --look-wash: radial-gradient(1100px 760px at -8% -12%, rgba(31,58,94,.75), transparent 62%), radial-gradient(900px 700px at 108% 112%, rgba(74,54,38,.7), transparent 60%),",
+			"  radial-gradient(760px 560px at 58% 38%, rgba(34,51,73,.5), transparent 70%), linear-gradient(180deg, #17191d 0%, #161618 100%); }",
+			"[class*='_frame'] { background: transparent !important; }",
+			"[class*='_centerCol'] [class$='_root'], [class*='_centerCol'] [class*='_root '] { background: transparent !important; }",
+			// the left column: a floating glass card
+			"[class*='_sidebarCol'] { background: transparent !important; border: 0 !important; padding: 10px 0 10px 10px; box-sizing: border-box; }",
+			".cs-side { background: linear-gradient(180deg, rgba(255,255,255,.52), rgba(255,255,255,.34)) !important; border: 1px solid rgba(255,255,255,.7); border-radius: 22px;",
+			"  box-shadow: 0 1px 1px rgba(255,255,255,.6) inset, 0 10px 34px rgba(40,70,120,.10); backdrop-filter: blur(36px) saturate(190%); -webkit-backdrop-filter: blur(36px) saturate(190%); overflow: hidden; }",
+			"body[data-ds-dark-theme] .cs-side { background: linear-gradient(180deg, rgba(48,50,58,.55), rgba(34,36,42,.42)) !important; border-color: rgba(255,255,255,.08); box-shadow: 0 10px 34px rgba(0,0,0,.35); }",
+			// rows inside the glass: lighter hovers so the frost shows through
+			".cs-side [class*='_item']:hover, .cs-side [class*='_row']:hover { background: rgba(255,255,255,.35); }",
+			".cs-look-nav { position: relative; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 4px 10px 10px; }",
+			".cs-look-nav.is-rail { align-items: center; padding: 4px 0 10px; gap: 6px; }",
+			".cs-look-pill { position: absolute; z-index: 0; border-radius: 14px; background: var(--look-card); box-shadow: var(--look-shadow), inset 0 1px 0 rgba(255,255,255,.7);",
+			"  transition: top .5s " + LOOK_SPRING + ", height .5s " + LOOK_SPRING + ", left .3s ease, width .3s ease, opacity .2s; pointer-events: none; opacity: 0; }",
+			"body[data-ds-dark-theme] .cs-look-pill { box-shadow: var(--look-shadow), inset 0 1px 0 rgba(255,255,255,.08); }",
+			".cs-look-nav.is-rail .cs-look-pill { box-shadow: 0 1px 3px rgba(0,0,0,.10), 0 6px 16px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.7); }",
+			".cs-side .cs-foot { margin-top: auto; }",
+			"[class*='_sidebarCol'] { padding-left: 8px !important; }",
+			".cs-look-row { position: relative; z-index: 1; display: flex; align-items: center; gap: 11px; width: 100%; height: 40px; padding: 0 12px; border: 0; border-radius: 14px;",
+			"  background: transparent; color: var(--look-ink2); font: 500 14px/1 " + FONT + "; text-align: left; cursor: pointer; transform-origin: left center;",
+			"  transition: transform .14s ease-out, color .2s; }",
+			".cs-look-row:hover { color: var(--look-ink); }",
+			".cs-look-row.is-on { color: var(--look-ink); font-weight: 600; }",
+			".cs-look-nav.is-rail .cs-look-row { width: 42px; height: 42px; padding: 0; justify-content: center; transform-origin: center; }",
+			".cs-look-glyph { flex: none; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; transition: transform .45s " + LOOK_SPRING + ", color .2s; }",
+			".cs-look-row.is-on .cs-look-glyph { transform: scale(1.2); color: var(--look-accent); }",
+			".cs-look-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-look-count { font: 400 12px/1 " + FONT + "; color: var(--look-ink3); }",
+			".cs-look-dot { position: absolute; top: 9px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--look-red); }",
+			// 「我」
+			".cs-me { position: relative; }",
+			".cs-me-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px; border: 0; border-radius: 16px; background: transparent; cursor: pointer;",
+			"  color: var(--look-ink); font: 500 13.5px/1.2 " + FONT + "; text-align: left; transition: background .2s; }",
+			".cs-me-btn:hover { background: var(--look-soft); }",
+			".cs-me.is-rail .cs-me-btn { width: 44px; justify-content: center; padding: 4px; margin: 0 auto; }",
+			".cs-me-pic { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font: 600 14px/1 " + FONT + "; color: var(--look-ink);",
+			"  background: linear-gradient(160deg, var(--look-sky), var(--look-peach)); transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-me-btn:hover .cs-me-pic { transform: scale(1.08); }",
+			".cs-me-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }",
+			".cs-me-name small, .cs-me-head small { font-weight: 400; font-size: 12px; color: var(--look-ink2); }",
+			".cs-me-menu { position: fixed; z-index: 2000; width: 236px; padding: 8px; border-radius: 20px;",
+			"  background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-float);",
+			"  backdrop-filter: blur(30px) saturate(170%); -webkit-backdrop-filter: blur(30px) saturate(170%); transform-origin: 16px 100%;",
+			"  visibility: hidden; opacity: 0; transform: scale(.6); pointer-events: none; transition: transform .4s " + LOOK_SPRING + ", opacity .18s, visibility 0s .4s; }",
+			".cs-me-menu.is-open { visibility: visible; opacity: 1; transform: none; pointer-events: auto; transition: transform .4s " + LOOK_SPRING + ", opacity .18s, visibility 0s; }",
+			".cs-me-head { display: flex; align-items: center; gap: 10px; padding: 6px 8px 10px; font: 400 13px/1.3 " + FONT + "; color: var(--look-ink); }",
+			".cs-me-head b { display: block; font-weight: 600; font-size: 14px; }",
+			".cs-me-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 10px; border: 0; border-radius: 12px; background: transparent;",
+			"  color: var(--look-ink); font: 400 14px/1 " + FONT + "; cursor: pointer; text-align: left; transition: background .15s, transform .3s " + LOOK_SPRING + "; }",
+			".cs-me-item:hover { background: var(--look-soft); transform: translateX(2px); }",
+			".cs-me-item svg { color: var(--look-ink2); flex: none; }",
+			".cs-me-item.is-danger { color: #e5484d; } .cs-me-item.is-danger svg { color: #e5484d; }",
+			".cs-me-settings { padding: 0 2px; } .cs-me-settings > * { width: 100%; }",
+			".cs-me-line { height: 1px; margin: 6px 8px; background: var(--look-soft); }",
+			// the middle's switch
+			".cs-mid-switch { position: fixed; top: 8px; z-index: 1500; transform: translateX(-50%); display: flex; gap: 2px; padding: 4px; border-radius: 22px;",
+			"  background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-float);",
+			"  backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); }",
+			".cs-mid-thumb { position: absolute; top: 4px; bottom: 4px; border-radius: 18px; background: var(--look-thumb); transition: left .5s " + LOOK_SPRING + ", width .5s " + LOOK_SPRING + "; }",
+			".cs-mid-tab { position: relative; z-index: 1; height: 32px; padding: 0 16px; border: 0; border-radius: 18px; background: transparent; cursor: pointer;",
+			"  color: var(--look-ink2); font: 500 14.5px/1 " + FONT + "; transition: transform .14s ease-out, color .2s; }",
+			".cs-mid-tab.is-on { color: var(--look-ink); font-weight: 600; }",
+			// the chat column: a page of its own
+			"@media " + CHAT_DOCK_MEDIA + " {",
+			"  html[data-company-chat-dock] #root { padding-right: calc(var(--company-chat-dock-width) + 20px) !important; }",
+			"}",
+			".cs-look-dock { top: 10px !important; right: 10px !important; bottom: 10px !important; border-radius: 24px; overflow: hidden; border: 1px solid var(--look-glass-line) !important;",
+			"  background: linear-gradient(180deg, var(--look-sky) 0%, var(--look-mist) 40%, var(--look-peach) 100%) !important; box-shadow: var(--look-shadow); }",
+			".cs-dock-head { flex: none; display: flex; justify-content: center; padding: 12px 12px 6px; }",
+			".cs-dock-seg { position: relative; display: flex; gap: 2px; padding: 4px; border-radius: 22px; background: rgba(255,255,255,.55); border: 1px solid rgba(255,255,255,.7);",
+			"  box-shadow: 0 4px 18px rgba(40,70,120,.10); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }",
+			"body[data-ds-dark-theme] .cs-dock-seg { background: rgba(40,44,54,.6); border-color: rgba(255,255,255,.1); }",
+			".cs-dock-thumb { position: absolute; top: 4px; bottom: 4px; border-radius: 18px; background: var(--look-thumb); transition: left .5s " + LOOK_SPRING + ", width .5s " + LOOK_SPRING + "; }",
+			".cs-dock-tab { position: relative; z-index: 1; height: 32px; padding: 0 18px; border: 0; border-radius: 18px; background: transparent; cursor: pointer;",
+			"  color: var(--look-ink2); font: 500 15px/1 " + FONT + "; transition: transform .3s " + LOOK_SPRING + ", color .2s; }",
+			".cs-dock-tab:hover { transform: scale(1.06); } .cs-dock-tab.is-on { color: var(--look-ink); font-weight: 600; }",
+			".cs-dock-dot { position: absolute; top: 5px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--look-red); }",
+			".cs-dock-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }",
+			".cs-dock-chat { position: absolute; inset: 0; display: flex; flex-direction: column; }",
+			".cs-dock-body.is-today .cs-dock-chat { pointer-events: none; }",
+			// 今天
+			".cs-today { position: absolute; inset: 0; z-index: 2; overflow: auto; padding: 6px 14px 16px; font-family: " + FONT + "; color: var(--look-ink); }",
+			".cs-today-date { text-align: center; font-size: 12.5px; color: var(--look-ink2); margin: 4px 0 10px; }",
+			".cs-today-card { margin: 0 0 12px; padding: 14px 16px; border-radius: 22px; background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-shadow);",
+			"  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-today-card:hover { transform: translateY(-2px); }",
+			".cs-today-card h3 { display: flex; justify-content: space-between; margin: 0 0 6px; font-size: 15px; font-weight: 600; }",
+			".cs-today-card h3 small { font-weight: 400; color: var(--look-ink3); font-size: 12px; }",
+			".cs-today-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 2px; border: 0; border-top: 1px solid var(--look-soft); background: transparent;",
+			"  color: var(--look-ink); font: 400 14px/1.4 " + FONT + "; text-align: left; cursor: pointer; }",
+			".cs-today-row:first-of-type { border-top: 0; }",
+			".cs-today-box { width: 18px; height: 18px; flex: none; border-radius: 6px; border: 1.5px solid var(--look-ink3); transition: transform .35s " + LOOK_SPRING + "; }",
+			".cs-today-row:hover .cs-today-box { transform: scale(1.15); border-color: var(--look-accent); }",
+			".cs-today-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-today-d { flex: none; font-size: 12px; color: var(--look-ink2); } .cs-today-d.is-late { color: #e5484d; font-weight: 600; }",
+			".cs-today-empty { margin: 4px 0 2px; font-size: 13.5px; color: var(--look-ink2); }",
+			".cs-today-foot { text-align: center; font-size: 12.5px; color: var(--look-ink2); margin: 18px 0 0; }",
+			// the user: 「对话框不放模型选项，默认 6.2 sol 高推理」「不要工作区了」. The model is the site default
+			// (gateway.env DEFAULT_MODEL / DEFAULT_EFFORT, synced at sign-in); the workspace stays the default one.
+			"[class*='_centerCol'] [class*='_root']:has(> button[aria-label^='选择模型']), [class*='_centerCol'] button[aria-label^='选择模型'] { display: none !important; }",
+			"[class*='_centerCol'] button[aria-label='选择工作区'] { display: none !important; }",
+			".cs-pane-sess [class*='_sectionLabel'] { font-size: 0 !important; }",
+			".cs-pane-sess [class*='_sectionLabel']::after { content: '最近'; font-size: 12px; color: var(--look-ink3); }",
+			".cs-pane-sess [class*='_projectRow'] { display: none !important; }",
+			// ERP / 邮箱 in the middle: a card like the two columns beside it.
+			// The user (2026-11-24): no card behind ERP / 邮箱, the page as the 助手 one; only room under the switch.
+			"[data-company-erp], .tm-root { margin-top: 58px; height: calc(100% - 58px) !important; background: transparent !important; box-sizing: border-box; }",
+			"[data-company-erp] > div:first-child { border-bottom: 0 !important; }",
+			// 邮箱 in the 今天 look (the user, 2026-11-24: 「邮箱这个界面能不能跟我们的UI风格匹配」): glass controls and
+			// pills, the folders as a capsule, rows as rounded cards, the letter on a glass card. Over the mail page's own CSS.
+			"html body .tm-head, html body .tm-tabs, html body .tm-col, html body .tm-tools { border-color: transparent !important; }",
+			"html body .tm-wrap { padding: 6px 14px; gap: 8px; }",
+			"html body .tm-btn, html body .tm-acct-pick, html body .tm-in, html body select.tm-in { height: 34px; border-radius: 12px; border: 1px solid var(--look-glass-line); background: var(--look-glass);",
+			"  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 1px 2px rgba(0,0,0,.04); color: var(--look-ink); transition: transform .3s " + LOOK_SPRING + ", background .2s; }",
+			"html body .tm-btn:hover:not(:disabled) { background: var(--look-card); transform: translateY(-1px); }",
+			"html body .tm-btn.is-main { background: var(--look-ink); border-color: transparent; color: var(--look-page); padding: 0 16px; font-weight: 600; box-shadow: 0 6px 16px rgba(0,0,0,.14); }",
+			"html body .tm-btn.is-main:hover:not(:disabled) { background: var(--look-ink); filter: none; transform: translateY(-1px) scale(1.02); }",
+			"html body .tm-icon { width: 34px; border-radius: 50%; }",
+			"html body .tm-search { height: 34px; border-radius: 17px; border: 1px solid var(--look-glass-line); background: var(--look-glass); padding: 0 14px; color: var(--look-ink);",
+			"  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }",
+			"html body .tm-search:focus, html body .tm-in:focus, html body .tm-area:focus { border-color: var(--look-glass-line); box-shadow: 0 0 0 3px rgba(47,111,228,.25); background: var(--look-card); outline: 0; }",
+			"html body .tm-tabs { align-self: flex-start; display: inline-flex; gap: 2px; margin: 4px 14px 8px; padding: 4px; border-radius: 14px; background: var(--look-soft); }",
+			"html body .tm-tab { height: 30px; padding: 0 14px; border-radius: 10px; border-bottom: 0 !important; color: var(--look-ink2); transition: background .25s, color .2s, transform .3s " + LOOK_SPRING + "; }",
+			"html body .tm-tab:hover { color: var(--look-ink); }",
+			"html body .tm-tab.is-on { background: var(--look-card); color: var(--look-ink); box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.05); }",
+			"html body .tm-tab.is-on .tm-count { color: var(--look-accent); }",
+			"html body .tm-scroll { padding: 0 10px 12px; }",
+			"html body .tm-row { border: 0 !important; border-radius: 14px; margin: 1px 0; padding: 12px 14px 12px 30px; transition: background .2s, box-shadow .2s; }",
+			"html body .tm-row:hover { background: rgba(255,255,255,.45); }",
+			"body[data-ds-dark-theme] .tm-row:hover { background: rgba(255,255,255,.05); }",
+			"html body .tm-row.is-on { background: var(--look-glass); box-shadow: var(--look-shadow); }",
+			"html body .tm-row.is-new::before { left: 13px; background: var(--look-accent); box-shadow: 0 0 0 3px rgba(47,111,228,.15); }",
+			"html body .tm-date, html body .tm-meta, html body .tm-count { color: var(--look-ink2); }",
+			"html body .tm-read { margin: 0 10px 10px 0; border-radius: 22px; background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-shadow);",
+			"  backdrop-filter: blur(28px) saturate(170%); -webkit-backdrop-filter: blur(28px) saturate(170%); overflow: hidden; }",
+			"html body .tm-frame { border-radius: 0 0 22px 22px; }",
+			"html body .tm-att { height: 32px; border-radius: 10px; border: 1px solid var(--look-glass-line); background: var(--look-glass); }",
+			"html body .tm-area { border-radius: 14px; border: 1px solid var(--look-glass-line); background: var(--look-glass); }",
+			"html body .tm-chip { background: var(--look-soft); }",
+			"html body .tm-mask { background: rgba(20,24,32,.22); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }",
+			"html body .tm-dialog { border-radius: 22px; background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-float);",
+			"  backdrop-filter: blur(34px) saturate(170%); -webkit-backdrop-filter: blur(34px) saturate(170%); }",
+			"html body .tm-err, html body .tm-ok, html body .tm-imgbar { border-radius: 12px; }",
+			// The user (2026-11-24): 完全权限 is simply how the desk works (no picker); no 几轮几步 · tok/s · 用量 · 上下文
+			// under the composer; no right-sidebar button at the top right (the chat column is the right side).
+			"[class*='_centerCol'] [class*='_root']:has(> button[aria-label^='访问模式']), [class*='_centerCol'] button[aria-label^='访问模式'] { display: none !important; }",
+			"[class*='_centerCol'] [data-composer-stat], [class*='_centerCol'] [aria-label^='上下文已用'] { display: none !important; }",
+			"button[aria-label='打开右侧边栏'], button[aria-label='关闭右侧边栏'] { display: none !important; }",
+			// The user (2026-11-24: 「对话框左边的不协调」): the kernel fades the composer's seat into its own flat page
+			// colour, a white band over this page's light. No band; the composer card stands on the page as it is.
+			"[class*='_centerCol'] [class*='_composerSeat'] { background: transparent !important; }",
+			// The user (2026-11-24: 「标准模式的这个模式切换也关掉，以后默认标准模式」): agent-presets default is standard in
+			// both packs' overlay.yml; the picker goes, above the composer (its whole row) and in a session's title row.
+			"[class*='_centerCol'] [class*='_heroWorkspaceRow'] { display: none !important; }",
+			"[class*='_centerCol'] [class*='_menuAnchor']:has(> button[class$='_seat']), [class*='_centerCol'] button[class$='_seat'] { display: none !important; }",
+			// 白天 / 夜间 where the right-sidebar button was
+			".cs-theme-btn { position: fixed; top: 12px; z-index: 1500; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;",
+			"  border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink); box-shadow: var(--look-float);",
+			"  backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-theme-btn:hover { transform: scale(1.1); }",
+			".cs-theme-btn:active { transform: scale(.94); }",
+			".cs-theme-btn svg { transition: transform .6s " + LOOK_SPRING + ", opacity .2s; }",
+			".cs-theme-btn.is-dark svg { transform: rotate(-30deg); }"
+		].join("\n");
+
 		const CSS = [
 			// 说明书硬约束：整页含官方工作区树，不用随附英文字体画中文名。
 			"html[data-company-shell], html[data-company-shell] body,",
@@ -959,7 +1144,8 @@ window.__ModuleLoader__.load({
 			"  box-sizing: border-box; display: flex; flex-direction: column; min-width: 0; min-height: 0;",
 			"  background: " + T.base + "; border-left: 0.5px solid var(--dsw-alias-border-l3);",
 			"}"
-		].join("\n") + "\n" + LOOK_CSS + "\n" + CARD_CSS;
+		].join("\n") + "\n" + LOOK_CSS + "\n" + CARD_CSS + "\n" + TODAY_CSS;
+
 
 		function Style() {
 			React.useEffect(function () {
@@ -3377,54 +3563,22 @@ window.__ModuleLoader__.load({
 				),
 
 
-				wide
-					? React.createElement("div", { className: "cs-tabrow" },
-						React.createElement("div", { className: "cs-tablist", role: "tablist" },
-							[
-								{ id: "sessions", label: "会话" },
-								{ id: "tasks", label: "任务" }
-							].map(function (item) {
-								return React.createElement("button", {
-									key: item.id,
-									type: "button",
-									role: "tab",
-									"aria-selected": tab === item.id,
-									className: "cs-tab" + (tab === item.id ? " cs-tab-on" : ""),
-									onClick: function () {
-										if (item.id === "tasks") {
-											closeDetailsQuiet();
-										}
-										setTab(item.id);
-									}
-								}, item.label);
-							})
-						)
-					)
-					: null,
-
-				shownPanels.length
-					? React.createElement("nav", { className: "cs-side-nav", "aria-label": "面板" },
-						shownPanels.map(function (panel) {
-							const on = activePanel === panel.id;
-							return React.createElement(P.Tooltip, { key: panel.id, label: panel.label, delayMs: 500, disabled: wide },
-								React.createElement("button", {
-									type: "button",
-									className: "cs-nav-row" + (on ? " is-on" : ""),
-									"aria-label": panel.label,
-									"aria-current": on ? "page" : undefined,
-									onClick: function () { props.selectPanel(on ? null : panel.id); }
-								},
-									React.createElement("span", { className: "cs-nav-glyph", "aria-hidden": "true" },
-										safeSlot(function () {
-											return renderSlot("sidebar.panellist", { size: wide ? 16 : 18, active: on }, { only: panel.id });
-										})
-									),
-									wide ? React.createElement("span", null, panel.label) : null
-								)
-							);
-						})
-					)
-					: null,
+				// company-look-today-v1 (the user, 2026-11-24: 左栏「会话 · 任务 · 定时任务 · 工件」, 设置收进「我」, ERP 和邮箱
+				// 在中间): one list for the four; the sessions tree and the task list below stay as they were.
+				React.createElement(TodayNav, {
+					wide: wide,
+					tab: tab,
+					activePanel: activePanel,
+					panels: shownPanels,
+					renderSlot: renderSlot,
+					onTab: function (id) {
+						if (props.selectPanel) props.selectPanel(null);
+						if (id === "tasks") closeDetailsQuiet();
+						setTab(id);
+						if (collapsed) props.toggleSidebar();
+					},
+					onPanel: function (id, on) { props.selectPanel(on ? null : id); }
+				}),
 
 				wide
 					? React.createElement("div", { className: "cs-region" },
@@ -3533,16 +3687,333 @@ window.__ModuleLoader__.load({
 				: null,
 
 				React.createElement("div", { className: "cs-foot" },
-					wide
-						? safeSlot(function () {
-							return renderSlot("sidebar.footer.action", { wide: wide });
-						})
-						: null,
+					// The footer slot carries other plugins' style sheets (hide-bottom-panel): always drawn.
 					safeSlot(function () {
-						return renderSlot("sidebar.settings", { wide: wide });
-					})
+						return renderSlot("sidebar.footer.action", { wide: wide });
+					}),
+					React.createElement(MeMenu, { wide: wide, renderSlot: renderSlot, panels: panels, selectPanel: props.selectPanel })
 				)
 			);
+		}
+
+		// ---- company-look-today-v1: the left column's list, the 「我」 menu, the middle's switch, 今天 ----------------
+		function lookIcon(paths, size) {
+			return React.createElement("svg", { width: size || 18, height: size || 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+				strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },
+				paths.map(function (d, i) { return React.createElement("path", { key: i, d: d }); }));
+		}
+		const LOOK_ICONS = {
+			sessions: ["M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9z"],
+			tasks: ["M8 4h8a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4z", "M8.5 12l2.5 2.5 4.5-5"],
+			today: ["M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3L4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4", "M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"],
+			chat: ["M4 5.5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4.5 3.5V16.5H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"],
+			plugin: ["M9 4.5h3.5v2a1.5 1.5 0 0 0 3 0v-2H19v4h-2a1.5 1.5 0 0 0 0 3h2v4.5h-4.5v-2a1.5 1.5 0 0 0-3 0v2H5V11h2a1.5 1.5 0 0 0 0-3H5V4.5z"],
+			logout: ["M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3", "M10 16l-4-4 4-4M6 12h10"]
+		};
+		// The list's two own rows and the two panels kept here (定时任务, 工件); ERP and 邮箱 moved to the middle's
+		// switch, 插件 into 「我」, 聊天 has its column.
+		const LOOK_RAIL_PANELS = { schedules: "定时任务", artifacts: "工件", "artifact": "工件" };
+		function lookRailPanels(panels) {
+			return (panels || []).filter(function (p) {
+				return p && (LOOK_RAIL_PANELS[p.id] || /artifact/i.test(String(p.id)) || /artifact/i.test(String(p.label)));
+			}).map(function (p) {
+				return { id: p.id, label: LOOK_RAIL_PANELS[p.id] || (/artifact/i.test(String(p.id) + String(p.label)) ? "工件" : p.label) };
+			});
+		}
+		function TodayNav(props) {
+			const wide = props.wide;
+			const box = React.useRef(null);
+			const pill = React.useRef(null);
+			const items = [{ id: "sessions", label: "会话", icon: "sessions" }, { id: "tasks", label: "任务", icon: "tasks", count: lookOpenTasks().length }]
+				.concat(lookRailPanels(props.panels).map(function (p) { return { id: p.id, label: p.label, panel: true }; }));
+			const onId = props.activePanel && items.some(function (i) { return i.panel && i.id === props.activePanel; })
+				? props.activePanel : (props.activePanel ? "" : props.tab);
+			// The selection is one glass pill that slides to the chosen row (stretching over the way, then settling).
+			React.useLayoutEffect(function () {
+				const nav = box.current;
+				const pl = pill.current;
+				if (!nav || !pl) return;
+				const row = nav.querySelector('[data-look-id="' + onId + '"]');
+				if (!row) { pl.style.opacity = "0"; return; }
+				const prevTop = parseFloat(pl.dataset.top || "NaN");
+				const top = row.offsetTop;
+				pl.style.opacity = "1";
+				pl.style.left = row.offsetLeft + "px";
+				pl.style.width = row.offsetWidth + "px";
+				if (!isNaN(prevTop) && prevTop !== top) {
+					const lo = Math.min(prevTop, top);
+					const hi = Math.max(prevTop, top) + row.offsetHeight;
+					pl.style.transition = "top .18s ease-out, height .18s ease-out";
+					pl.style.top = lo + "px";
+					pl.style.height = (hi - lo) + "px";
+					const timer = setTimeout(function () {
+						pl.style.transition = "";
+						pl.style.top = top + "px";
+						pl.style.height = row.offsetHeight + "px";
+					}, 170);
+					pl.dataset.top = String(top);
+					return function () { clearTimeout(timer); };
+				}
+				pl.style.top = top + "px";
+				pl.style.height = row.offsetHeight + "px";
+				pl.dataset.top = String(top);
+				return undefined;
+			});
+			// Folded: the icons grow near the pointer (a bell curve over about two rows).
+			function onMove(ev) {
+				if (wide || !box.current) return;
+				const r = box.current.getBoundingClientRect();
+				[].forEach.call(box.current.querySelectorAll(".cs-look-row"), function (el) {
+					const d = (ev.clientY - r.top - el.offsetTop - el.offsetHeight / 2) / 44;
+					el.style.transform = "scale(" + (1 + 0.3 * Math.exp(-d * d * 1.3)).toFixed(3) + ")";
+				});
+			}
+			function onLeave() {
+				if (!box.current) return;
+				[].forEach.call(box.current.querySelectorAll(".cs-look-row"), function (el) { el.style.transform = ""; });
+			}
+			return React.createElement("nav", { className: "cs-look-nav" + (wide ? "" : " is-rail"), "aria-label": "导航", ref: box, onMouseMove: onMove, onMouseLeave: onLeave },
+				React.createElement("span", { className: "cs-look-pill", ref: pill, "aria-hidden": "true" }),
+				items.map(function (item) {
+					const on = item.id === onId;
+					const glyph = item.panel
+						? safeSlot(function () { return props.renderSlot("sidebar.panellist", { size: 18, active: on }, { only: item.id }); })
+						: lookIcon(LOOK_ICONS[item.icon], 18);
+					return React.createElement(P.Tooltip, { key: item.id, label: item.label, delayMs: 300, disabled: wide },
+						React.createElement("button", {
+							type: "button",
+							className: "cs-look-row" + (on ? " is-on" : ""),
+							"data-look-id": item.id,
+							"aria-label": item.label,
+							"aria-current": on ? "page" : undefined,
+							onClick: function () { if (item.panel) props.onPanel(item.id, on); else props.onTab(item.id); }
+						},
+							React.createElement("span", { className: "cs-look-glyph" }, glyph),
+							wide ? React.createElement("span", { className: "cs-look-label" }, item.label) : null,
+							item.count ? React.createElement("span", { className: wide ? "cs-look-count" : "cs-look-dot" }, wide ? String(item.count) : "") : null
+						));
+				}));
+		}
+		function lookOpenTasks() {
+			return inboxTasks().filter(function (t) { return t && !isDraft(t) && t.state !== "已通过" && t.state !== "已作废"; });
+		}
+		// 「我」: who is signed in here; 设置 (the kernel's own entry), 插件 for an admin, 退出登录.
+		function MeMenu(props) {
+			const openHook = React.useState(false);
+			const open = openHook[0];
+			const box = React.useRef(null);
+			const menu = React.useRef(null);
+			const atHook = React.useState(null);
+			React.useEffect(function () {
+				if (!open) return undefined;
+				function away(ev) {
+					if (box.current && box.current.contains(ev.target)) return;
+					if (menu.current && menu.current.contains(ev.target)) return;
+					openHook[1](false);
+				}
+				document.addEventListener("mousedown", away, true);
+				return function () { document.removeEventListener("mousedown", away, true); };
+			}, [open]);
+			const me = deskSelf() || {};
+			const name = String(me.name || deskLogin() || "我");
+			const role = shellRole === "admin" ? "管理员" : shellRole === "director" ? "总监" : "员工";
+			const hasPlugins = shellRole === "admin" && (props.panels || []).some(function (p) { return p && p.id === "plugins"; });
+			// The rail is a glass card (backdrop-filter, overflow hidden), so the menu is put on the body
+			// and placed from the button: above it when the rail is open, beside it when folded.
+			function toggle(ev) {
+				if (open) { openHook[1](false); return; }
+				const r = ev.currentTarget.getBoundingClientRect();
+				atHook[1](props.wide
+					? { left: Math.round(r.left), bottom: Math.round(window.innerHeight - r.top + 8), origin: "16px 100%" }
+					: { left: Math.round(r.right + 12), bottom: Math.round(window.innerHeight - r.bottom), origin: "0 100%" });
+				openHook[1](true);
+			}
+			function logout() {
+				openHook[1](false);
+				fetch("/company/logout", { method: "POST", credentials: "same-origin" }).catch(function () {});
+			}
+			return React.createElement("div", { className: "cs-me" + (props.wide ? "" : " is-rail"), ref: box },
+				// Always mounted: the settings dialog lives inside the kernel's 设置 button, and unmounting
+				// the menu would close the dialog the moment it opens.
+				ReactDOM.createPortal(React.createElement("div", {
+					className: "cs-me-menu" + (open ? " is-open" : ""), role: "menu", ref: menu, "aria-hidden": !open,
+					style: atHook[0] ? { left: atHook[0].left + "px", bottom: atHook[0].bottom + "px", transformOrigin: atHook[0].origin } : { left: "12px", bottom: "64px" }
+				},
+					React.createElement("div", { className: "cs-me-head" },
+						React.createElement("span", { className: "cs-me-pic" }, name.slice(0, 1)),
+						React.createElement("span", null, React.createElement("b", null, name), React.createElement("small", null, (deskLogin() || "") + " · " + role))),
+					React.createElement("div", { className: "cs-me-item cs-me-settings", onClick: function () { setTimeout(function () { openHook[1](false); }, 0); } },
+						safeSlot(function () { return props.renderSlot("sidebar.settings", { wide: true }); })),
+					hasPlugins ? React.createElement("button", { type: "button", className: "cs-me-item", onClick: function () { openHook[1](false); props.selectPanel("plugins"); } },
+						lookIcon(LOOK_ICONS.plugin, 17), React.createElement("span", null, "插件")) : null,
+					React.createElement("div", { className: "cs-me-line" }),
+					React.createElement("button", { type: "button", className: "cs-me-item is-danger", onClick: logout },
+						lookIcon(LOOK_ICONS.logout, 17), React.createElement("span", null, "退出登录"))
+				), document.body),
+				React.createElement("button", { type: "button", className: "cs-me-btn", "aria-label": "我的设置", "aria-expanded": open, onClick: toggle },
+					React.createElement("span", { className: "cs-me-pic" }, name.slice(0, 1)),
+					props.wide ? React.createElement("span", { className: "cs-me-name" }, name, React.createElement("small", null, role)) : null));
+		}
+		// The middle's switch: 助手 (the conversation), ERP, 邮箱; another panel open (工件, 定时任务, 插件) shows as a fourth.
+		function MidSwitch(props) {
+			const active = React.useSyncExternalStore(
+				props.panelInfo ? props.panelInfo.subscribe : noSubscribe,
+				function () { return props.panelInfo ? props.panelInfo.getSnapshot().activePanelId : null; }
+			);
+			const posHook = React.useState(null);
+			const box = React.useRef(null);
+			const thumb = React.useRef(null);
+			React.useEffect(function () {
+				let raf = 0;
+				function place() {
+					const col = document.querySelector('[class*="_centerCol"]');
+					if (!col) { posHook[1](null); return; }
+					const r = col.getBoundingClientRect();
+					posHook[1](function (prev) {
+						const next = Math.round(r.left + r.width / 2);
+						return prev === next ? prev : next;
+					});
+				}
+				place();
+				const ro = typeof ResizeObserver === "function" ? new ResizeObserver(function () { cancelAnimationFrame(raf); raf = requestAnimationFrame(place); }) : null;
+				const col = document.querySelector('[class*="_centerCol"]');
+				if (ro && col) ro.observe(col);
+				window.addEventListener("resize", place);
+				const tick = setInterval(place, 1500);
+				return function () { if (ro) ro.disconnect(); window.removeEventListener("resize", place); clearInterval(tick); };
+			}, []);
+			const tabs = [{ id: null, label: "助手", icon: LOOK_ICONS.sessions }, { id: ERP_PANEL, label: "ERP" }, { id: MAIL_PANEL, label: "邮箱" }];
+			if (active && active !== ERP_PANEL && active !== MAIL_PANEL && active !== CHAT_PANEL) {
+				tabs.push({ id: active, label: LOOK_RAIL_PANELS[active] || (/artifact/i.test(String(active)) ? "工件" : active === "plugins" ? "插件" : "面板"), extra: true });
+			}
+			const onIndex = Math.max(0, tabs.findIndex(function (x) { return x.id === active; }));
+			React.useLayoutEffect(function () {
+				const b = box.current;
+				const th = thumb.current;
+				if (!b || !th) return undefined;
+				const el = b.querySelectorAll(".cs-mid-tab")[onIndex];
+				if (!el) return undefined;
+				const prevL = parseFloat(th.dataset.l || "NaN");
+				const prevW = parseFloat(th.dataset.w || "NaN");
+				const l = el.offsetLeft;
+				const w = el.offsetWidth;
+				th.dataset.l = String(l);
+				th.dataset.w = String(w);
+				if (!isNaN(prevL) && prevL !== l) {
+					const lo = Math.min(prevL, l);
+					const hi = Math.max(prevL + prevW, l + w);
+					th.style.transition = "left .18s ease-out, width .18s ease-out";
+					th.style.left = lo + "px";
+					th.style.width = (hi - lo) + "px";
+					const timer = setTimeout(function () { th.style.transition = ""; th.style.left = l + "px"; th.style.width = w + "px"; }, 170);
+					return function () { clearTimeout(timer); };
+				}
+				th.style.left = l + "px";
+				th.style.width = w + "px";
+				return undefined;
+			});
+			function onMove(ev) {
+				if (!box.current) return;
+				[].forEach.call(box.current.querySelectorAll(".cs-mid-tab"), function (el) {
+					const r = el.getBoundingClientRect();
+					const d = (ev.clientX - (r.left + r.width / 2)) / 70;
+					el.style.transform = "scale(" + (1 + 0.14 * Math.exp(-d * d * 1.4)).toFixed(3) + ")";
+				});
+			}
+			function onLeave() {
+				if (box.current) [].forEach.call(box.current.querySelectorAll(".cs-mid-tab"), function (el) { el.style.transform = ""; });
+			}
+			if (posHook[0] == null) return null;
+			// On the body: the kernel's title row stacks above the overlay slot and would take the clicks.
+			return ReactDOM.createPortal(React.createElement("div", { className: "cs-mid-switch", ref: box, style: { left: posHook[0] + "px" }, role: "tablist", onMouseMove: onMove, onMouseLeave: onLeave },
+				React.createElement("span", { className: "cs-mid-thumb", ref: thumb, "aria-hidden": "true" }),
+				tabs.map(function (x, i) {
+					return React.createElement("button", {
+						key: String(x.id),
+						type: "button",
+						role: "tab",
+						"aria-selected": i === onIndex,
+						className: "cs-mid-tab" + (i === onIndex ? " is-on" : ""),
+						onClick: function () { if (props.selectPanel) props.selectPanel(x.id); }
+					}, x.label);
+				})), document.body);
+		}
+		// company-look-today-v1 (the user, 2026-11-24: 「之前放展开折叠的位置，换成切换白天和晚上的按钮」): one round glass button at the
+		// middle column's top right; it flips the kernel's own theme preference (ui-theme, theme.setTheme), so 设置 → 外观
+		// shows the same choice.
+		function bodyDark() { try { return !!(document.body && document.body.hasAttribute("data-ds-dark-theme")); } catch (err) { return false; } }
+		function subscribeBodyDark(fn) {
+			if (typeof MutationObserver === "undefined" || !document.body) return function () {};
+			const mo = new MutationObserver(fn);
+			mo.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+			return function () { mo.disconnect(); };
+		}
+		function ThemeToggle(props) {
+			const dark = React.useSyncExternalStore(subscribeBodyDark, bodyDark);
+			const posHook = React.useState(null);
+			React.useEffect(function () {
+				function place() {
+					const col = document.querySelector('[class*="_centerCol"]');
+					if (!col) { posHook[1](null); return; }
+					const r = col.getBoundingClientRect();
+					const next = Math.round(r.right - 52);
+					posHook[1](function (prev) { return prev === next ? prev : next; });
+				}
+				place();
+				const col = document.querySelector('[class*="_centerCol"]');
+				const ro = typeof ResizeObserver === "function" && col ? new ResizeObserver(place) : null;
+				if (ro) ro.observe(col);
+				window.addEventListener("resize", place);
+				const tick = setInterval(place, 1500);
+				return function () { if (ro) ro.disconnect(); window.removeEventListener("resize", place); clearInterval(tick); };
+			}, []);
+			if (posHook[0] == null || !props.theme || typeof props.theme.setTheme !== "function") return null;
+			const sun = ["M12 4V2.5", "M12 21.5V20", "M4 12H2.5", "M21.5 12H20", "M6.3 6.3 5.2 5.2", "M18.8 18.8l-1.1-1.1", "M6.3 17.7l-1.1 1.1", "M18.8 5.2l-1.1 1.1"];
+			const icon = dark
+				? React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" },
+					React.createElement("path", { d: "M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" }))
+				: React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" },
+					React.createElement("circle", { cx: 12, cy: 12, r: 4.2 }),
+					sun.map(function (d, i) { return React.createElement("path", { key: i, d: d }); }));
+			return ReactDOM.createPortal(React.createElement("button", {
+				type: "button",
+				className: "cs-theme-btn" + (dark ? " is-dark" : ""),
+				style: { left: posHook[0] + "px" },
+				"aria-label": dark ? "切换到白天" : "切换到夜间",
+				title: dark ? "白天" : "夜间",
+				onClick: function () { try { props.theme.setTheme(dark ? "light" : "dark"); } catch (err) {} }
+			}, icon), document.body);
+		}
+		// 今天, the chat column's first page: what is due today or late, and what waits for my verdict.
+		function TodayPane() {
+			useShellPulse();
+			const now = Date.now();
+			const end = new Date();
+			end.setHours(23, 59, 59, 999);
+			const mine = lookOpenTasks();
+			const due = mine.filter(function (t) { return t.due && t.due <= end.getTime() && !isAwaitingVerdict(t); })
+				.sort(function (a, b) { return a.due - b.due; });
+			const later = mine.filter(function (t) { return !(t.due && t.due <= end.getTime()) && !isAwaitingVerdict(t); }).slice(0, 5);
+			const verdict = mine.filter(isAwaitingVerdict);
+			function row(t) {
+				const late = t.due && t.due < now;
+				return React.createElement("button", { key: t.id, type: "button", className: "cs-today-row", onClick: function () { selectTask(t.id); } },
+					React.createElement("span", { className: "cs-today-box" }),
+					React.createElement("span", { className: "cs-today-t" }, t.title),
+					React.createElement("span", { className: "cs-today-d" + (late ? " is-late" : "") }, t.due ? (late ? "已超期" : cardTime(t.due)) : (t.from || "")));
+			}
+			function card(title, list, empty) {
+				return React.createElement("section", { className: "cs-today-card" },
+					React.createElement("h3", null, title, React.createElement("small", null, list.length ? String(list.length) : "")),
+					list.length ? list.map(row) : React.createElement("p", { className: "cs-today-empty" }, empty));
+			}
+			const d = new Date();
+			return React.createElement("div", { className: "cs-today" },
+				React.createElement("div", { className: "cs-today-date" }, (d.getMonth() + 1) + " 月 " + d.getDate() + " 日 · 星期" + "日一二三四五六".charAt(d.getDay())),
+				card("今天要做的", due, "今天没有到期的事"),
+				verdict.length ? card("等我审批", verdict, "") : null,
+				later.length ? card("接下来", later, "") : null,
+				React.createElement("p", { className: "cs-today-foot" }, "点一项打开任务卡；早报和通话纪要在「聊天」里"));
 		}
 
 		function fileKind(file) {
@@ -7208,7 +7679,7 @@ window.__ModuleLoader__.load({
 		function deskTheme() {
 			try { return document.body && document.body.hasAttribute("data-ds-dark-theme") ? "dark" : "light"; } catch (err) { return "light"; }
 		}
-		function themed(u) { return u ? u + (u.indexOf("?") < 0 ? "?" : "&") + "theme=" + deskTheme() : u; }
+		function themed(u) { return u ? u + (u.indexOf("?") < 0 ? "?" : "&") + "theme=" + deskTheme() + "&look=today" : u; }
 		function ChatFrame() {
 			const [url, setUrl] = React.useState("");
 			const frame = React.useRef(null);
@@ -7396,10 +7867,38 @@ window.__ModuleLoader__.load({
 					chatDockPing();
 				};
 			}, [wide]);
+			const pageHook = React.useState("today");
+			const page = pageHook[0];
+			const segBox = React.useRef(null);
+			const segThumb = React.useRef(null);
+			React.useLayoutEffect(function () {
+				const b = segBox.current;
+				const th = segThumb.current;
+				if (!b || !th) return;
+				const el = b.querySelector('[data-page="' + page + '"]');
+				if (!el) return;
+				th.style.left = el.offsetLeft + "px";
+				th.style.width = el.offsetWidth + "px";
+			});
+			const unread = React.useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot).count;
 			if (!wide || !document.body) return null;
+			// company-look-today-v1: the column is a page of its own (the gradient), with 今天 and 聊天; the chat stays
+			// mounted under 今天, so it keeps its place and keeps ringing.
 			return ReactDOM.createPortal(
-				React.createElement("aside", { className: "cs-chat-dock", "data-company-chat-dock": "1", "aria-label": "聊天" },
-					React.createElement(ChatFrame)
+				React.createElement("aside", { className: "cs-chat-dock cs-look-dock", "data-company-chat-dock": "1", "aria-label": "聊天" },
+					React.createElement("div", { className: "cs-dock-head" },
+						React.createElement("div", { className: "cs-dock-seg", ref: segBox, role: "tablist" },
+							React.createElement("span", { className: "cs-dock-thumb", ref: segThumb, "aria-hidden": "true" }),
+							[["today", "今天"], ["chat", "聊天"]].map(function (x) {
+								return React.createElement("button", {
+									key: x[0], type: "button", role: "tab", "data-page": x[0], "aria-selected": page === x[0],
+									className: "cs-dock-tab" + (page === x[0] ? " is-on" : ""),
+									onClick: function () { pageHook[1](x[0]); }
+								}, x[1], x[0] === "chat" && unread > 0 && page !== "chat" ? React.createElement("i", { className: "cs-dock-dot" }) : null);
+							}))),
+					React.createElement("div", { className: "cs-dock-body" + (page === "today" ? " is-today" : "") },
+						page === "today" ? React.createElement(TodayPane) : null,
+						React.createElement("div", { className: "cs-dock-chat", style: page === "chat" ? null : { visibility: "hidden" } }, React.createElement(ChatFrame)))
 				),
 				document.body
 			);
@@ -8337,7 +8836,7 @@ window.__ModuleLoader__.load({
 			// Global panels (the official plugin manager registers "plugins" here).
 			// The shipped sidebar row used to list them; ours does now, above the
 			// workspaces, the same way.
-			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务", "company-chat": "聊天", "company-erp": "ERPNext", "company-mail": "邮箱" };
+			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务", artifacts: "工件", "company-chat": "聊天", "company-erp": "ERPNext", "company-mail": "邮箱" };
 			const panelSubs = new Set();
 			let panelRows = [];
 			function syncPanels() {
@@ -8403,6 +8902,31 @@ window.__ModuleLoader__.load({
 			});
 			syncPanels();
 
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
+					id: "company-mid-switch",
+					order: 19,
+					inject: function () {
+						return {
+							panelInfo: ctx.layout.panelInfo,
+							selectPanel: function (id) { try { ctx.layout.selectPanel(id); } catch (err) {} }
+						};
+					}
+				}, MidSwitch);
+			});
+			if (typeof ctx.inject === "function") {
+				ctx.inject(["slots", "theme"], function (tctx) {
+					tctx.slots.inject("shell.overlay", function () {
+						return tctx.slots.register({
+							name: "shell.overlay",
+							id: "company-theme-toggle",
+							order: 20,
+							inject: function () { return { theme: tctx.theme }; }
+						}, ThemeToggle);
+					});
+				});
+			}
 			ctx.slots.inject("shell.overlay", function () {
 				return ctx.slots.register({
 					name: "shell.overlay",

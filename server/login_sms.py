@@ -5,9 +5,10 @@ stays for everyone as the way in when texts cannot go out; a device that signed 
 Cloud's SMS service).
 
 Codes (company-login-sms-v1):
-- A person's mobile number is in the roster (people-api, field "phone", set by an admin). Asking for a code with a
-  number answers the same whether or not the number is anyone's (nothing to learn about who works here); a code goes
-  out only to an active person's number.
+- A person's mobile number is in the roster (people-api, field "phone", set by an admin). A code goes out only to an
+  active person's number; a number that is not in the roster (or a disabled person's) is told so and gets no code
+  (the user, 2026-11-24: 「如果不在名单的里手机能不能直接提示 不在名单里不给登录」, over the first version's same answer
+  for every number: someone trying numbers can now learn which are the company's, at most 30 an hour per address).
 - 6 digits, good for 5 minutes, 5 tries; one code a minute per number, 10 a day per number, 30 an hour per address.
   Codes are kept hashed, in memory only.
 - The text goes out through Alibaba Cloud (the RPC signature, HMAC-SHA1, a POST): runtime/sms.json {"provider",
@@ -170,11 +171,12 @@ def request_code(runtime: Path, phone_text, addr: str, find_login, sender=None, 
         if len(sent) >= DAY_MAX:
             return 429, {"ok": False, "error": "day-limit", "hint": "这个号码今天获取验证码的次数太多了，请用密码登录或明天再试。"}
         _ADDR[addr].append(now)
-        sent.append(now)
         login = find_login(phone)
         if not login:
             _CODES.pop(phone, None)
-            return 200, {"ok": True, "sent": True, "wait": GAP_S}     # the same answer: nothing to learn
+            return 404, {"ok": False, "error": "not-registered",
+                         "hint": "这个手机号没有登记在公司花名册里（或账号已停用），不能用验证码登录。请找管理员登记，或用账号和密码登录。"}
+        sent.append(now)
         code = "%06d" % secrets.randbelow(1000000)
         _CODES[phone] = {"hash": _hash(phone + ":" + code), "exp": now + CODE_S, "tries": 0, "login": login}
     ok = (sender or (lambda p, c: send_aliyun(conf, p, c)))(phone, code)

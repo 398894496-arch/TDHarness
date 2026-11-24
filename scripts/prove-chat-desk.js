@@ -56,6 +56,7 @@ const React = {
 		return [hookState[i], (v) => { hookState[i] = v; }];
 	},
 	useEffect(fn) { effects.push(fn); },
+	useLayoutEffect() {},
 	useRef(v) { return { current: v }; },
 	useMemo(fn) { return fn(); },
 	useCallback(fn) { return fn; },
@@ -122,7 +123,7 @@ const ctx = new Proxy({}, {
 		if (k === "slots") return slots();
 		if (k === "effect") return (fn) => fn();
 		if (k === "inject") return (names, cb) => {
-			injected = names;
+			if (Array.from(names).indexOf("sidebarRightTabs") >= 0) injected = names; // the theme button waits for "theme" (company-look-today-v1)
 			cb(new Proxy({}, {
 				get(t2, k2) {
 					if (k2 === "slots") return slots();
@@ -203,7 +204,7 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 	tree = rerender(main.Comp);
 	const frame = find(tree, "iframe");
 	assert.ok(frame, "the chat in an iframe");
-	assert.match(frame.props.src, /^http:\/\/127\.0\.0\.1:17811\/chat\/\?k=abc&theme=(light|dark)$/, "the chat page, in the desk's light or dark");
+	assert.match(frame.props.src, /^http:\/\/127\.0\.0\.1:17811\/chat\/\?k=abc&theme=(light|dark)&look=today$/, "the chat page, in the desk's light or dark and the 今天 look");
 	assert.match(frame.props.allow, /microphone/, "voice messages can record");
 
 	// The address is asked once: the right-sidebar tab shows the same chat at once.
@@ -395,9 +396,17 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 	assert.equal(dockTree.props.container, W.body, "on document.body");
 	const aside = dockTree.children[0];
 	assert.equal(aside.type, "aside");
-	assert.equal(aside.props.className, "cs-chat-dock");
+	assert.equal(aside.props.className, "cs-chat-dock cs-look-dock");
 	assert.equal(aside.props["aria-label"], "聊天");
-	assert.equal(aside.children[0].type.name, "ChatFrame", "the same chat page as everywhere else");
+	// company-look-today-v1: 今天 / 聊天 on top; the chat page stays mounted under 今天 (hidden), so it keeps ringing.
+	const tabsD = aside.children[0].children[0].children.slice(1);
+	assert.deepEqual(tabsD.map((b) => b.props["data-page"]), ["today", "chat"], "今天 and 聊天");
+	assert.equal(tabsD[0].props["aria-selected"], true, "opens on 今天");
+	const dockBody = aside.children[1];
+	assert.equal(dockBody.children[0].type.name, "TodayPane");
+	const chatBox = dockBody.children[1];
+	assert.equal(chatBox.props.style.visibility, "hidden", "the chat page waits, mounted");
+	assert.equal(chatBox.children[0].type.name, "ChatFrame", "the same chat page as everywhere else");
 	assert.equal(W.attrs["data-company-chat-dock"], undefined, "nothing given up before it is on screen");
 	const cleanups = effects.slice().map((fn) => fn());
 	assert.equal(W.attrs["data-company-chat-dock"], "1", "on screen: #root gives up its width");

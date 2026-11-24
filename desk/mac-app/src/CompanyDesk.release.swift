@@ -109,6 +109,8 @@ func launchStartCommand() {
   task.currentDirectoryURL = URL(fileURLWithPath: root, isDirectory: true)
   var env = ProcessInfo.processInfo.environment
   env["NO_OPEN"] = "1"
+  // company-login-page-v1: this shell shows the sign-in page (desk-boot.status "login"); start.command asks no dialogs.
+  env["TDH_SHELL_LOGIN_PAGE"] = "1"
   env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
   task.environment = env
   if let handle = FileHandle(forWritingAtPath: logPath) {
@@ -159,6 +161,11 @@ func installMenus() {
 final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
   var window: NSWindow!
   var web: WKWebView?
+  var loginWeb: WKWebView?
+  // company-login-page-v1: the waiting words on login.html#wait (a living page, not a grey line); the label stays
+  // for a pack without login.html.
+  var waitWeb: WKWebView?
+  var lastStatus = "正在打开本机 Agent…"
   var status: NSTextField!
   var logoutWatch: Timer?
   var portMisses = 0
@@ -176,7 +183,14 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
       defer: false
     )
     window.title = "TDHarness"
+    // company-login-page-v1: the waiting window wears the desk's page colour, so nothing flashes grey between steps.
+    window.backgroundColor = NSColor(name: nil) { look in
+      look.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        ? NSColor(srgbRed: 0x16 / 255.0, green: 0x16 / 255.0, blue: 0x18 / 255.0, alpha: 1)
+        : NSColor(srgbRed: 0xf0 / 255.0, green: 0xf0 / 255.0, blue: 0xef / 255.0, alpha: 1)
+    }
     status = NSTextField(labelWithString: "正在打开本机 Agent…")
+    status.textColor = .secondaryLabelColor
     status.font = NSFont.systemFont(ofSize: 16)
     status.alignment = .center
     status.translatesAutoresizingMaskIntoConstraints = false
@@ -187,6 +201,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         status.centerYAnchor.constraint(equalTo: view.centerYAnchor),
       ])
     }
+    showWaitPage()
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
     primeCompanyShare()
@@ -200,9 +215,16 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
       DispatchQueue.main.async { self.setStatus(Self.label(for: "starting")) }
       launchStartCommand()
       var ready = false
-      for _ in 0..<600 {
+      // Ten minutes for the desk to start; the time a person spends on the sign-in page does not count.
+      var waited = 0
+      while waited < 600 {
         let boot = Self.readBootStatus()
-        DispatchQueue.main.async { self.setStatus(Self.label(for: boot)) }
+        if boot == "login" {
+          DispatchQueue.main.async { self.showLogin() }
+          Thread.sleep(forTimeInterval: 0.3)
+          continue
+        }
+        DispatchQueue.main.async { self.hideLogin(); self.setStatus(Self.label(for: boot)) }
         if boot == "quit" {
           DispatchQueue.main.async { NSApp.terminate(nil) }
           return
@@ -216,6 +238,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
           break
         }
         Thread.sleep(forTimeInterval: 1)
+        waited += 1
       }
       if !ready {
         DispatchQueue.main.async { self.fail(self.deskError()) }
@@ -291,8 +314,69 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     }
   }
 
+  // company-login-page-v1: start.command's sign-in page (mac-login-page.js), from desk-login.url, loopback only.
+  static func loginUrl() -> URL? {
+    let p = (NSHomeDirectory() as NSString).appendingPathComponent(".dsh-company-rc8/desk-login.url")
+    guard let text = try? String(contentsOfFile: p, encoding: .utf8) else { return nil }
+    let s = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard s.hasPrefix("http://127.0.0.1:"), let u = URL(string: s), u.host == "127.0.0.1" else { return nil }
+    return u
+  }
+
+  func showWaitPage() {
+    guard let root = Bundle.main.resourcePath else { return }
+    let file = URL(fileURLWithPath: (root as NSString).appendingPathComponent("login.html"))
+    guard FileManager.default.fileExists(atPath: file.path),
+          var parts = URLComponents(url: file, resolvingAgainstBaseURL: false) else { return }
+    parts.fragment = "wait"
+    guard let url = parts.url else { return }
+    let w = WKWebView(frame: window.contentView!.bounds, configuration: WKWebViewConfiguration())
+    w.autoresizingMask = [.width, .height]
+    w.setValue(false, forKey: "drawsBackground")
+    w.navigationDelegate = self
+    window.contentView?.addSubview(w)
+    w.loadFileURL(url, allowingReadAccessTo: file.deletingLastPathComponent())
+    waitWeb = w
+    status.isHidden = true
+  }
+
+  func pushWait() {
+    guard let w = waitWeb else { return }
+    let words = lastStatus.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    w.evaluateJavaScript("window.tdhWait && window.tdhWait(\"" + words + "\")", completionHandler: nil)
+  }
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    if webView === waitWeb { pushWait() }
+  }
+
+  func showLogin() {
+    if loginWeb != nil { return }
+    guard let url = Self.loginUrl() else { return }
+    status.isHidden = true
+    let cfg = WKWebViewConfiguration()
+    let w = WKWebView(frame: window.contentView!.bounds, configuration: cfg)
+    w.autoresizingMask = [.width, .height]
+    w.setValue(false, forKey: "drawsBackground")
+    window.contentView?.addSubview(w)
+    window.makeFirstResponder(w)
+    w.load(URLRequest(url: url))
+    loginWeb = w
+  }
+
+  func hideLogin() {
+    guard let w = loginWeb else { return }
+    w.removeFromSuperview()
+    loginWeb = nil
+    status.isHidden = waitWeb != nil
+  }
+
   func setStatus(_ text: String) {
     status.stringValue = text
+    if text != lastStatus {
+      lastStatus = text
+      pushWait()
+    }
   }
 
   func deskError() -> String {
@@ -350,6 +434,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
   func showDesk() {
     status.removeFromSuperview()
+    waitWeb?.removeFromSuperview()
+    waitWeb = nil
     let cfg = WKWebViewConfiguration()
     // company-chat-call-v1: a call's sound plays as soon as it comes, not after a click.
     cfg.mediaTypesRequiringUserActionForPlayback = []
@@ -401,6 +487,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
   func applicationWillTerminate(_ notification: Notification) {
+    // The window closed on the sign-in page: mac-login-page.js and start.command end with it.
+    if Self.readBootStatus() == "login" { Self.writeBootStatus("quit") }
     logoutWatch?.invalidate()
     clearLoginFiles()
     quitLease()

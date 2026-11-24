@@ -178,7 +178,30 @@ if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ "$DEEPSEEK_API_KEY" = "company-gateway" ]
     if [ "$LOGIN_RC" = 0 ]; then
       LOGIN_OK=1
     elif [ "$LOGIN_RC" = 3 ]; then
-      login_why ""
+      if [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ]; then
+        export LOGIN_NOTE="连不上公司服务器。在公司请连公司的 Wi-Fi；不在公司请先打开右上角的 Tailscale，确认已连上，再试一次。"
+      else
+        login_why ""
+      fi
+    fi
+  fi
+  # company-login-page-v1 (the user, 2026-11-24: 「登录窗口好丑」): a shell that can show it signs in on a page in
+  # its own window (mac-login-page.js serves login.html; mac-company-login.js still does every step). Exit 0 signed
+  # in, 2 the window closed; anything else (an older pack, no node) falls back to the dialogs below.
+  if [ "$LOGIN_OK" != 1 ] && [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ] && [ -f "$ROOT/mac-login-page.js" ] && [ -f "$ROOT/login.html" ]; then
+    PAGE_RC=0
+    LOGIN_URL="$LOGIN_URL" TOKFILE="$TOKFILE" "$NODEBIN" "$ROOT/mac-login-page.js" || PAGE_RC=$?
+    unset LOGIN_NOTE
+    if [ "$PAGE_RC" = 0 ]; then
+      LOGIN_OK=1
+      boot_status starting
+    elif [ "$PAGE_RC" = 2 ]; then
+      printf '%s\n' "Error: 没有登录，已取消。" > "$DSH_HOME/web-runtime.err"
+      boot_status quit
+      echo "BLOCKED=gw-token-required" >&2
+      exit 2
+    else
+      boot_status starting
     fi
   fi
   ONLY_PASSWORD=0

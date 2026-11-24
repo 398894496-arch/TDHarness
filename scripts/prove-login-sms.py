@@ -8,7 +8,7 @@ server/login_sms.py on its own:
 people-api (a throwaway server on a free port; codes go to a test outbox, TDH_SMS_TEST_OUTBOX, instead of texts):
 - phones in the roster: an admin sets them (normalised), a bad or a taken one is refused; the public roster never
   carries them; an admin sees all, a person only their own;
-- 获取验证码: the same answer for a number that is nobody's (and no text), a disabled person's, and a real one; one a
+- 获取验证码: a number that is nobody's, or a disabled person's, is told it is not in the roster (no text); one a
   minute, ten a day per number, thirty an hour per address;
 - signing in with it: the right code once, the login's full sign-in (desk token and share account); a wrong code
   five times and the code is gone; an expired one fails; another person's code does not open your account;
@@ -163,7 +163,7 @@ def main() -> None:
         st, a = call("login/sms-code", {"phone": "13800138000"})
         check(st == 200 and a == {"ok": True, "sent": True, "wait": 60} and len(codes()) == 1 and codes()[0].startswith("13800138000 "), "a code to a real number")
         st, b = call("login/sms-code", {"phone": "13600136000"})
-        check(st == 200 and b == a and len(codes()) == 1, "a number that is nobody's: the same answer, no text")
+        check(st == 404 and b["error"] == "not-registered" and "没有登记" in b["hint"] and len(codes()) == 1, "a number that is nobody's: told so, no text")
         check(call("login/sms-code", {"phone": "12345"})[0] == 400, "not a mobile number: refused")
         st, w = call("login/sms-code", {"phone": "13800138000"})
         check(st == 429 and w["error"] == "wait" and len(codes()) == 1, "one a minute per number")
@@ -198,7 +198,7 @@ def main() -> None:
         check(call("login/resume", {"token": wdev, "device_id": "win-WANG0001"})[0] == 401, "a disabled person's devices are out")
         n = len(codes())
         st, r = call("login/sms-code", {"phone": "13700137000"}, src="10.0.0.6")
-        check(st == 200 and len(codes()) == n, "a disabled person's number: the same answer, no text")
+        check(st == 404 and r["error"] == "not-registered" and len(codes()) == n, "a disabled person's number: not allowed, no text")
         call("people", {"action": "enable", "login": "wang"}, adm)
         wdev = call("login", {"username": "wang", "password": "wang-pass-123", "remember": True, "device_id": "win-WANG0001"})[1]["remember_token"]
         st, r = call("people", {"action": "self", "password_old": "wang-pass-123", "password_new": "wang-pass-456"},

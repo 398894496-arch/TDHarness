@@ -1834,6 +1834,9 @@ internal sealed class ShellForm : Form
     private int _codeLeft;
     private string _mode = "password";
     private WebView2 _web;
+    // company-login-page-v1: the sign-in as login.html (the Mac's page too) over the native one, when WebView2 is here.
+    private WebView2 _loginWeb;
+    private string _loginNote = "";
     private string _authUser = "";
     private string _authPass = "";
     private string _personal = "";
@@ -1942,6 +1945,7 @@ internal sealed class ShellForm : Form
             box.Top = Math.Max(0, (_login.Height - box.Height) / 2);
         };
         Controls.Add(_login);
+        _err.TextChanged += delegate { PushLoginState(); };
         AcceptButton = _go;
         _go.Click += delegate { SignIn(); };
         // company-login-sms-v1: open in the way this computer signed in last (a phone kept: 手机验证码).
@@ -1965,12 +1969,16 @@ internal sealed class ShellForm : Form
             box.Top = Math.Max(0, (_login.Height - box.Height) / 2);
             _err.ForeColor = Color.FromArgb(90, 90, 90);
             _err.Text = "正在接通公司网…";
+            // company-login-page-v1: WebView2 already here (most opens): the page from the start, no native flash.
+            ShowLoginPage();
             var boot = new Thread(new ThreadStart(delegate
             {
                 try { AppHost.EnsureCompanyNet(); }
                 catch (Exception ex) { AppHost.Log("ts-boot " + ex.Message); }
                 try { EnsureWebView2(); }
                 catch (Exception wvEx) { AppHost.Log("webview2-boot " + wvEx.Message); }
+                try { BeginInvoke(new Action(delegate { if (!IsDisposed && _web == null) ShowLoginPage(); })); }
+                catch { }
                 try { CheckForUpdate(); }
                 catch (Exception upEx) { AppHost.Log("update-check " + upEx.Message); ShowNote("", false); }
                 // company-login-remember-v1: a computer signed in within 30 days goes straight in.
@@ -2427,6 +2435,7 @@ internal sealed class ShellForm : Form
         _login.Visible = true;
         _login.Enabled = true;
         _login.BringToFront();
+        ShowLoginSurface();
         try { Activate(); } catch { }
         AppHost.Log("seat-lost " + why.Substring(0, Math.Min(12, why.Length)));
     }
@@ -2474,13 +2483,171 @@ internal sealed class ShellForm : Form
         _login.Visible = true;
         _login.Enabled = true;
         _login.BringToFront();
+        ShowLoginSurface();
         AppHost.Log("logout-to-login");
+    }
+
+    // company-login-page-v1 (the user, 2026-11-24: 「登录窗口好丑」「把登录同步解决」): login.html (beside this exe; the
+    // same page the Mac shows) in WebView2 over the native sign-in. The page only asks; every step is still the native
+    // one (SendCode, SignIn, AutoResume): what the page typed goes into the native boxes and the native button is
+    // pressed, and whatever the native status line says is sent to the page. No WebView2, no login.html, or any
+    // failure here: the native sign-in stays, as before.
+    private void ShowLoginPage()
+    {
+        if (_loginWeb != null || _web != null) return;
+        if (DeskPrereq.WebView2Version().Length == 0) return;
+        var file = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "login.html");
+        if (!File.Exists(file)) return;
+        try
+        {
+            var html = File.ReadAllText(file, Encoding.UTF8);
+            var w = new WebView2();
+            w.Dock = DockStyle.Fill;
+            w.Visible = false;
+            Controls.Add(w);
+            var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TDHarness", "webview");
+            Directory.CreateDirectory(data);
+            var envTask = CoreWebView2Environment.CreateAsync(null, data);
+            AppHost.WaitTask(envTask);
+            AppHost.WaitTask(w.EnsureCoreWebView2Async(envTask.Result));
+            if (_web != null || IsDisposed) { Controls.Remove(w); w.Dispose(); return; }
+            w.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            w.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            w.CoreWebView2.Settings.IsStatusBarEnabled = false;
+            w.CoreWebView2.NewWindowRequested += delegate(object sender, CoreWebView2NewWindowRequestedEventArgs e) { e.Handled = true; };
+            w.CoreWebView2.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e)
+            {
+                if (e.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase) || e.Uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase)) return;
+                e.Cancel = true;
+            };
+            w.CoreWebView2.WebMessageReceived += delegate(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+            {
+                string msg;
+                try { msg = e.TryGetWebMessageAsString(); }
+                catch { return; }
+                LoginStep(msg);
+            };
+            w.CoreWebView2.NavigationCompleted += delegate
+            {
+                if (_web != null) return;
+                w.Visible = true;
+                w.BringToFront();
+                PushLoginState();
+            };
+            _loginWeb = w;
+            w.CoreWebView2.NavigateToString(html);
+            AppHost.Log("login-page on");
+        }
+        catch (Exception ex)
+        {
+            AppHost.Log("login-page off " + ex.Message);
+            if (_loginWeb != null) { try { Controls.Remove(_loginWeb); _loginWeb.Dispose(); } catch { } }
+            _loginWeb = null;
+        }
+    }
+
+    private void ShowLoginSurface()
+    {
+        if (_loginWeb == null) return;
+        _loginWeb.Visible = true;
+        _loginWeb.BringToFront();
+        PushLoginState();
+    }
+
+    private static string JsonText(string s)
+    {
+        var sb = new StringBuilder("\"");
+        foreach (var ch in s ?? "")
+        {
+            if (ch == '"' || ch == '\\') sb.Append('\\').Append(ch);
+            else if (ch < ' ') sb.Append("\\u").Append(((int)ch).ToString("x4"));
+            else sb.Append(ch);
+        }
+        return sb.Append('"').ToString();
+    }
+
+    private bool ErrIsBad()
+    {
+        var c = _err.ForeColor;
+        return c.R > 150 && c.G < 120;
+    }
+
+    private void PostToLogin(string json)
+    {
+        if (_loginWeb == null || _loginWeb.CoreWebView2 == null) return;
+        try { _loginWeb.CoreWebView2.PostWebMessageAsString(json); }
+        catch { }
+    }
+
+    // The native status line, as the page shows it (also each step's 正在… while a sign-in runs).
+    private void PushLoginState()
+    {
+        if (_loginWeb == null || !_loginWeb.Visible) return;
+        var text = _err.Text ?? "";
+        PostToLogin("{\"type\":\"state\",\"msg\":" + JsonText(text) + ",\"bad\":" + (ErrIsBad() && text.Length > 0 ? "true" : "false") + "}");
+    }
+
+    private void LoginStep(string msg)
+    {
+        var id = AppHost.JsonField(msg, "id");
+        var step = AppHost.JsonField(msg, "step");
+        if (!Regex.IsMatch(id, @"^m[0-9]{1,9}$")) return;
+        string reply;
+        try { reply = LoginStepReply(step, msg); }
+        catch (Exception ex)
+        {
+            AppHost.Log("login-page step " + ex.Message);
+            reply = "\"ok\":false,\"msg\":" + JsonText("本机登录出错了，请重新打开 TDHarness。");
+        }
+        PostToLogin("{\"id\":\"" + id + "\"," + reply + "}");
+    }
+
+    private string LoginStepReply(string step, string msg)
+    {
+        if (step == "hello")
+        {
+            string lastLogin = "", lastPhone = "";
+            try { lastLogin = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), "last.login")).Trim(); } catch { }
+            try { lastPhone = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), "last.phone")).Trim(); } catch { }
+            if (!Regex.IsMatch(lastLogin, @"^[A-Za-z0-9._@-]{1,64}$")) lastLogin = "";
+            if (!Regex.IsMatch(lastPhone, @"^[0-9+]{11,14}$")) lastPhone = "";
+            var text = _err.Text ?? "";
+            return "\"ok\":true,\"lastLogin\":" + JsonText(lastLogin) + ",\"lastPhone\":" + JsonText(lastPhone)
+                + ",\"mode\":" + JsonText(lastPhone.Length > 0 || lastLogin.Length == 0 ? "sms" : "pwd")
+                + ",\"msg\":" + JsonText(text) + ",\"bad\":" + (ErrIsBad() && text.Length > 0 ? "true" : "false");
+        }
+        var data = msg;
+        var remember = AppHost.JsonField(data, "remember") != "false";
+        if (step == "sms-code")
+        {
+            _mode = "sms";
+            _user.Text = AppHost.JsonField(data, "phone");
+            SendCode();
+            var text = _err.Text ?? "";
+            if (text.StartsWith("验证码已发送")) return "\"ok\":true";
+            return "\"ok\":false,\"smsOff\":" + (_mode == "password" ? "true" : "false") + ",\"msg\":" + JsonText(text.Length > 0 ? text : "验证码没发出去，请稍后再试。");
+        }
+        if (step == "sms" || step == "password")
+        {
+            _mode = step == "sms" ? "sms" : "password";
+            _user.Text = step == "sms" ? AppHost.JsonField(data, "phone") : AppHost.JsonField(data, "user");
+            _pass.Text = step == "sms" ? AppHost.JsonField(data, "code") : AppHost.JsonField(data, "pass");
+            _remember.Checked = remember;
+            data = null;
+            SignIn();
+            _pass.Text = "";
+            if (_web != null && !_login.Visible) return "\"ok\":true";
+            var text = _err.Text ?? "";
+            return "\"ok\":false,\"msg\":" + JsonText(text.Length > 0 ? text : "登录没有成功，请再试一次。");
+        }
+        return "\"ok\":false,\"msg\":" + JsonText("不认识这一步。");
     }
 
     private void ShowDesk()
     {
         _login.Visible = false;
         _login.Enabled = false;
+        if (_loginWeb != null) _loginWeb.Visible = false;
         _web = new WebView2();
         _web.Dock = DockStyle.Fill;
         Controls.Add(_web);
