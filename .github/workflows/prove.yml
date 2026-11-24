@@ -205,6 +205,9 @@ jobs:
         run: python3 scripts/prove-mail.py
       - name: The desk's 邮箱 page and its relay (company-mail-v1)
         run: node scripts/prove-mail-desk.mjs
+      - name: The site's skills go into every pack, so a desk without the share still has them (company-site-skills-in-pack-v1)
+        if: runner.os == 'Linux'
+        run: python3 scripts/prove-site-skills.py
       - name: Chat page logic, its input boxes with a Chinese input method, TDH 助手's cards (company-chat-client-v1, company-chat-ime-v1, company-chat-assist-v1; tinode-sdk 0.25.3, as the server runs)
         if: runner.os == 'Linux'
         run: |

@@ -130,4 +130,49 @@ const src = fs.readFileSync(path.join(ROOT, 'server', 'chat', 'tdh-web', 'app.js
 assert.ok(!/innerHTML|dangerouslySetInnerHTML|insertAdjacentHTML|document\.write/.test(src), 'no HTML from strings');
 assert.ok(/e\.source === window\.parent/.test(src), 'theme messages only from the desk page around it');
 
+// -- company-chat-alert-v1: a message from another chat while one is open --------------------------------------
+// (2026-11-23: an employee in a chat with 田总 got nothing when 尚晓晨 wrote; the list is out of sight then.)
+const chatOf = (name, fn, seq, read, opts) => Object.assign({
+  name, seq, read, public: { fn }, acs: { isMuted: () => false },
+  isGroupType: () => name.startsWith('grp'), isSubscribed: () => false, latestMessage: () => null, userDesc: () => null,
+}, opts || {});
+const plainOf = (v) => JSON.parse(JSON.stringify(v)); // the page's objects come from its own context
+const tian = chatOf('usrTian000001', '田总', 9, 9);
+const shang = chatOf('usrShang00001', '尚晓晨', 3, 2);
+const quote = chatOf('grpQuote00001', '报价群', 12, 10);
+const quiet = chatOf('grpQuiet00001', '闲聊群', 40, 0, { acs: { isMuted: () => true } });
+const all = [tian, shang, quote, quiet];
+C.client.getMeTopic = () => ({ contacts: (f) => all.forEach(f) });
+C.client.getTopic = (name) => all.find((c) => c.name === name) || null;
+C.S.topic = tian.name;
+C.S.alert = null;
+assert.strictEqual(F.otherUnread(), 3, '返回 counts the other chats: 1 from 尚晓晨 + 2 in 报价群, not the muted group');
+assert.ok(F.alertOther(shang), 'a message from another chat: the bar');
+assert.deepStrictEqual(JSON.parse(JSON.stringify(C.S.alert)), { topic: shang.name, seq: 3 });
+assert.deepStrictEqual(plainOf(F.alertText(C.S.alert)), { title: '尚晓晨', line: '发来新消息' }, 'before the words are fetched: who');
+shang.latestMessage = () => ({ seq: 3, from: shang.name, content: '下午的   报价\n发你了' });
+assert.deepStrictEqual(plainOf(F.alertText(C.S.alert)), { title: '尚晓晨', line: '下午的 报价 发你了' }, 'then the words, on one line');
+quote.latestMessage = () => ({ seq: 12, from: 'usrLi0000001', content: pic });
+quote.userDesc = (uid) => (uid === 'usrLi0000001' ? { public: { fn: '李四' } } : null);
+assert.ok(F.alertOther(quote));
+assert.deepStrictEqual(plainOf(F.alertText(C.S.alert)), { title: '「报价群」', line: '李四：[图片]' }, 'a group: the group, who, what');
+C.S.alert = null;
+assert.ok(!F.alertOther(tian), 'the open chat: no bar (its messages are on screen)');
+assert.ok(!F.alertOther(quiet), '消息免打扰: no bar');
+assert.ok(!F.alertOther(chatOf('usrMine000001', '王五', 5, 5)), 'nothing unread (my own message from elsewhere): no bar');
+assert.strictEqual(C.S.alert, null);
+assert.strictEqual(F.ding(), false, 'no sound where there is no AudioContext, and no error');
+let played = 0;
+ctx.AudioContext = function () {
+  const node = () => ({ connect() {}, start() { played += 1; }, stop() {}, type: '', frequency: { setValueAtTime() {} }, gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} } });
+  return { state: 'running', currentTime: 0, destination: {}, createOscillator: node, createGain: node };
+};
+assert.ok(F.alertOther(shang) && played === 1, 'the bar comes with the sound');
+C.open(shang.name);
+assert.strictEqual(C.S.alert, null, 'opening that chat puts the bar away');
+assert.ok(/me\.onContactUpdate[\s\S]{0,200}alertOther\(cont\)/.test(src), 'a new message in the contact list raises it');
+assert.ok(/h\(Menu\), h\(Dialogs\), h\(Viewer\), h\(AlertBar\)/.test(src) && /h\(BackButton\)/.test(src), 'the bar and 返回 are drawn');
+const css = fs.readFileSync(path.join(ROOT, 'server', 'chat', 'tdh-web', 'app.css'), 'utf8');
+assert.ok(/\.alert \{[^}]*animation: tc-alert/.test(css) && /\.head \.back \{ position: relative; \}/.test(css), 'the bar pulses; the count sits on 返回');
+
 console.log('CHAT_CLIENT_PROVE_OK=1');

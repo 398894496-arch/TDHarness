@@ -44,4 +44,22 @@ for (const w of ['const MAIL_PANEL = "company-mail"', 'id: MAIL_PANEL', 'label: 
 }
 const index = fs.readFileSync(path.join(lib, "index.js"), "utf8");
 assert.ok(index.includes('path: "/company/mail/call"') && index.includes('req.headers["x-tdh-mail"] === "1"'), "the desk's route needs the page's header");
+
+// company-mail-skill-in-pack-v1 (2026-11-22): 田总's Mac could not read the share (macOS kept asking about network
+// volumes), so the boot's skill sync had only the pack's skills and the agent answered "技能未知或已不可用". The skill
+// the instructions above name now comes with every pack: a desk that boots without the share still has it.
+const pack = path.join(here, "..", "desk", "pack");
+const skill = fs.readFileSync(path.join(pack, "common", "skills", "company-mail", "SKILL.md"), "utf8");
+assert.ok(/^---\nname: company-mail\n/.test(skill) && skill.includes("`pack` 填 `mail`") && skill.includes("/send"), "the pack carries company-mail");
+const { execFileSync } = await import("node:child_process");
+const os = await import("node:os");
+const t = fs.mkdtempSync(path.join(os.tmpdir(), "mail-skill-"));
+try {
+	const out = execFileSync(process.execPath, [path.join(pack, "common", "sync-skills.js"), "--cache", path.join(t, "cache"),
+		"--share", path.join(t, "company", "_skills"), "--seed", path.join(pack, "common", "skills")], { encoding: "utf8" });
+	assert.ok(out.includes("SKILLS_SITE=0"), "no share here");
+	assert.ok(fs.existsSync(path.join(t, "cache", "company-mail", "SKILL.md")), "company-mail without the share");
+} finally {
+	fs.rmSync(t, { recursive: true, force: true });
+}
 console.log("MAIL_DESK_PROVE_OK=1");

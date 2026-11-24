@@ -339,5 +339,16 @@ const oddPage = await new Promise((resolve) => http.get({ host: "127.0.0.1", por
 assert.ok(!oddPage.includes("a</script>"), "a login cannot close the script element");
 await odd.close();
 site.close();
+
+// company-chat-alert-v1: on Windows the system notification also flashes TDH's taskbar button until the window is
+// brought forward (FlashWindowEx with FLASHW_ALL | FLASHW_TIMERNOFG = 15), before the toast, inside its own try.
+{
+	const relaySrc = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "desk", "plugins", "company-shell", "lib", "chat-relay.js"), "utf8");
+	const { WIN_FLASH_PS } = await import(pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "desk", "plugins", "company-shell", "lib", "chat-relay.js")).href);
+	assert.ok(WIN_FLASH_PS.startsWith("try{Add-Type") && WIN_FLASH_PS.endsWith("}catch{};"), "the flash cannot stop the toast");
+	for (const w of ["FlashWindowEx", "Get-Process -Name TDHarness", "MainWindowHandle", "dwFlags=15"]) assert.ok(WIN_FLASH_PS.includes(w), "flash: " + w);
+	assert.ok(!/\$env:|TDH_N[TB]/.test(WIN_FLASH_PS), "nothing from the message goes into the flash");
+	assert.ok(/const ps = WIN_FLASH_PS \+ "\[void\]\[Windows\.UI\.Notifications/.test(relaySrc), "the Windows notification runs it first");
+}
 console.log("CHAT_RELAY_PROVE_OK=1");
 process.exit(0);

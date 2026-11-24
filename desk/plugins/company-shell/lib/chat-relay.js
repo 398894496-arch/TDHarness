@@ -325,6 +325,15 @@ function lpSession(base, key) {
 
 // The system's own notification (TDH's window is in the background). Mac: osascript; Windows: a toast through
 // Windows PowerShell's registered app id (no app id of TDH's own yet). At most one every 3 seconds.
+// company-chat-alert-v1 (2026-11-23, an employee asked for 「来新消息闪烁或者其他提示」): on Windows TDH's button on
+// the taskbar also flashes until the window is brought forward (FlashWindowEx, FLASHW_ALL | FLASHW_TIMERNOFG), as
+// WeChat's does; a toast the system keeps quiet (勿扰, notifications off for PowerShell) no longer leaves nothing.
+export const WIN_FLASH_PS = "try{Add-Type -Namespace Tdh -Name Fw -MemberDefinition '" +
+	"[StructLayout(LayoutKind.Sequential)] public struct FI { public uint cbSize; public IntPtr hwnd; public uint dwFlags; public uint uCount; public uint dwTimeout; }" +
+	" [DllImport(\"user32.dll\")] public static extern bool FlashWindowEx(ref FI f);';" +
+	"foreach($p in @(Get-Process -Name TDHarness -ErrorAction SilentlyContinue)){if($p.MainWindowHandle -ne [IntPtr]::Zero){" +
+	"$f=New-Object 'Tdh.Fw+FI';$f.cbSize=[uint32][Runtime.InteropServices.Marshal]::SizeOf($f);$f.hwnd=$p.MainWindowHandle;$f.dwFlags=15;" +
+	"[void][Tdh.Fw]::FlashWindowEx([ref]$f)}}}catch{};";
 let lastNotify = 0;
 export function systemNotify(title, body) {
 	const now = Date.now();
@@ -337,7 +346,7 @@ export function systemNotify(title, body) {
 		return true;
 	}
 	if (process.platform === "win32") {
-		const ps = "[void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime];" +
+		const ps = WIN_FLASH_PS + "[void][Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime];" +
 			"[void][Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime];" +
 			"$e=[Security.SecurityElement];$x=New-Object Windows.Data.Xml.Dom.XmlDocument;" +
 			"$x.LoadXml('<toast><visual><binding template=\"ToastGeneric\"><text>'+$e::Escape($env:TDH_NT)+'</text><text>'+$e::Escape($env:TDH_NB)+'</text></binding></visual></toast>');" +

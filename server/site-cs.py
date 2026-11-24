@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -333,6 +334,53 @@ def put_zip_dir(src: Path, folder: Path, prefix: str) -> int:
             zout.writestr(name, data)
     swap_in(tmp, src)
     return len(files)
+
+
+SKILL_NAME_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def put_site_skills(src: Path, skills: Path) -> list:
+    """company-site-skills-in-pack-v1 (2026-11-22): this site's skills (the share's _skills) go into the pack too.
+    A desk builds its skill list from the share at boot, so one that could not read the share (田总's Mac kept being
+    asked about network volumes) had only the pack's own skills: no 邮箱, ERP, 生产 or 聊天 skill. Now the pack carries
+    them; the share still lays over them at boot, so a skill changed on the share works on the next start where the
+    share can be read, and elsewhere after the next publish. Each skill folder (one with a SKILL.md) replaces the
+    pack's folder of the same name whole, as sync-skills.js does. The repository stays without them: they are this
+    site's. Run after overlay-zip (which drops skills the repository does not have) and before reseal-zip."""
+    import zipfile
+
+    if not skills.is_dir():
+        return []
+    found = {}
+    for d in sorted(skills.iterdir()):
+        if not d.is_dir() or not SKILL_NAME_OK.match(d.name) or not (d / "SKILL.md").is_file():
+            continue
+        rows = {}
+        for f in sorted(d.rglob("*")):
+            rel = f.relative_to(d).as_posix()
+            if not f.is_file() or f.is_symlink() or any(x.startswith(".") or x == "__MACOSX" for x in rel.split("/")):
+                continue
+            rows["CompanyDesk/skills/%s/%s" % (d.name, rel)] = f.read_bytes()
+        found[d.name] = rows
+    if not found:
+        return []
+    owned = tuple("CompanyDesk/skills/%s/" % n for n in found)
+    tmp = src.with_suffix(src.suffix + ".tmp")
+    with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            name = item.filename.replace("\\", "/")
+            if name.startswith(owned):
+                continue
+            zout.writestr(item, zin.read(item.filename))
+        for rows in found.values():
+            for name, data in rows.items():
+                zi = zipfile.ZipInfo(name, date_time=(2026, 10, 11, 0, 0, 0))
+                zi.compress_type = zipfile.ZIP_DEFLATED
+                zi.create_system = 3  # Unix, so a Mac keeps the mode (see overlay_zip)
+                zi.external_attr = (0o100000 | 0o644) << 16
+                zout.writestr(zi, data)
+    swap_in(tmp, src)
+    return sorted(found)
 
 
 def put_zip_archive(src: Path, archive: Path, prefix: str, keep: list) -> int:
@@ -786,7 +834,7 @@ def main() -> None:
     ap.add_argument("--site", required=True)
     ap.add_argument(
         "cmd",
-        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip", "put-zip-archive", "mac-app-zip", "go-live"),
+        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip", "put-zip-archive", "put-site-skills", "mac-app-zip", "go-live"),
     )
     ap.add_argument("--out")
     ap.add_argument("--src")
@@ -845,6 +893,12 @@ def main() -> None:
             raise SystemExit("put-zip needs --src --file <folder> --name <prefix in the zip>")
         n = put_zip_dir(Path(args.src), Path(args.file), args.name)
         sys.stdout.write("PUT=%s\n" % n)
+        return
+    if args.cmd == "put-site-skills":
+        if not args.src or not args.file:
+            raise SystemExit("put-site-skills needs --src <pack zip> --file <the share's _skills>")
+        got = put_site_skills(Path(args.src), Path(args.file))
+        sys.stdout.write("SITE_SKILLS=%s %s\n" % (len(got), ",".join(got)))
         return
     if args.cmd == "go-live":
         if not args.src or not args.out:

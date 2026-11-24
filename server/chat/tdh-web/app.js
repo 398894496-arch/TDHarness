@@ -46,6 +46,7 @@
 		view: "chats", // chats | contacts
 		search: "",
 		toast: "",
+		alert: null, // { topic, seq }: a message from a chat other than the open one (company-chat-alert-v1)
 		typing: {}, // topic -> until (ms)
 		recalled: {}, // "topic:seq" -> text, for 重新编辑
 		members: {}, // group -> [uid]
@@ -65,6 +66,61 @@
 		bump();
 		clearTimeout(toastTimer);
 		toastTimer = setTimeout(() => { S.toast = ""; bump(); }, 3200);
+	}
+
+	// company-chat-alert-v1 (2026-11-23, an employee: 「刚刚点进田总聊天界面，尚晓晨再发我消息也不提示，需要退出我跟田总聊天
+	// 才能看到其他同事发的消息 能设置一下来新消息闪烁或者其他提示」): with one chat open the list is out of sight (the desk's
+	// column shows one or the other), so a message from another chat showed nowhere. Now it comes as a bar at the top
+	// that pulses (who, and the words once they are fetched; a click opens that chat) with a short sound, and the open
+	// chat's 返回 carries the other chats' unread count. A chat set to 消息免打扰 does none of this.
+	let alertTimer = null;
+	function alertOther(cont) {
+		if (!cont || !cont.name || cont.name === S.topic || muted(cont) || unread(cont) <= 0) return false;
+		S.alert = { topic: cont.name, seq: cont.seq | 0 };
+		bump();
+		ding();
+		clearTimeout(alertTimer);
+		alertTimer = setTimeout(() => { S.alert = null; bump(); }, 8000);
+		return true;
+	}
+	function otherUnread() {
+		return contacts().reduce((n, c) => n + (c.name === S.topic || muted(c) ? 0 : unread(c)), 0);
+	}
+	// What the bar says: the chat, and the message's words once the list has fetched it (until then, that one came).
+	function alertText(a) {
+		const c = a && client.getTopic(a.topic);
+		if (!c) return null;
+		const last = typeof c.latestMessage === "function" ? c.latestMessage() : null;
+		const fresh = last && (last.seq | 0) >= a.seq && last.from !== S.meId;
+		const words = fresh ? plain(last.content).replace(/\s+/g, " ").trim().slice(0, 80) : "";
+		if (c.isGroupType()) return { title: "「" + nameOf(c) + "」", line: words ? userName(last.from, c) + "：" + words : "有新消息" };
+		return { title: nameOf(c), line: words || "发来新消息" };
+	}
+	// A short two-note sound, made here (no file to fetch). The browser lets it play once the person has used the page.
+	let audio = null;
+	function ding() {
+		try {
+			const AC = window.AudioContext || window.webkitAudioContext;
+			if (!AC) return false;
+			audio = audio || new AC();
+			if (audio.state === "suspended" && audio.resume) audio.resume().catch(() => {});
+			const t0 = audio.currentTime;
+			const o = audio.createOscillator();
+			const g = audio.createGain();
+			o.type = "sine";
+			o.frequency.setValueAtTime(880, t0);
+			o.frequency.setValueAtTime(1175, t0 + 0.09);
+			g.gain.setValueAtTime(0.0001, t0);
+			g.gain.exponentialRampToValueAtTime(0.12, t0 + 0.02);
+			g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.32);
+			o.connect(g);
+			g.connect(audio.destination);
+			o.start(t0);
+			o.stop(t0 + 0.34);
+			return true;
+		} catch (e) {
+			return false; // no sound here; the bar still shows
+		}
 	}
 
 	// ---- Tinode. -------------------------------------------------------------------------------------------------
@@ -123,7 +179,7 @@
 		const me = client.getMeTopic();
 		me.onMetaDesc = (d) => { S.myName = (d && d.public && d.public.fn) || ""; bump(); };
 		me.onContactUpdate = (what, cont) => {
-			if (what === "msg" && cont && cont.name !== S.topic) later(cont.name);
+			if (what === "msg" && cont && cont.name !== S.topic) { later(cont.name); alertOther(cont); }
 			if (what === "gone" && cont && cont.name === S.topic) { S.topic = null; }
 			bump();
 		};
@@ -407,6 +463,7 @@
 			S.drafts[prev] = S.drafts[prev] || "";
 		}
 		if (!again) S.reply = null;
+		if (S.alert && S.alert.topic === name) S.alert = null;
 		S.topic = name;
 		S.view = "chats";
 		bump();
@@ -1109,6 +1166,21 @@
 				h("button", { className: "send", disabled: !text.trim() && !pend.length, onClick: send }, "发送")));
 	}
 
+	// 返回, with the other chats' unread count on it (the list is out of sight while a chat is open in the column).
+	function BackButton() {
+		const n = otherUnread();
+		return h("button", { className: "icon-btn back", title: n ? "返回（其他聊天有 " + n + " 条未读）" : "返回", onClick: () => openTopic(null), "data-other-unread": String(n) },
+			ICON.back(), n ? h("span", { className: "count" }, n > 99 ? "99+" : String(n)) : null);
+	}
+
+	function AlertBar() {
+		const a = S.alert;
+		const t = a && alertText(a);
+		if (!t) return null;
+		return h("button", { className: "alert", role: "status", onClick: () => { S.alert = null; openTopic(a.topic); } },
+			h("span", { className: "dot" }), h("b", null, t.title), h("span", { className: "line" }, t.line));
+	}
+
 	function ChatPane(props) {
 		if (!S.topic) return h("main", { className: "chat" + (props.narrow ? " away" : "") }, h("div", { className: "welcome" }, "选一个同事或群，开始聊天"));
 		const t = client.getTopic(S.topic);
@@ -1117,7 +1189,7 @@
 		const typing = (S.typing[t.name] || 0) > Date.now();
 		return h("main", { className: "chat" },
 			h("div", { className: "head" },
-				h("button", { className: "icon-btn back", title: "返回", onClick: () => openTopic(null) }, ICON.back()),
+				h(BackButton),
 				h("div", { className: "title" }, nameOf(t), group && count ? h("span", null, "（" + count + "）") : null, typing ? h("span", { className: "typing" }, "正在输入…") : null),
 				h("button", { className: "icon-btn", title: group ? "群聊信息" : "聊天信息", onClick: () => { S.dialog = { kind: "info" }; bump(); } }, ICON.more())),
 			S.status !== "ready" ? h("div", { className: "banner" }, S.status === "offline" ? "网络断了，正在重连…" : "正在连接…") : null,
@@ -1252,7 +1324,7 @@
 				h(Search),
 				S.view === "contacts" ? h(Contacts) : h(ChatList)),
 			h(ChatPane, { narrow }),
-			h(Menu), h(Dialogs), h(Viewer),
+			h(Menu), h(Dialogs), h(Viewer), h(AlertBar),
 			S.toast ? h("div", { className: "toast" }, S.toast) : null);
 	}
 
@@ -1261,5 +1333,5 @@
 	window.__tdhChat = { S, client, bump, open: openTopic,
 		act: { sendText, sendFiles, recall, quote, createGroup, togglePin, toggleMute, forwardTo, leaveGroup },
 		// company-chat-client-test-v1: the page's own logic, for scripts/prove-chat-client.js and prove-chat-composer.js (CI)
-		fn: { atDraft, plain, mentionsMe, mentionedUnread, allMessages, contentOf, renderContent, safeUrl, listed, unread, Composer, Search, Messages, aiOf, aiConfirmation } }; // for checks in the desk's tests and a person's own debugging
+		fn: { atDraft, plain, mentionsMe, mentionedUnread, allMessages, contentOf, renderContent, safeUrl, listed, unread, alertOther, otherUnread, alertText, ding, Composer, Search, Messages, aiOf, aiConfirmation } }; // for checks in the desk's tests and a person's own debugging
 })();

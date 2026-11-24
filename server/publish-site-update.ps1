@@ -15,6 +15,7 @@ $SitePy = Join-Path $Server 'site-cs.py'
 $Patches = Join-Path $Server 'site-patches'
 $SignDir = 'D:\dsh\runtime\pack-sign'
 $Pub = Join-Path $SignDir 'pack-sign.pub'
+$SiteSkills = if ($env:TDH_SITE_SKILLS) { $env:TDH_SITE_SKILLS } else { 'D:\dsh\company\_skills' }
 
 function Find-Tool([string[]]$Names, [string[]]$Extra) {
   foreach ($n in $Names) {
@@ -75,6 +76,12 @@ foreach ($name in 'CompanyDesk-win.zip', 'CompanyDesk-mac.zip') {
   if (Test-Path -LiteralPath $DeskPlugins) {
     & $py $SitePy --site $SiteYml overlay-zip --src $zip --plugins $DeskPlugins
     if ($LASTEXITCODE -ne 0) { throw ('overlay-failed-' + $name) }
+  }
+  # company-site-skills-in-pack-v1: this site's skills (the share's _skills: mail, ERP, production, chat...) in the
+  # pack too, so a desk that cannot read the share at boot still has them. The share still wins where it is read.
+  if (Test-Path -LiteralPath $SiteSkills) {
+    & $py $SitePy --site $SiteYml put-site-skills --src $zip --file $SiteSkills
+    if ($LASTEXITCODE -ne 0) { throw ('site-skills-failed-' + $name) }
   }
   $a = @((Join-Path $Patches 'apply_site_patches.py'), '--zip', $zip, '--patches', $Patches, '--pub', $Pub)
   if (Test-Path -LiteralPath $Ca) { $a += @('--ca', $Ca) }

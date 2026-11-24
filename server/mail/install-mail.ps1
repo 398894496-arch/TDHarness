@@ -1,5 +1,7 @@
 # company-mail-v1: the mailboxes on this server (server\mail_api.py inside the people service).
-# 1. The agent's skill company-mail in company\_skills (desks take it when TDH starts).
+# 1. The agent's skill company-mail in company\_skills (desks take it when TDH starts). Its source is
+#    desk\pack\common\skills\company-mail: every pack carries it too (company-mail-skill-in-pack-v1), so a desk
+#    that cannot read the share still has it; the share copy reaches desks before their next update.
 # 2. Its route in Caddy (mail.caddy in runtime\caddy\ext), reloaded (or restarted when Caddy has no admin endpoint).
 # 3. The people service restarted, so it loads mail_api.py; waits for 4181 again.
 # Run after server\mail_api.py, server\people-api.py and server\mail\ are in place under $Repo. A second run changes
@@ -8,6 +10,7 @@ param([string]$Root = 'D:\dsh', [string]$Repo = 'C:\TDHarness')
 $ErrorActionPreference = 'Stop'
 $Rt = Join-Path $Root 'runtime'
 $Mail = Join-Path $Repo 'server\mail'
+$Skill = Join-Path $Repo 'desk\pack\common\skills\company-mail'
 
 function Native([string]$exe, [string[]]$argv) {
   $old = $ErrorActionPreference
@@ -16,14 +19,14 @@ function Native([string]$exe, [string[]]$argv) {
   return @{ code = $LASTEXITCODE; out = $out }
 }
 
-foreach ($f in @((Join-Path $Repo 'server\mail_api.py'), (Join-Path $Mail 'mail.caddy'), (Join-Path $Mail 'skills\company-mail\SKILL.md'))) {
+foreach ($f in @((Join-Path $Repo 'server\mail_api.py'), (Join-Path $Mail 'mail.caddy'), (Join-Path $Skill 'SKILL.md'))) {
   if (-not (Test-Path -LiteralPath $f)) { throw ('missing ' + $f) }
 }
 
 # ---- 1. The skill ----
 $skills = Join-Path $Root 'company\_skills'
 if (Test-Path -LiteralPath $skills) {
-  Copy-Item -LiteralPath (Join-Path $Mail 'skills\company-mail') -Destination $skills -Recurse -Force
+  Copy-Item -LiteralPath $Skill -Destination $skills -Recurse -Force
   Write-Output 'SKILL=company-mail'
 }
 
