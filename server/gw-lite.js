@@ -1124,6 +1124,10 @@ function relay(route, req, body, res) {
   };
   if (req.headers.accept) headers.accept = req.headers.accept;
   if (body && body.length) headers['content-length'] = body.length;
+  // company-gw-timing-v1 (the user, 2026-11-25: 首字慢，加日志): when this request left here, when the vendor
+  // answered, when its first bytes and its first words came, when it ended — kept with the usage row, so a slow first
+  // word can be split into the way there, the vendor's queue and thinking, and the desk's own time before it asked.
+  const tm = { t0: Date.now(), up: 0, first: 0, words: 0, bytesIn: body ? body.length : 0 };
   return new Promise((resolve, reject) => {
     const up = (plain ? http : https).request({
       protocol: u.protocol,
@@ -1138,6 +1142,7 @@ function relay(route, req, body, res) {
       // the caller for good.
       timeout: 180000
     }, (r) => {
+      tm.up = Date.now() - tm.t0;
       const out = { 'content-type': r.headers['content-type'] || 'application/json', 'cache-control': 'no-store' };
       // Tell anything between here and the desk not to collect the stream.
       if (/text\/event-stream/i.test(String(r.headers['content-type'] || ''))) out['x-accel-buffering'] = 'no';
@@ -1150,7 +1155,8 @@ function relay(route, req, body, res) {
       const settle = () => {
         if (!tap) return;
         const used = tap.end();
-        if (used) recordUsage(Object.assign({ t: Date.now(), login: callerOf(req) || 'unknown', model: modelName(body) || 'unknown', vendor: route.vendor }, used));
+        if (used) recordUsage(Object.assign({ t: Date.now(), login: callerOf(req) || 'unknown', model: modelName(body) || 'unknown', vendor: route.vendor }, used,
+          { ms_up: tm.up, ms_first: tm.first, ms_words: tm.words, ms_total: Date.now() - tm.t0, bytes_in: tm.bytesIn }));
       };
       // company-sse-done-v1: a chat-completions stream is over at "data: [DONE]". If the vendor
       // (or a proxy in front of it) keeps the connection open after that, the desk used to wait
@@ -1169,6 +1175,8 @@ function relay(route, req, body, res) {
       r.on('data', (c) => {
         if (over) return;
         res.write(c);
+        if (!tm.first) tm.first = Date.now() - tm.t0;
+        if (!tm.words && /"(content|text|delta)"\s*:\s*"[^"]/.test(c.toString('utf8'))) tm.words = Date.now() - tm.t0;
         if (errs && errLen < 8192) { errs.push(c); errLen += c.length; }
         if (tap) tap.feed(c);
         if (sse) {
