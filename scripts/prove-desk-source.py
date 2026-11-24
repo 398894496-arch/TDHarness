@@ -82,6 +82,10 @@ def main():
     for p in files + pfiles:
         if p.suffix in (".png", ".jpg", ".ico"):
             fail("binary asset %s (a site's brand goes in a site patch)" % p.relative_to(ROOT))
+        # A third-party program shipped as is (vendor/: tdh-tunnel, wireguard.exe) is not source: random bytes in it
+        # can spell a login name. Only files without NUL bytes are read as text.
+        if b"\0" in p.read_bytes()[:65536]:
+            continue
         text = p.read_text(encoding="utf-8", errors="ignore")
         for what, pat in FORBIDDEN.items():
             m = re.search(pat, text, re.I)

@@ -1,0 +1,5 @@
+wireguard.exe — WireGuard for Windows 1.1.1, unmodified, as signed by WireGuard LLC (Authenticode subject
+"CN=WireGuard LLC"; win-tunnel-install.ps1 checks the signature before it installs or uses it).
+Source and license: https://git.zx2c4.com/wireguard-windows/ (MIT License, Copyright (C) WireGuard LLC).
+"WireGuard" is a registered trademark of Jason A. Donenfeld.
+sha256 04c71fb1a555a6ace40d3ae9113c90c4829d7ca1d6c903fd20a8d41a0e2bef94

@@ -1168,6 +1168,11 @@ internal static class AppHost
 
     internal static int RunLease(string verb, string personal, string org)
     {
+        return RunLease(verb, personal, org, "");
+    }
+
+    internal static int RunLease(string verb, string personal, string org, string extra)
+    {
         var node = NodeBin();
         var js = Path.Combine(Root, "desk-lease.js");
         if (!File.Exists(js) || !File.Exists(node))
@@ -1181,17 +1186,19 @@ internal static class AppHost
             + " --personal \"" + personal + "\""
             + " --org \"" + (org ?? "") + "\""
             + " --home \"" + DeskHome + "\""
-            + " --site \"" + LeaseSite() + "\"";
+            + " --site \"" + LeaseSite() + "\"" + (extra ?? "");
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardError = true;
         ClearChildNodeOptions(psi);
+        var leaseCa = Path.Combine(Root, "company-ca.crt");
+        if (File.Exists(leaseCa)) psi.EnvironmentVariables["NODE_EXTRA_CA_CERTS"] = leaseCa;
         var p = Process.Start(psi);
         if (p == null) throw new Exception("desk-lease-start-failed");
         var so = p.StandardOutput.ReadToEnd();
         var se = p.StandardError.ReadToEnd();
-        if (!p.WaitForExit(90000))
+        if (!p.WaitForExit(verb == "quit" ? 150000 : 90000))
         {
             try { p.Kill(); } catch { }
             throw new Exception("desk-lease-timeout");
@@ -1211,7 +1218,8 @@ internal static class AppHost
     {
         var js = Path.Combine(Root, "desk-lease.js");
         if (!File.Exists(js)) return;
-        RunLease("acquire", personal, org);
+        var store = DeskStoreDir();
+        RunLease("acquire", personal, org, store.Length > 0 ? " --store-dir \"" + store + "\"" : "");
     }
 
     internal static Process StartLeaseWatch(string personal, string org)
@@ -1506,63 +1514,165 @@ internal static class AppHost
         }
     }
 
+    // company-no-tailnet-prompt-v1 (the user, 2026-11-25: 「我要求改好以后任何客户端都不要弹出这个窗口，默认连接新买的服务器」):
+    // no Tailscale question and no dialog here any more. The company tunnel is put in place after sign-in
+    // (EnsureTunnel), where the person's token can enroll this PC; a PC already on Tailscale keeps working meanwhile.
     private static void EnsureCompanyNetOnce()
     {
-        var facts = CompanyTailnet();
-        if (!facts.Valid || TailnetJoin.ReadKey(VendorPath("employee.auth")).Length == 0)
-        {
-            Log("ts-skip no-site-tailnet");
-            return;
-        }
-        var ts = TailnetJoin.FindTailscale();
-        if (ts != null && TailnetJoin.OnCompany(ts, facts))
-        {
-            Log("ts-on-company");
-            return;
-        }
-        var onLan = OnOfficeLan();
-        var skip = Path.Combine(Rc8Dir(), "ts-join.declined");
-        if (onLan)
-        {
-            try
-            {
-                if (File.Exists(skip) && (DateTime.UtcNow - File.GetLastWriteTimeUtc(skip)).TotalDays < 7)
-                {
-                    Log("ts-skip declined-recently");
-                    return;
-                }
-            }
-            catch { }
-        }
-        var ask = onLan
-            ? "为了在家里也能用 TDH，这台电脑要加入公司的加密网络（Tailscale），只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。"
-            : "现在不在公司网络里。要在这里用 TDH，这台电脑需要加入公司的加密网络（Tailscale），只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。";
-        MessageBox.Show(ask, "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        var rc = TailnetJoin.RunElevated(Application.ExecutablePath, "--ts-join", 360000, Log);
-        Log("ts-join-result " + rc);
-        if (rc == 0)
-        {
-            try { if (File.Exists(skip)) File.Delete(skip); } catch { }
-            // 刚入网时分域 DNS 要几秒才生效
-            for (var i = 0; i < 20 && !OnOfficeLan(); i++) Thread.Sleep(1000);
-            return;
-        }
-        try
-        {
-            Directory.CreateDirectory(Rc8Dir());
-            File.WriteAllText(skip, DateTime.UtcNow.ToString("o"));
-        }
-        catch { }
-        if (!onLan)
-            MessageBox.Show(rc == -1223
-                ? "没有加入公司网络（刚才选了「否」）。下次打开 TDHarness 会再问一次。"
-                : "没能加入公司网络（" + rc + "）。请把这句话截图发给管理员；这台电脑可能没有管理员权限。", "TDHarness");
+        Log("company-net " + (IsCompanyServer() ? "server" : (TunnelInstalledOk() ? "tunnel" : "no-tunnel")));
     }
 
     // --ts-join：由 EnsureCompanyNet 以管理员身份启动，只做入网，不开窗口。
     internal static int TsJoinElevated()
     {
         return TailnetJoin.Join(VendorPath("tailscale-setup.msi"), VendorPath("employee.auth"), CompanyTailnet(), Log);
+    }
+
+    // company-wg-desk-win-v1: this PC's end of the company tunnel (win-tunnel-install.ps1, win-tunnel-task.ps1).
+    // Off by default until tried on one office PC (2026-11-25: released before any real Windows desk ran it; the user
+    // asked that the office simply works the next morning). Turned on per PC with the environment: TDH_TUNNEL=1 for the
+    // tunnel, TDH_DESK_STORE=1 for the chats in local app data.
+    internal static bool WinFeatureOn(string name)
+    {
+        return Environment.GetEnvironmentVariable(name) == "1";
+    }
+
+    internal static bool IsCompanyServer()
+    {
+        return File.Exists(@"D:\dsh\site.yml");
+    }
+
+    internal static string TunnelDir()
+    {
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "TDHarness", "tunnel");
+    }
+
+    private static string Sha256Of(string path)
+    {
+        try
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (var f = File.OpenRead(path))
+                return BitConverter.ToString(sha.ComputeHash(f)).Replace("-", "");
+        }
+        catch { return ""; }
+    }
+
+    // Installed, and by this pack's keeper (a new pack with a new keeper asks once more).
+    internal static bool TunnelInstalledOk()
+    {
+        var dir = TunnelDir();
+        var mine = Path.Combine(Root, "win-tunnel-task.ps1");
+        var there = Path.Combine(dir, "win-tunnel-task.ps1");
+        if (!File.Exists(Path.Combine(dir, "hub.json")) || !File.Exists(Path.Combine(dir, "public.key"))) return false;
+        var a = Sha256Of(mine);
+        return a.Length > 0 && a == Sha256Of(there);
+    }
+
+    // node desk-store.js ARGS with the person's token, the company CA trusted (the tunnel's hub is taken only from a
+    // server whose certificate checks out).
+    internal static string RunDeskStore(string args, string gwToken, int waitMs, out int code)
+    {
+        code = -1;
+        var node = NodeBin();
+        var js = Path.Combine(Root, "desk-store.js");
+        if (!File.Exists(node) || !File.Exists(js)) return "";
+        var psi = new ProcessStartInfo();
+        psi.FileName = node;
+        psi.Arguments = "\"" + js + "\" " + args;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        ClearChildNodeOptions(psi);
+        if (!string.IsNullOrEmpty(gwToken)) psi.EnvironmentVariables["DEEPSEEK_API_KEY"] = gwToken;
+        var ca = Path.Combine(Root, "company-ca.crt");
+        if (File.Exists(ca)) psi.EnvironmentVariables["NODE_EXTRA_CA_CERTS"] = ca;
+        try
+        {
+            using (var p = Process.Start(psi))
+            {
+                if (p == null) return "";
+                var errTask = p.StandardError.ReadToEndAsync();
+                var so = p.StandardOutput.ReadToEnd();
+                if (!p.WaitForExit(waitMs)) { try { p.Kill(); } catch { } return so; }
+                code = p.ExitCode;
+                var se = errTask.Result ?? "";
+                if (code != 0 && se.Length > 0) Log("desk-store " + args.Split(' ')[0] + " " + (se.Length > 200 ? se.Substring(0, 200) : se).Replace("\r", " ").Replace("\n", " "));
+                return so;
+            }
+        }
+        catch (Exception ex) { Log("desk-store " + ex.Message); return ""; }
+    }
+
+    private static string Line(string text, string key)
+    {
+        var m = Regex.Match(text ?? "", "(?m)^" + Regex.Escape(key) + "=(.*?)\\r?$");
+        return m.Success ? m.Groups[1].Value.Trim() : "";
+    }
+
+    // After sign-in (the token enrolls this PC). Not installed: the hub from the company server (TLS checked), then
+    // win-tunnel-install.ps1 elevated, the one time Windows asks (no network adapter without it); declined: asked
+    // again the next day. Then this PC's address. Never stops the desk from opening: the LAN and Tailscale still work.
+    internal static string EnsureTunnel(string gwToken)
+    {
+        if (IsCompanyServer() || !WinFeatureOn("TDH_TUNNEL")) return "off";
+        var root = Root;
+        var install = Path.Combine(root, "win-tunnel-install.ps1");
+        var task = Path.Combine(root, "win-tunnel-task.ps1");
+        var wg = Path.Combine(root, "vendor", "wireguard", "wireguard.exe");
+        if (!File.Exists(install) || !File.Exists(task) || !File.Exists(wg)) return "off";
+        var dir = TunnelDir();
+        int code;
+        if (!TunnelInstalledOk())
+        {
+            var declined = Path.Combine(Rc8Dir(), "tunnel.declined");
+            try
+            {
+                if (File.Exists(declined) && (DateTime.UtcNow - File.GetLastWriteTimeUtc(declined)).TotalHours < 24) return "declined";
+            }
+            catch { }
+            var hub = RunDeskStore("tunnel-hub --site \"" + LeaseSite() + "\"", gwToken, 30000, out code);
+            var key = Line(hub, "TUNNEL_HUB_PUBKEY");
+            var ep = Line(hub, "TUNNEL_HUB_ENDPOINT");
+            var server = Line(hub, "TUNNEL_SERVER");
+            var lan = Line(hub, "TUNNEL_LAN");
+            var ip4 = @"^\d{1,3}(\.\d{1,3}){3}$";
+            if (!Regex.IsMatch(key, "^[A-Za-z0-9+/]{43}=$") || !Regex.IsMatch(ep, @"^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$")) return "down hub-unknown";
+            if (!Regex.IsMatch(server, ip4)) server = "10.66.0.2";
+            var args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + install + "\""
+                + " -Wg \"" + wg + "\" -HubKey \"" + key + "\" -HubEndpoint \"" + ep + "\" -Server \"" + server + "\""
+                + " -HostName \"" + Site.Host + "\" -Task \"" + task + "\" -Node \"" + NodeBin() + "\"";
+            if (Regex.IsMatch(lan, ip4)) args += " -Lan \"" + lan + "\"";
+            var ca = Path.Combine(root, "company-ca.crt");
+            if (File.Exists(ca)) args += " -Ca \"" + ca + "\"";
+            var ps = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+            var rc = TailnetJoin.RunElevated(ps, args, 180000, Log);
+            Log("tunnel-install " + rc);
+            if (rc != 0)
+            {
+                if (rc == -1223)
+                {
+                    try { Directory.CreateDirectory(Rc8Dir()); File.WriteAllText(declined, DateTime.UtcNow.ToString("o")); } catch { }
+                    return "declined";
+                }
+                return "down install-" + rc;
+            }
+            try { if (File.Exists(declined)) File.Delete(declined); } catch { }
+        }
+        var en = RunDeskStore("tunnel-enroll --dir \"" + dir + "\" --site \"" + LeaseSite() + "\"", gwToken, 30000, out code);
+        var addr = Line(en, "TUNNEL_ADDRESS");
+        return code == 0 && addr.Length > 0 ? "up " + addr + " " + Line(en, "TUNNEL_ENROLL") : "down enroll";
+    }
+
+    // company-desk-store-win-v1: the chats in the person's local app data while the desk runs (taken whole from the
+    // server at the seat, sent back as they change, removed once all of it is there: desk-lease.js / desk-store.js).
+    // Not on the company server itself, whose share is its own disk.
+    internal static string DeskStoreDir()
+    {
+        if (IsCompanyServer() || !WinFeatureOn("TDH_DESK_STORE")) return "";
+        if (!File.Exists(Path.Combine(Root, "desk-store.js"))) return "";
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TDHarness", "desk-mem");
     }
 
     internal static bool OnOfficeLan()
@@ -1729,6 +1839,16 @@ internal static class AppHost
             var cache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), (".dsh-company-rc" + "8"), "skills").Replace('\\', '/');
             var seed = Path.Combine(Root, "skills");
             var share = (Site.ShareUncFwd + "/_skills").Replace('/', Path.DirectorySeparatorChar);
+            // company-desk-skills-v1: the company's skills over HTTPS (one tar, only when they changed), not over the
+            // share's SMB. Not fetched: the share as before.
+            if (!IsCompanyServer() && File.Exists(Path.Combine(Root, "desk-store.js")))
+            {
+                var copy = Path.Combine(Rc8Dir(), "skills-share");
+                int sc;
+                var so = RunDeskStore("skills --out \"" + copy + "\" --site \"" + LeaseSite() + "\"", "", 60000, out sc);
+                Log("skills-fetch " + sc + " " + Line(so, "SKILLS_FETCH") + " " + Line(so, "SKILLS_FETCH_MS") + "ms");
+                if (sc == 0 && Directory.Exists(copy)) share = copy;
+            }
             var js = Path.Combine(Root, "sync-skills.js");
             var node = NodeBin();
             if (File.Exists(js) && File.Exists(node))
@@ -2353,6 +2473,14 @@ internal sealed class ShellForm : Form
         {
             if (!string.IsNullOrEmpty(hit.RememberToken)) AppHost.SaveRemember(hit.RememberToken);
             else if (!remember) AppHost.ForgetRemember(true);
+            if (!AppHost.IsCompanyServer() && AppHost.WinFeatureOn("TDH_TUNNEL") && !AppHost.TunnelInstalledOk())
+            {
+                _err.ForeColor = Color.FromArgb(90, 90, 90);
+                _err.Text = "正在安装公司专用网络（只需这一次）。Windows 问「是否允许此应用对你的设备进行更改」时请点「是」。";
+                Application.DoEvents();
+            }
+            try { AppHost.Log("tunnel " + AppHost.EnsureTunnel(hit.GwToken)); }
+            catch (Exception tunEx) { AppHost.Log("tunnel " + tunEx.Message); }
             _err.ForeColor = Color.FromArgb(217, 45, 32);
             _err.Text = "正在挂入公司盘…";
             Application.DoEvents();

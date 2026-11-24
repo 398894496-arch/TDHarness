@@ -1559,7 +1559,7 @@ function storeDirOn() {
   return d && fs.existsSync(path.join(d, '.desk-store')) ? d : '';
 }
 function storePull(dir) {
-  const r = spawnSync(process.execPath, storeArgs('pull', dir), { encoding: 'utf8', timeout: 180000, env: process.env });
+  const r = spawnSync(process.execPath, storeArgs('pull', dir), { encoding: 'utf8', timeout: 180000, env: process.env, windowsHide: true });
   process.stdout.write(String(r.stdout || ''));
   return r.status == null ? 9 : r.status;
 }
@@ -1571,7 +1571,8 @@ function storeSyncPid(dir) {
 function storeSyncStart(dir) {
   if (storeSyncPid(dir)) return;
   const log = fs.openSync(path.join(deskHome(), 'desk-store.log'), 'a');
-  const c = spawn(process.execPath, storeArgs('sync', dir), { stdio: ['ignore', log, log], detached: true, env: process.env });
+  // windowsHide: a detached child on Windows gets a console window of its own otherwise.
+  const c = spawn(process.execPath, storeArgs('sync', dir), { stdio: ['ignore', log, log], detached: true, env: process.env, windowsHide: true });
   c.unref();
   process.stdout.write('STORE_SYNC_STARTED=' + c.pid + '\n');
 }
@@ -1588,11 +1589,16 @@ async function storeStop() {
       await new Promise((r) => setTimeout(r, 200));
     }
   }
-  const f = spawnSync(process.execPath, storeArgs('flush', dir), { encoding: 'utf8', timeout: 60000, env: process.env });
+  const f = spawnSync(process.execPath, storeArgs('flush', dir), { encoding: 'utf8', timeout: 60000, env: process.env, windowsHide: true });
   process.stdout.write(String(f.stdout || ''));
   if (f.status === 0) {
     const sh = path.join(__dirname, 'mac-ramdisk.sh');
     if (process.platform === 'darwin' && fs.existsSync(sh)) spawnSync('/bin/bash', [sh, 'down', dir], { stdio: 'ignore', timeout: 30000 });
+    // company-desk-store-win-v1: Windows has no memory disk; the copy lives in the user's local app data while the desk
+    // runs and goes once everything in it is on the server.
+    else if (process.platform === 'win32') {
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch (e) { process.stdout.write('STORE_RM_FAIL=' + ((e && e.code) || e) + '\n'); }
+    }
     try { fs.unlinkSync(storeMarker()); } catch { /* */ }
     process.stdout.write('STORE_CLOSED=1\n');
   } else {
@@ -1691,6 +1697,13 @@ async function cmdHeartbeat() {
 }
 
 async function cmdRelease() {
+  // company-desk-store-win-v1: Windows ends the watch with a kill (no signal to catch), so the last send of the chats
+  // happens here: the desk stopped first (its last events land in the local copy), then sent, then the seat let go.
+  if (storeDirOn()) {
+    stopDesk();
+    for (let i = 0; i < 20 && (await deskUp()); i++) await new Promise((r) => setTimeout(r, 500));
+    try { await storeStop(); } catch (e) { process.stdout.write('STORE_STOP_FAIL=' + ((e && e.message) || e) + '\n'); }
+  }
   try { await postLease('release'); } catch { /* gone */ }
   process.stdout.write('LEASE_RELEASED=1\n');
 }

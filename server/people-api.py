@@ -1392,7 +1392,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if what == "hub":  # what a desk installs its tunnel with, before it has a key to enroll
             self._send(*json_bytes({"ok": True, "hub_pubkey": hub["pubkey"], "endpoint": hub["endpoint"],
-                                    "allowed": wg_peers.NET + "0/24", "server": hub["server"]}))
+                                    "allowed": wg_peers.NET + "0/24", "server": hub["server"], "lan": hub.get("lan", "")}))
             return
         try:
             got = wg_peers.enroll(store, login, str(payload.get("device_id") or ""), str(payload.get("pubkey") or ""))

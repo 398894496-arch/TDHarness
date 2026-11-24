@@ -74,6 +74,12 @@ function post(what, body, strict) {
     req.end(raw);
   });
 }
+// Windows: the system's own bsdtar. A GNU tar from Git earlier on PATH reads "C:\\..." as a remote host and fails.
+function tarBin() {
+  if (process.platform !== 'win32') return 'tar';
+  const t = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+  return fs.existsSync(t) ? t : 'tar';
+}
 function json(buf) { try { return JSON.parse(buf.toString('utf8')); } catch { return {}; } }
 
 // ---- the local picture -------------------------------------------------------------------------------------------
@@ -220,7 +226,7 @@ async function cmdPull() {
     fs.rmSync(path.join(dir, name), { recursive: true, force: true });
   }
   fs.rmSync(path.join(dir, STATE_DIR), { recursive: true, force: true });
-  const x = spawnSync('tar', ['-xf', '-', '-C', dir], { input: res.body, maxBuffer: 1 << 30 });
+  const x = spawnSync(tarBin(), ['-xf', '-', '-C', dir], { input: res.body, maxBuffer: 1 << 30, windowsHide: true });
   if (x.status !== 0) throw new Error('store-untar-' + String(x.stderr || '').slice(0, 200));
   const sent = walk(dir, '', new Map());
   saveSent(dir, sent);
@@ -341,7 +347,7 @@ async function cmdSkills() {
   const next = out + '.next';
   fs.rmSync(next, { recursive: true, force: true });
   fs.mkdirSync(next, { recursive: true });
-  const x = spawnSync('tar', ['-xf', '-', '-C', next], { input: res.body, maxBuffer: 1 << 30 });
+  const x = spawnSync(tarBin(), ['-xf', '-', '-C', next], { input: res.body, maxBuffer: 1 << 30, windowsHide: true });
   if (x.status !== 0) throw new Error('skills-untar-' + String(x.stderr || '').slice(0, 200));
   fs.rmSync(out, { recursive: true, force: true });
   fs.renameSync(next, out);
@@ -362,6 +368,7 @@ async function cmdTunnelHub() {
   say('TUNNEL_HUB_PUBKEY=' + d.hub_pubkey);
   say('TUNNEL_HUB_ENDPOINT=' + d.endpoint);
   say('TUNNEL_SERVER=' + (d.server || ''));
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(d.lan || '')) say('TUNNEL_LAN=' + d.lan);
 }
 async function cmdTunnelEnroll() {
   const dir = arg('dir');

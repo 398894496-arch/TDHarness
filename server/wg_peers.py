@@ -55,7 +55,8 @@ def hub_config(runtime: Path) -> dict:
     try:
         d = json.loads((runtime / "wg-hub.json").read_text(encoding="utf-8"))
         if KEY_RE.match(str(d.get("pubkey") or "")) and ":" in str(d.get("endpoint") or ""):
-            return {"pubkey": d["pubkey"], "endpoint": d["endpoint"], "server": d.get("server") or NET + "2"}
+            return {"pubkey": d["pubkey"], "endpoint": d["endpoint"], "server": d.get("server") or NET + "2",
+                    "lan": str(d.get("lan") or "")}  # the server on the office LAN: a desk there skips the tunnel
     except (OSError, ValueError):
         pass
     return {}
