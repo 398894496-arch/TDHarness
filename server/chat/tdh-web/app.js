@@ -16,6 +16,8 @@
 		else delete document.documentElement.dataset.theme;
 	}
 	setTheme(new URLSearchParams(location.search).get("theme"));
+	// company-look-today-v1: the desk's chat column (今天 / 聊天) opens this page with ?look=today, on its sky-to-apricot page.
+	if (new URLSearchParams(location.search).get("look") === "today") document.documentElement.dataset.look = "today";
 	window.addEventListener("message", (e) => {
 		const d = e.data;
 		if (e.source === window.parent && d && d.type === "tdh-theme") setTheme(d.theme); // only the desk page around us
