@@ -620,16 +620,25 @@ window.__ModuleLoader__.load({
 			// The user (2026-11-24: 「深度求索中前面还有一个鲸鱼尾巴的 logo，这是不是就暴露了，能不能设计一个类似 google 那种思考中的
 			// 动态」): no whale; a four-point star that turns and breathes, and the words in a moving blue-violet-rose light.
 			// The words themselves are changed by thinkWords() (正在思考).
-			"[data-chat-running] [class*='_runningIcon'] > * { display: none !important; }",
-			"[data-chat-running] [class*='_runningIcon'] { contain: none !important; overflow: visible !important; width: 16px !important; height: 16px !important; }",
-			"[data-chat-running] [class*='_runningIcon']::before { content: ''; position: absolute; inset: 0; background: conic-gradient(from 0deg, #4f7cff, #9b6cff, #e86fa8, #f7a35c, #4f7cff);",
-			"  clip-path: polygon(50% 0, 61% 39%, 100% 50%, 61% 61%, 50% 100%, 39% 61%, 0 50%, 39% 39%); animation: cs-think-star 2.4s cubic-bezier(.45,0,.2,1) infinite; }",
-			"@keyframes cs-think-star { 0% { transform: rotate(0) scale(.82); } 50% { transform: rotate(180deg) scale(1.08); } 100% { transform: rotate(360deg) scale(.82); } }",
-			"[data-chat-running] [class*='_runningText'], [data-chat-running] [class*='_runningText'] * { background-image: linear-gradient(90deg, #4f7cff 0%, #9b6cff 25%, #e86fa8 50%, #9b6cff 75%, #4f7cff 100%) !important;",
-			"  background-size: 200% 100% !important; -webkit-background-clip: text !important; background-clip: text !important; color: transparent !important; -webkit-text-fill-color: transparent !important;",
-			"  animation: cs-think-text 2.2s linear infinite !important; font-weight: 500; }",
-			"@keyframes cs-think-text { from { background-position: 0% 0; } to { background-position: -200% 0; } }",
-			"@media (prefers-reduced-motion: reduce) { [data-chat-running] [class*='_runningIcon']::before, [data-chat-running] [class*='_runningText'] { animation: none !important; } }",
+			"[data-chat-running] [class*='_runningIcon'] > *:not(.cs-lava) { display: none !important; }",
+			// The user (2026-11-24, after a rainbow star, a glass bead and five stock spinners: 「B3 我最满意」): a lava lamp —
+			// three drops (sky, blue, apricot) drifting at their own pace, melting into one another and parting (an SVG goo
+			// filter, #cs-goo, put in the page by thinkWords()); the words in the page's own grey, the clock kept.
+			"[data-chat-running] [class*='_runningIcon'] { contain: none !important; overflow: visible !important; width: 34px !important; height: 20px !important; margin-right: 2px; }",
+			"[data-chat-running] .cs-lava { position: absolute; inset: 0; filter: url(#cs-goo); }",
+			"[data-chat-running] .cs-lava i { position: absolute; border-radius: 50%; }",
+			"[data-chat-running] .cs-lava i:nth-child(1) { width: 11px; height: 11px; top: 4px; background: #4f7cdc; animation: cs-lava1 2.3s ease-in-out infinite alternate; }",
+			"[data-chat-running] .cs-lava i:nth-child(2) { width: 8px; height: 8px; top: 6px; background: #8fbcef; animation: cs-lava2 3.1s ease-in-out infinite alternate; }",
+			"[data-chat-running] .cs-lava i:nth-child(3) { width: 7px; height: 7px; top: 6.5px; background: #f0b98a; animation: cs-lava3 1.7s ease-in-out infinite alternate; }",
+			"body[data-ds-dark-theme] [data-chat-running] .cs-lava i:nth-child(1) { background: #8fb3ff; }",
+			"body[data-ds-dark-theme] [data-chat-running] .cs-lava i:nth-child(2) { background: #5b8fd6; }",
+			"body[data-ds-dark-theme] [data-chat-running] .cs-lava i:nth-child(3) { background: #d49a6a; }",
+			"@keyframes cs-lava1 { from { left: 1px; transform: translateY(-2px); } to { left: 21px; transform: translateY(2px); } }",
+			"@keyframes cs-lava2 { from { left: 25px; transform: translateY(3px); } to { left: 3px; transform: translateY(-3px); } }",
+			"@keyframes cs-lava3 { from { left: 12px; transform: translateY(-5px) scale(1.2); } to { left: 24px; transform: translateY(4px) scale(.8); } }",
+			"[data-chat-running] [class*='_runningText'], [data-chat-running] [class*='_runningText'] * { background: none !important; color: var(--look-ink2) !important;",
+			"  -webkit-text-fill-color: currentColor !important; animation: none !important; font-weight: 400 !important; letter-spacing: .2px; }",
+			"@media (prefers-reduced-motion: reduce) { [data-chat-running] .cs-lava i { animation: none !important; } }",
 			"[class*='_centerCol'] [class*='_menuAnchor']:has(> button[class$='_seat']), [class*='_centerCol'] button[class$='_seat'] { display: none !important; }",
 			// 白天 / 夜间 where the right-sidebar button was
 			".cs-theme-btn { position: fixed; top: 12px; z-index: 1500; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;",
@@ -9100,9 +9109,29 @@ window.__ModuleLoader__.load({
 			// company-look-today-v1: the running line says 正在思考, not the kernel's 深度求索中 (its dictionary cannot be
 			// registered twice); the clock after it stays. Rewritten where it is drawn, before the frame is painted.
 			try {
+				const plantGoo = function () {
+					if (document.getElementById("cs-goo")) return;
+					const ns = "http://www.w3.org/2000/svg";
+					const svg = document.createElementNS(ns, "svg");
+					svg.setAttribute("width", "0"); svg.setAttribute("height", "0"); svg.setAttribute("aria-hidden", "true");
+					svg.style.position = "absolute";
+					const f = document.createElementNS(ns, "filter"); f.setAttribute("id", "cs-goo");
+					const blur = document.createElementNS(ns, "feGaussianBlur"); blur.setAttribute("in", "SourceGraphic"); blur.setAttribute("stdDeviation", "2.6"); blur.setAttribute("result", "b");
+					const cm = document.createElementNS(ns, "feColorMatrix"); cm.setAttribute("in", "b"); cm.setAttribute("values", "1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -8");
+					f.appendChild(blur); f.appendChild(cm); svg.appendChild(f); document.body.appendChild(svg);
+				};
 				const thinkWords = function (root) {
 					const rows = root && root.querySelectorAll ? root.querySelectorAll("[data-chat-running]") : [];
 					for (let i = 0; i < rows.length; i++) {
+						const icon = rows[i].querySelector("[class*='_runningIcon']");
+						if (icon && !icon.querySelector(".cs-lava")) {
+							plantGoo();
+							const lava = document.createElement("span");
+							lava.className = "cs-lava";
+							lava.setAttribute("aria-hidden", "true");
+							lava.appendChild(document.createElement("i")); lava.appendChild(document.createElement("i")); lava.appendChild(document.createElement("i"));
+							icon.appendChild(lava);
+						}
 						const walk = document.createTreeWalker(rows[i], NodeFilter.SHOW_TEXT);
 						for (let n = walk.nextNode(); n; n = walk.nextNode()) {
 							const v = n.nodeValue || "";

@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.24.7
+
+**「正在思考」换成熔岩灯；公司技能重新能加载，不再全盘扫文件；邮件乱码和附件修好**
+- **正在思考**（电脑端）：用户试过几版后选定「B3 熔岩灯」：运行中那一行左边是三颗水珠（主题蓝、天蓝、杏色），各自以不同速度来回漂，碰到就融成一团再分开；文字是普通的灰色「正在思考，用时 N 秒」。系统开了「减少动态效果」时水珠静止。
+- **会话里的公司技能**（`company-preset-patch-layout-v1`，电脑端）：内核 0.1.7 起会话用的预设换了位置，公司在配置里固定的技能目录和指令范围就不起作用了，会话里找不到 `company-*` 技能（报 `skill "company-mail" is unknown`），还会往上读到用户主目录的 `AGENTS.md`。现在打包时和装好的包里都把标准、PTC 两个预设固定成：技能只从公司技能目录读，指令读到公司盘根目录为止。
+- **不再全盘扫文件**（`company-share-glob-guard-v1`）：在公司盘根目录按文件名通配查找要 20–30 秒，常常撞上 30 秒超时。现在直接拒绝，并告诉模型去哪个更小的目录找。
+- **知识检索按轮限量**（`company-knowledge-turn-budget-v1`）：公司知识库和网页检索的次数上限按每一轮算，不再按整个会话算。
+- **邮件**（服务器上生效，人员服务重启）：发件人名称是未编码的中文（UTF-8 或 GBK）时不再显示成乱码；列表和详情用同一条规则判断附件，正文里的签名图片不算附件。
+
 ## 2026.11.24.6
 
 **工件放进右栏；侧边栏不再自己弹出；切换有流动的动画；助手只称 TDHarness**
