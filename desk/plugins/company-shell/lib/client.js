@@ -527,16 +527,39 @@ window.__ModuleLoader__.load({
 			"[class*='_centerCol'] { view-transition-name: cs-mid; }",
 			// company-dock-art-v1: the kernel's right column inside the chat column's 工件 page (under its 今天 / 聊天 / 工件),
 			// hidden on the other two; its resize handle goes with it. Only while the chat column is there (wide windows).
-			"html[data-company-chat-dock] [data-rightbar-col] { position: fixed !important; top: 66px; right: 11px; bottom: 11px; width: calc(var(--company-chat-dock-width) - 2px) !important;",
+			"html[data-company-chat-dock] [data-rightbar-col] { position: fixed !important; top: 108px; right: 11px; bottom: 11px; width: calc(var(--company-chat-dock-width) - 2px) !important;",
 			"  z-index: 6; border-radius: 0 0 23px 23px; overflow: hidden; background: var(--look-card); visibility: hidden; opacity: 0; pointer-events: none; }",
 			"html[data-company-chat-dock][data-cs-dock-page='art'] [data-rightbar-col]:has([data-sidebar-right-open='true']) { visibility: visible; opacity: 1; pointer-events: auto; animation: cs-flow-in .5s cubic-bezier(.22,1,.36,1) both; }",
 			"html[data-company-chat-dock] [data-rightbar-col] [data-sidebar-right-panel] { width: 100% !important; height: 100%; }",
 			"html[data-company-chat-dock] [class*='_frame'] > [class*='_handle'] ~ [class*='_handle'] { display: none !important; }",
-			".cs-dock-art-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--look-ink2); font-size: 13.5px; }",
-			".cs-dock-art-empty p { margin: 0; }",
-			".cs-dock-art-empty button { height: 34px; padding: 0 18px; border-radius: 17px; border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink); cursor: pointer;",
-			"  font: 500 13.5px/1 " + FONT + "; transition: transform .3s " + LOOK_SPRING + "; }",
-			".cs-dock-art-empty button:hover { transform: scale(1.05); }",
+			".cs-art { position: absolute; inset: 0; display: flex; flex-direction: column; font-family: " + FONT + "; color: var(--look-ink); }",
+			".cs-art-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 18px 10px; }",
+			".cs-art-head b { font-size: 15px; font-weight: 600; } .cs-art-head small { font-size: 12.5px; color: var(--look-ink2); }",
+			".cs-art-refresh { margin-left: auto; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink2);",
+			"  display: grid; place-items: center; cursor: pointer; transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-art-refresh:hover { transform: scale(1.08); color: var(--look-ink); } .cs-art-refresh.is-busy svg { animation: cs-art-spin .9s linear infinite; }",
+			"@keyframes cs-art-spin { to { transform: rotate(360deg); } }",
+			".cs-art-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 16px; display: flex; flex-direction: column; gap: 8px; }",
+			".cs-art-group { margin: 8px 6px 0; font-size: 12px; color: var(--look-ink2); }",
+			".cs-art-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border-radius: 18px; text-align: left; cursor: pointer;",
+			"  border: 1px solid var(--look-glass-line); background: var(--look-glass); box-shadow: var(--look-shadow); color: var(--look-ink); font: inherit;",
+			"  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); transition: transform .4s " + LOOK_SPRING + ", background .2s; animation: cs-flow-in .55s cubic-bezier(.22,1,.36,1) both; }",
+			".cs-art-card:hover { transform: translateY(-2px); background: var(--look-card); }",
+			".cs-art-card:nth-child(2) { animation-delay: .04s; } .cs-art-card:nth-child(3) { animation-delay: .08s; } .cs-art-card:nth-child(4) { animation-delay: .12s; } .cs-art-card:nth-child(n+5) { animation-delay: .16s; }",
+			".cs-art-icon { flex: none; width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; color: var(--look-accent); background: var(--look-soft); }",
+			".cs-art-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }",
+			".cs-art-text b { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-art-text small { font-size: 12px; color: var(--look-ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-art-when { flex: none; align-self: flex-start; padding-top: 2px; font-size: 12px; color: var(--look-ink2); }",
+			".cs-art-card.is-ghost { cursor: default; height: 62px; animation: cs-art-ghost 1.4s ease-in-out infinite alternate; }",
+			".cs-art-card.is-ghost i { display: block; height: 10px; border-radius: 5px; background: var(--look-soft); }",
+			".cs-art-card.is-ghost i:first-child { width: 36px; height: 36px; border-radius: 12px; } .cs-art-card.is-ghost i:last-child { flex: 1; max-width: 60%; }",
+			"@keyframes cs-art-ghost { from { opacity: .55; } to { opacity: 1; } }",
+			".cs-art-empty { margin: 40px 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; color: var(--look-ink2); font-size: 13px; }",
+			".cs-art-empty b { color: var(--look-ink); font-size: 15px; font-weight: 600; }",
+			".cs-art-back { position: absolute; z-index: 7; top: 0; left: 12px; right: 12px; height: 34px; display: flex; align-items: center; gap: 4px; padding: 0 12px; border-radius: 17px;",
+			"  border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink); font: 500 13.5px/1 " + FONT + "; cursor: pointer; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }",
+			".cs-art-back:hover { background: var(--look-card); }",
 			".cs-side { view-transition-name: cs-side; }",
 			".cs-look-dock { view-transition-name: cs-dock; }",
 			"::view-transition-old(root), ::view-transition-new(root) { animation: none; }",
@@ -7987,6 +8010,114 @@ window.__ModuleLoader__.load({
 			if (cur) out.push(cur);
 			return out;
 		}
+		// company-dock-art-v2 (the user, 2026-11-24: 「工件截面点开是这样的，而不是把过往工件都缓存进来并风格跟我们的整体风格
+		// 匹配」「缓存很慢，缓存出来的视觉风格也不对」): 工件 is this plugin's own list, in the column's glass cards. The last
+		// list is kept in this browser and shown at once; dsh-artifact's listArtifacts (it reads every file's head on the
+		// share, seconds through a relay) refreshes it behind. A card opens that artifact in the kernel's right column,
+		// laid over the page under a 「全部工件」 bar.
+		let artifactRemoteGet = null;
+		const ART_CACHE = "cs-art-cache-v1";
+		function artCacheRead() {
+			try { const j = JSON.parse(localStorage.getItem(ART_CACHE) || "null"); return Array.isArray(j) ? j : null; } catch (err) { return null; }
+		}
+		function artCacheWrite(list) {
+			try { localStorage.setItem(ART_CACHE, JSON.stringify(list.slice(0, 300))); } catch (err) {}
+		}
+		function artFetch() {
+			let remote = null;
+			try { remote = artifactRemoteGet ? artifactRemoteGet() : null; } catch (err) { remote = null; }
+			if (!remote || typeof remote.listArtifacts !== "function") return Promise.reject(new Error("no-artifacts"));
+			return Promise.resolve(remote.listArtifacts({})).then(function (reply) {
+				// The gateway wraps the host's own { ok, value } in one more { ok, value }: unwrap to the business answer.
+				let r = reply;
+				for (let k = 0; k < 3 && r && r.ok === true && r.value && typeof r.value === "object" && "ok" in r.value; k++) r = r.value;
+				if (!r || r.ok !== true) throw new Error((r && r.error && r.error.code) || "list-failed");
+				const items = (r.value && Array.isArray(r.value.artifacts)) ? r.value.artifacts : [];
+				return items.filter(function (a) { return a && typeof a.path === "string"; }).map(function (a) {
+					return { path: a.path, name: String(a.name || ""), title: String(a.title || a.name || ""), modified: Number(a.modified) || 0 };
+				});
+			});
+		}
+		function artOpen(path) {
+			const show = function () {
+				try { if (rightbarService && typeof rightbarService.openTab === "function") rightbarService.openTab("artifact", { params: { path: path } }); } catch (err) {}
+			};
+			if (!rightbarOpen()) { rightbarToggle(true); setTimeout(show, 150); } else show();
+		}
+		function artWhen(ms) {
+			if (!ms) return "";
+			const d = new Date(ms);
+			const now = Date.now();
+			const mins = Math.floor((now - ms) / 60000);
+			if (mins < 1) return "刚刚";
+			if (mins < 60) return mins + " 分钟前";
+			const today = new Date(); today.setHours(0, 0, 0, 0);
+			if (ms >= today.getTime()) return Math.floor(mins / 60) + " 小时前";
+			if (ms >= today.getTime() - 86400000) return "昨天 " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+			return (d.getMonth() + 1) + " 月 " + d.getDate() + " 日";
+		}
+		function artGroup(ms) {
+			const today = new Date(); today.setHours(0, 0, 0, 0);
+			if (ms >= today.getTime()) return "今天";
+			if (ms >= today.getTime() - 86400000) return "昨天";
+			if (ms >= today.getTime() - 6 * 86400000) return "最近一周";
+			return "更早";
+		}
+		function ArtPane() {
+			const listHook = React.useState(artCacheRead);
+			const busyHook = React.useState(true);
+			const failHook = React.useState("");
+			const refresh = React.useCallback(function () {
+				busyHook[1](true);
+				artFetch().then(function (list) {
+					listHook[1](list);
+					artCacheWrite(list);
+					failHook[1]("");
+				}, function (err) {
+					failHook[1](String((err && err.message) || err));
+				}).then(function () { busyHook[1](false); });
+			}, []);
+			React.useEffect(function () { refresh(); }, [refresh]);
+			const list = listHook[0];
+			const busy = busyHook[0];
+			const groups = [];
+			(list || []).forEach(function (a) {
+				const g = artGroup(a.modified);
+				let row = groups.find(function (x) { return x.name === g; });
+				if (!row) { row = { name: g, items: [] }; groups.push(row); }
+				row.items.push(a);
+			});
+			return React.createElement("div", { className: "cs-art" },
+				React.createElement("div", { className: "cs-art-head" },
+					React.createElement("b", null, "全部工件"),
+					list ? React.createElement("small", null, list.length + " 个") : null,
+					React.createElement("button", { type: "button", className: "cs-art-refresh" + (busy ? " is-busy" : ""), "aria-label": "刷新工件", title: "刷新", onClick: refresh },
+						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
+							React.createElement("path", { d: "M20 11a8 8 0 1 0-2.3 5.7" }), React.createElement("path", { d: "M20 4v7h-7" })))),
+				!list && busy ? React.createElement("div", { className: "cs-art-list" },
+					[0, 1, 2, 3].map(function (i) { return React.createElement("div", { key: i, className: "cs-art-card is-ghost" }, React.createElement("i"), React.createElement("i")); })) : null,
+				list && list.length === 0 && !busy ? React.createElement("div", { className: "cs-art-empty" },
+					React.createElement("b", null, "还没有工件"),
+					React.createElement("span", null, "让助手做一份报告、表格或图表，它会出现在这里。")) : null,
+				!list && !busy && failHook[0] ? React.createElement("div", { className: "cs-art-empty" },
+					React.createElement("b", null, "工件没有读出来"),
+					React.createElement("span", null, "公司盘可能还没连上，稍后点右上角刷新。")) : null,
+				list && list.length ? React.createElement("div", { className: "cs-art-list" },
+					groups.map(function (g) {
+						return React.createElement(React.Fragment, { key: g.name },
+							React.createElement("div", { className: "cs-art-group" }, g.name),
+							g.items.map(function (a) {
+								return React.createElement("button", { key: a.path, type: "button", className: "cs-art-card", title: a.title, onClick: function () { artOpen(a.path); } },
+									React.createElement("span", { className: "cs-art-icon", "aria-hidden": "true" },
+										React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" },
+											React.createElement("path", { d: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" }), React.createElement("path", { d: "M14 3v5h5M9 13h6M9 17h4" }))),
+									React.createElement("span", { className: "cs-art-text" },
+										React.createElement("b", null, a.title),
+										React.createElement("small", null, a.name)),
+									React.createElement("span", { className: "cs-art-when" }, artWhen(a.modified)));
+							}));
+					})) : null);
+		}
 		function ChatDock(props) {
 			const wide = React.useSyncExternalStore(chatDockSubscribe, chatDockWide);
 			React.useEffect(function () {
@@ -8021,7 +8152,6 @@ window.__ModuleLoader__.load({
 				if (!wide) return undefined;
 				const root = document.documentElement;
 				root.setAttribute("data-cs-dock-page", page);
-				if (page === "art") rightbarOpenArtifacts();
 				if (page !== "art" && rightbarOpen()) rightbarToggle(false);
 				return function () { root.removeAttribute("data-cs-dock-page"); };
 			}, [wide, page]);
@@ -8086,9 +8216,10 @@ window.__ModuleLoader__.load({
 							}))),
 					React.createElement("div", { className: "cs-dock-body" + (page === "today" ? " is-today" : "") },
 						page === "today" ? React.createElement(TodayPane) : null,
-						page === "art" && !artHook[0] ? React.createElement("div", { className: "cs-dock-art-empty" },
-							React.createElement("p", null, "打开的工件、文件和网页会显示在这里"),
-							React.createElement("button", { type: "button", onClick: function () { rightbarOpenArtifacts(); } }, "打开工件列表")) : null,
+						page === "art" ? React.createElement(ArtPane) : null,
+						page === "art" && artHook[0] ? React.createElement("button", { type: "button", className: "cs-art-back", onClick: function () { rightbarToggle(false); } },
+							React.createElement("svg", { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M15 18l-6-6 6-6" })),
+							"全部工件") : null,
 						React.createElement("div", { className: "cs-dock-chat", style: page === "chat" ? null : { visibility: "hidden" } }, React.createElement(ChatFrame)))
 				),
 				document.body
@@ -9161,6 +9292,7 @@ window.__ModuleLoader__.load({
 				}, true);
 			} catch (err) {}
 			if (typeof ctx.inject === "function") {
+				artifactRemoteGet = function () { return typeof ctx.get === "function" ? ctx.get("remote.artifact") : null; };
 				ctx.inject(["sidebarRight"], function (sctx) {
 					rightbarService = sctx.sidebarRight || null;
 					if (typeof sctx.effect === "function") sctx.effect(function () { return function () { rightbarService = null; }; }, "company-shell: right sidebar service");
