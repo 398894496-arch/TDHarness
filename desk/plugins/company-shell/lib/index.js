@@ -595,30 +595,55 @@ function sessionIdOf(exec) {
 	);
 }
 
-function knowledgeState(exec) {
-	const sid = sessionIdOf(exec);
-	if (!knowledgeSess.has(sid)) {
-		knowledgeSess.set(sid, {
-			status: false,
-			stems: new Map(),
-			mapRows: new Set(),
-			haveHits: false,
-			evidence: false,
-			dumpBlocked: false,
-			offMapStop: false,
-			namedPaths: new Set(),
-		});
+// company-knowledge-turn-budget-v1: the company_knowledge / web caps are per turn, not per
+// session. They were keyed by session id only, so after two topics in one conversation every
+// later question got status=knowledge-budget at once (2026-11-24, session-098b9187 turn 3) and the
+// model went round by glob over the share. The turn is the latest turn/start in the live
+// session log; without one (older kernel, no agent) the state stays per session as before.
+export function sessionTurnOf(exec) {
+	const s = exec && exec.agent && exec.agent.session;
+	if (!s || typeof s.eventAt !== "function") return null;
+	const top = Number(s.seq);
+	if (!Number.isFinite(top)) return null;
+	for (let q = top - 1, n = 0; q >= 0 && n < 5000; q--, n++) {
+		const ev = s.eventAt(q);
+		if (ev && ev.type === "turn/start") {
+			const t = ev.data && ev.data.turn;
+			return typeof t === "number" ? t : q;
+		}
 	}
-	return knowledgeSess.get(sid);
+	return null;
+}
+
+function turnScoped(map, exec, fresh) {
+	const sid = sessionIdOf(exec);
+	const turn = sessionTurnOf(exec);
+	const cur = map.get(sid);
+	if (cur && (turn === null || cur.__turn === turn)) return cur;
+	const st = fresh();
+	st.__turn = turn;
+	map.set(sid, st);
+	return st;
+}
+
+function knowledgeState(exec) {
+	return turnScoped(knowledgeSess, exec, () => ({
+		status: false,
+		stems: new Map(),
+		mapRows: new Set(),
+		haveHits: false,
+		evidence: false,
+		dumpBlocked: false,
+		offMapStop: false,
+		namedPaths: new Set(),
+	}));
 }
 
 function webState(exec) {
-	const sid = sessionIdOf(exec);
-	if (!webSess.has(sid)) webSess.set(sid, { search: 0, fetch: 0 });
-	return webSess.get(sid);
+	return turnScoped(webSess, exec, () => ({ search: 0, fetch: 0 }));
 }
 
-/** Per-session HOST caps. 2026-09-10: was 2/2/1; incomplete evidence. */
+/** Per-turn HOST caps (company-knowledge-turn-budget-v1; were per session). 2026-09-10: was 2/2/1; incomplete evidence. */
 export const WEB_SEARCH_BUDGET = 16;
 export const WEB_FETCH_BUDGET = 16;
 export const WEB_SEARCH_MAX_QUERIES = 8;
@@ -1075,6 +1100,69 @@ export function isWorkspaceRootPath(p) {
 	if (/(^|\/)(_office|_shared)$/.test(s)) return true;
 	if (/\/company$/.test(s)) return true;
 	return false;
+}
+
+// company-share-glob-guard-v1: glob is `rg --files --glob=<pattern> --sort=modified --hidden
+// --no-ignore -- <path>`: rg walks the whole tree under <path> whatever the pattern says, single
+// threaded because of the sort. From the company share's root that is every person's folder over
+// SMB: 20-30 s and the 30 s tool timeout (2026-11-20..24 on a Mac desk: `**/SKILL.md` 20.8 s,
+// `_skills/**/company-mail/SKILL.md` and `{server/erp/*,…}` timed out; `**/company-mail/SKILL.md`
+// on _office timed out too). wrapDumpScan meant to refuse the `**` case, but since 0.1.7 glob
+// registers in the session preset, not on the host tools that wrapper patches, so it never ran.
+// tools/pre-execute reaches every agent's calls (the official hooks bridge uses it).
+// Refused: any glob rooted at the share root (Mac ~/company, Win \\host\share or Z:\), and a
+// `**…` glob rooted at the person's chair (_office / emp-<login>) or _shared. The refusal names the narrower
+// call when the pattern starts with plain folder names.
+export function shareRootKind(p) {
+	const s = String(p || "")
+		.replace(/\\/g, "/")
+		.replace(/\/+$/, "");
+	if (!s) return "";
+	// The person's own folder: _office on this Mac's desk, emp-<login> on the share for everyone else.
+	if (/(^|\/)(_office|_shared|emp-[^/]+)$/.test(s)) return "chair";
+	if (/\/company$/.test(s)) return "share";
+	if (/^\/\/[^/]+\/[^/]+$/.test(s)) return "share";
+	if (/^[A-Za-z]:$/.test(s)) return "share";
+	return "";
+}
+
+export const SHARE_GLOB_REFUSAL =
+	"glob-too-broad：公司盘是网络盘，glob 会把 path 下面整棵目录树都走一遍，从公司盘根目录起步要 20–30 秒、会超时。" +
+	"技能用 skill 工具按名字直接加载（company-* 都在本机缓存里，不用找 SKILL.md）；过往事实和公司知识用 company_knowledge；" +
+	"要找文件，把 path 设成具体的子文件夹再 glob。";
+
+export function shareGlobDecision(exec) {
+	if (!exec || exec.name !== "glob") return null;
+	const args = exec.arguments && typeof exec.arguments === "object" ? exec.arguments : {};
+	let where = String(args.path || args.target_directory || args.root || args.dir || "");
+	if (where === "." || where === "./") where = "";
+	const cwd =
+		(exec.agent && exec.agent.session && exec.agent.session.header && exec.agent.session.header.cwd) || "";
+	where = where || cwd;
+	const kind = shareRootKind(where);
+	if (!kind) return null;
+	const pat = String(args.pattern || args.glob || "").replace(/\\/g, "/").replace(/^\.\//, "").trim();
+	if (kind === "chair" && !/^\*\*/.test(pat)) return null;
+	// Plain leading folders belong in path: _skills/**/x -> path=<root>/_skills, pattern=**/x.
+	const segs = pat.split("/");
+	const lead = [];
+	while (segs.length > 1 && segs[0] && !/[*?[\]{}]/.test(segs[0])) lead.push(segs.shift());
+	let reason = SHARE_GLOB_REFUSAL;
+	if (lead.length) {
+		const base = String(where).replace(/[\\/]+$/, "");
+		const sep = base.includes("\\") && !base.includes("/") ? "\\" : "/";
+		reason += "这次可以改成 path=" + base + sep + lead.join(sep) + "，pattern=" + segs.join("/") + "。";
+	}
+	return { kind: "deny", reason };
+}
+
+function addShareGlobGuard(ctx) {
+	if (typeof ctx.on !== "function") return;
+	ctx.on("tools/pre-execute", async (exec, next) => {
+		const d = shareGlobDecision(exec);
+		if (d) return d;
+		return next();
+	});
 }
 
 export function isBroadWorkspaceGlob(args) {
@@ -2617,6 +2705,7 @@ export function apply(ctx) {
 	wrapSkillOnce(tools);
 	wrapWebCompanyName(tools);
 	wrapDumpScan(tools);
+	addShareGlobGuard(ctx);
 	// 启动时的模型同步（站点补丁，3 秒）之后检查一次公司模型路由。失败不影响启动。
 	if (typeof ctx.effect === "function") {
 		ctx.effect(() => {

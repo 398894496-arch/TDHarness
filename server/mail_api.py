@@ -407,13 +407,16 @@ class Box:
         out = []
         for item in data or []:
             if not isinstance(item, tuple):
+                # a server may answer FLAGS or BODYSTRUCTURE after the literal, in the next row
+                if out and isinstance(item, (bytes, bytearray)) and item.strip() not in (b"", b")"):
+                    u, meta, payload = out[-1]
+                    out[-1] = (u, meta + " " + bytes(item).decode("utf-8", "replace"), payload)
                 continue
             meta = item[0].decode("utf-8", "replace")
             m = re.search(r"UID (\d+)", meta)
             if not m:
                 continue
             out.append((int(m.group(1)), meta, item[1] or b""))
-        # a server may answer FLAGS after the literal, in the next row
         return out
 
 
@@ -443,12 +446,31 @@ def _text(b: bytes, cs=None) -> str:
     return b.decode("utf-8", "replace")
 
 
-def hdr(value) -> str:
-    if value is None:
-        return ""
+def _raw_header(value) -> str:
+    """company-mail-8bit-header-v1: a header sent as raw 8-bit bytes (UTF-8 per RFC 6532, or GBK from
+    older Chinese mailers) comes out of the compat32 parser as a Header in the unknown-8bit charset, and
+    str() of that turns every byte into U+FFFD (2026-11-24: 「管理员郝小凡为你开通了公共邮箱」 from
+    exmail.weixin.qq.com, the sender's name 12 x U+FFFD). Take the bytes back and decode them as text;
+    encoded-words are left for decode_header."""
+    chunks = getattr(value, "_chunks", None)
+    if isinstance(value, email.header.Header) and isinstance(chunks, list):
+        out = []
+        for s, cs in chunks:
+            if str(cs or "") == "unknown-8bit":
+                out.append(_text(s.encode("ascii", "surrogateescape")))
+            else:
+                out.append(str(s))
+        return "".join(out)
     s = str(value)
     if any("\udc80" <= ch <= "\udcff" for ch in s):
         s = _text(s.encode("utf-8", "surrogateescape"))
+    return s
+
+
+def hdr(value) -> str:
+    if value is None:
+        return ""
+    s = _raw_header(value)
     try:
         parts = email.header.decode_header(s)
     except Exception:
@@ -460,10 +482,12 @@ def hdr(value) -> str:
 
 
 def addrs(value) -> list:
+    # Split the addresses first, then decode each name: a decoded name may hold a comma
+    # ("张三, 销售部") that getaddresses would take for a second address.
     out = []
-    for name, addr in email.utils.getaddresses([hdr(value)] if value else []):
+    for name, addr in email.utils.getaddresses([_raw_header(value)] if value else []):
         if addr or name:
-            out.append({"name": name.strip(), "address": addr.strip()})
+            out.append({"name": hdr(name), "address": addr.strip()})
     return out
 
 
@@ -532,7 +556,7 @@ def _filename(part) -> str:
 
 def parse(raw: bytes) -> dict:
     msg = email.message_from_bytes(raw, policy=compat32)
-    text, html_body, atts, inline = "", "", [], {}
+    text, html_body, atts, inline, inline_names = "", "", [], {}, {}
     for part in msg.walk():
         if part.is_multipart():
             continue
@@ -544,18 +568,142 @@ def parse(raw: bytes) -> dict:
         except Exception:
             payload = b""
         cid = str(part.get("Content-ID") or "").strip().strip("<>")
-        if ct == "text/plain" and not name and "attachment" not in disp and not text:
+        kind = _part_kind(ct, disp.split(";", 1)[0].strip(), bool(name), bool(cid), bool(text), bool(html_body))
+        if kind == "text":
             text = _text(payload, part.get_content_charset())
-        elif ct == "text/html" and not name and "attachment" not in disp and not html_body:
+        elif kind == "html":
             html_body = _text(payload, part.get_content_charset())
+        elif kind == "inline":
+            inline[cid] = (ct, payload)
+            inline_names[cid] = name
         else:
-            if cid and ct.startswith("image/") and "attachment" not in disp:
-                inline[cid] = (ct, payload)
-                if not name:
-                    continue
             atts.append({"index": len(atts), "name": name or ("附件%d" % (len(atts) + 1)), "type": ct, "size": len(payload),
                          "_data": payload, "_cid": cid})
+    # An inline picture the body never shows (some mailers attach photos that way) is still an attachment.
+    if inline:
+        shown = set(m.strip().strip("<>") for m in re.findall(r"(?i)cid:([^\"'\s>)]+)", html_body or ""))
+        for key in [k for k in inline if k not in shown]:
+            ct, payload = inline.pop(key)
+            atts.append({"index": len(atts), "name": inline_names.get(key) or ("图片%d" % (len(atts) + 1)), "type": ct, "size": len(payload),
+                         "_data": payload, "_cid": key})
     return {"msg": msg, "text": text, "html": html_body, "attachments": atts, "inline": inline}
+
+
+# company-mail-attachment-rule-v1: the list said 「有附件」 when the top part was multipart/mixed, the
+# detail counted every named non-body part; the two disagreed both ways (2026-11-24, one mailbox: 5 of
+# 25 listed with attachments showed none, 4 listed without showed signature pictures). One rule for both,
+# the detail from the parts, the list from the server's BODYSTRUCTURE:
+#   the first unnamed, not-attachment text/plain and text/html are the body;
+#   an image with a Content-ID that is not marked attachment is a picture in the body (inline);
+#   every other leaf part is an attachment.
+def _part_kind(ct: str, disp: str, named: bool, cid: bool, have_text: bool, have_html: bool) -> str:
+    ct = (ct or "").lower()
+    disp = (disp or "").lower()
+    if ct == "text/plain" and not named and disp != "attachment" and not have_text:
+        return "text"
+    if ct == "text/html" and not named and disp != "attachment" and not have_html:
+        return "html"
+    if cid and ct.startswith("image/") and disp != "attachment":
+        return "inline"
+    return "attachment"
+
+
+def _sexp(s: str):
+    """Parse one IMAP parenthesised list (BODYSTRUCTURE) into nested Python lists; None on anything odd."""
+    pos = 0
+    n = len(s)
+
+    def atom():
+        nonlocal pos
+        while pos < n and s[pos] == " ":
+            pos += 1
+        if pos >= n:
+            raise ValueError("eof")
+        ch = s[pos]
+        if ch == "(":
+            pos += 1
+            out = []
+            while True:
+                while pos < n and s[pos] == " ":
+                    pos += 1
+                if pos >= n:
+                    raise ValueError("eof")
+                if s[pos] == ")":
+                    pos += 1
+                    return out
+                out.append(atom())
+        if ch == '"':
+            pos += 1
+            buf = []
+            while pos < n and s[pos] != '"':
+                if s[pos] == "\\" and pos + 1 < n:
+                    pos += 1
+                buf.append(s[pos])
+                pos += 1
+            pos += 1
+            return "".join(buf)
+        if ch == "{":
+            raise ValueError("literal")
+        start = pos
+        while pos < n and s[pos] not in " ()":
+            pos += 1
+        tok = s[start:pos]
+        return None if tok.upper() == "NIL" else tok
+
+    try:
+        return atom()
+    except (ValueError, IndexError):
+        return None
+
+
+def _bs_has_attachment(meta: str):
+    """True / False from the BODYSTRUCTURE in a FETCH answer, None when there is none we can read."""
+    m = re.search(r"BODYSTRUCTURE ", meta)
+    if not m:
+        return None
+    tree = _sexp(meta[m.end():])
+    if not isinstance(tree, list):
+        return None
+    state = {"text": False, "html": False, "att": False}
+
+    def params_named(lst) -> bool:
+        if not isinstance(lst, list):
+            return False
+        keys = [str(lst[i] or "").lower() for i in range(0, len(lst) - 1, 2)]
+        return any(k.startswith("name") or k.startswith("filename") for k in keys)
+
+    def walk(node):
+        if not isinstance(node, list) or not node:
+            return
+        if isinstance(node[0], list):  # multipart: the parts, then the subtype and its extension data
+            for child in node:
+                if not isinstance(child, list):
+                    break
+                walk(child)
+            return
+        if len(node) < 7:
+            return
+        ct = (str(node[0] or "") + "/" + str(node[1] or "")).lower()
+        if ct == "message/rfc822" and len(node) > 8:
+            walk(node[8])  # email's walk() goes into a forwarded message's parts too
+            return
+        disp_at = 9 if ct.startswith("text/") else 8
+        disp = node[disp_at] if len(node) > disp_at else None
+        dtype = str(disp[0] or "") if isinstance(disp, list) and disp else ""
+        named = params_named(node[2]) or (isinstance(disp, list) and len(disp) > 1 and params_named(disp[1]))
+        kind = _part_kind(ct, dtype, named, bool(node[3]), state["text"], state["html"])
+        if kind in ("text", "html"):
+            state[kind] = True
+        elif kind == "attachment":
+            state["att"] = True
+
+    walk(tree)
+    return state["att"]
+
+
+def _list_attachments(meta: str, ct: str) -> bool:
+    got = _bs_has_attachment(meta)
+    return ("multipart/mixed" in ct) if got is None else got
 
 
 def _summary(uid: int, meta: str, head: bytes) -> dict:
@@ -568,12 +716,12 @@ def _summary(uid: int, meta: str, head: bytes) -> dict:
         "uid": uid, "subject": hdr(m.get("Subject")) or "（无主题）", "from": frm[0] if frm else {"name": "", "address": ""},
         "to": addrs(m.get("To")), "cc": addrs(m.get("Cc")), "date": _date(m.get("Date")),
         "seen": "\\Seen" in flags, "flagged": "\\Flagged" in flags, "answered": "\\Answered" in flags,
-        "draft": "\\Draft" in flags, "attachments": "multipart/mixed" in ct, "size": int(size.group(1)) if size else 0,
+        "draft": "\\Draft" in flags, "attachments": _list_attachments(meta, ct), "size": int(size.group(1)) if size else 0,
         "message_id": str(m.get("Message-ID") or "").strip(),
     }
 
 
-HEAD = "(UID FLAGS RFC822.SIZE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID CONTENT-TYPE)])"
+HEAD = "(UID FLAGS RFC822.SIZE BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID CONTENT-TYPE)])"
 
 
 # ---------- the routes ----------
@@ -779,7 +927,7 @@ def r_read(ctx, p):
     text = got["text"] or (html_text(got["html"]) if got["html"] else "")
     out = dict(head)
     out.update({"ok": True, "account": acct["id"], "address": acct["address"], "folder": folder,
-                "reply_to": addrs(m.get("Reply-To")),
+                "reply_to": addrs(m.get("Reply-To")), "has_attachments": bool(got["attachments"]),
                 "attachments": [{k: v for k, v in a.items() if not k.startswith("_")} for a in got["attachments"]]})
     if page:
         out["text"] = text[:500_000]
