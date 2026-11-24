@@ -169,7 +169,8 @@ function run(cmd, args, env, input) {
     // 5. The shell side.
     const sc = fs.readFileSync(path.join(MAC, 'start.command'), 'utf8');
     assert.ok(sc.indexOf('export NODE_OPTIONS="--require') > 0 && sc.indexOf('export NODE_OPTIONS="--require') < sc.indexOf('pack-update-check.js'), 'start.command preloads it before the update check');
-    assert.ok(/3\) LOGIN_WHY="连不上公司服务器/.test(sc) && /4\) LOGIN_WHY="账号或密码不对/.test(sc) && /5\) LOGIN_WHY="登录失败次数太多/.test(sc), 'start.command says why');
+    // company-login-sms-v1: login_why says it, for a password and a text code alike.
+    assert.ok(/3\) LOGIN_WHY="连不上公司服务器/.test(sc) && /login_why "账号或密码不对/.test(sc) && /5\) LOGIN_WHY="\$\{LOGIN_HINT:-登录失败次数太多/.test(sc), 'start.command says why');
     assert.ok(!/display dialog "账号或密码不对，再试一次。"/.test(sc), 'no more fixed "wrong password" after every failure');
     const tr = fs.readFileSync(path.join(MAC, 'tree-restore.sh'), 'utf8');
     assert.ok(/curl --resolve "\{\{TDH_HOST\}\}:8443:\$SITE_ADDR"/.test(tr) && (tr.match(/mac-resolve\.js/g) || []).length >= 4, 'tree-restore.sh: curl gets the address, and the file is updated');

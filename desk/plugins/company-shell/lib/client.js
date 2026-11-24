@@ -1802,6 +1802,8 @@ window.__ModuleLoader__.load({
 			if (s.indexOf("dept-last") >= 0) return "至少要留一个部门";
 			if (s.indexOf("avatar-bad") >= 0) return "头像格式不对，换一张 PNG 或 JPG 试试";
 			if (s.indexOf("no-such-person") >= 0) return "花名册里没有这个人";
+			if (s.indexOf("phone-bad") >= 0) return "手机号不对，请填 11 位手机号";
+			if (s.indexOf("phone-taken") >= 0) return "这个手机号已经登记在别人名下";
 			if (s.indexOf("role-bad") >= 0) return "角色不对";
 			if (s.indexOf("password-bad") >= 0) return "密码里不能有换行";
 			if (s.indexOf("password-wrong") >= 0) return "旧密码不对";
@@ -6286,13 +6288,19 @@ window.__ModuleLoader__.load({
 			const toneHook = React.useState("");   // "err" paints the note red
 			const busyHook = React.useState(false);
 			const pendingHook = React.useState(null);
+			// company-login-sms-v1: each person's mobile number (for 手机验证码登录), admins only; never in the public roster.
+			const phonesHook = React.useState({});
+			const phoneEditHook = React.useState(null);   // { login, value }
+			const newPhoneHook = React.useState("");
 			const rowsHook = React.useState(PEOPLE.filter(function (p) { return p && p.login; }));
+			const phoneAdmin = shellRole === "admin";
 			React.useEffect(function () {
 				peopleApi(null).then(function () {
 					rowsHook[1](PEOPLE.filter(function (p) { return p && p.login; }));
 				}, function (err) {
 					noteHook[1](peopleErr(err && err.message));
 				});
+				if (phoneAdmin) peopleApi({ action: "phones" }).then(function (j) { if (j && j.phones) phonesHook[1](j.phones); }, function () {});
 			}, []);
 			if (!canManagePeople()) return null;
 			function refreshRows() {
@@ -6306,6 +6314,7 @@ window.__ModuleLoader__.load({
 				pendingHook[1](null);
 				peopleApi(body).then(function (j) {
 					refreshRows();
+					if (j && j.phones && phoneAdmin) phonesHook[1](j.phones);
 					busyHook[1](false);
 					if (body && body.action === "gw-revoke" && j && typeof j.revoked === "number") {
 						noteHook[1](okNote + "（" + j.revoked + " 把）");
@@ -6358,6 +6367,8 @@ window.__ModuleLoader__.load({
 				const seed = p.seed === true || p.login === "boss";
 				const pending = pendingOf(p.login);
 				const busy = busyHook[0];
+				const phone = phonesHook[0][p.login] || "";
+				const editing = phoneEditHook[0] && phoneEditHook[0].login === p.login;
 				const out = [setRow(p.login, {
 					className: off ? "cs-set-row-off" : "",
 					lead: personAvatar(p),
@@ -6366,8 +6377,16 @@ window.__ModuleLoader__.load({
 						off ? el("span", { key: "st" }, badge("已停用", "err")) : null,
 						seed ? el("span", { key: "seed" }, badge("种子管理员", "brand")) : null
 					],
-					desc: "登录名 " + p.login + (seed ? "  ·  " + peopleRoleText(p.role) + "  ·  " + deptName(p.dept) : ""),
+					desc: "登录名 " + p.login + (seed ? "  ·  " + peopleRoleText(p.role) + "  ·  " + deptName(p.dept) : "") +
+						(phoneAdmin ? "  ·  " + (phone ? "手机 " + phone : "未登记手机号") : ""),
 					side: [
+						phoneAdmin ? btn(phone ? "改手机号" : "登记手机号", {
+							key: "phone",
+							small: true,
+							tone: "ghost",
+							disabled: busy,
+							onClick: function () { phoneEditHook[1]({ login: p.login, value: phone }); }
+						}) : null,
 						seed ? null : el("span", { key: "role" }, selectBox(p.role || "employee", roleChoices(), function (v) {
 							runAction({ action: "set", login: p.login, role: v }, p.login + " → " + peopleRoleText(v));
 						}, busy)),
@@ -6390,6 +6409,31 @@ window.__ModuleLoader__.load({
 						})
 					]
 				})];
+				if (editing) {
+					out.push(el("form", {
+						className: "cs-set-row",
+						key: p.login + "-phone",
+						onSubmit: function (ev) {
+							ev.preventDefault();
+							const v = String(phoneEditHook[0].value || "").trim();
+							runAction({ action: "set", login: p.login, phone: v }, v ? displayName(p) + " 的手机号已登记，可以用验证码登录" : "已清除 " + displayName(p) + " 的手机号");
+							phoneEditHook[1](null);
+						}
+					},
+						el("input", {
+							className: "cs-input",
+							autoFocus: true,
+							inputMode: "numeric",
+							maxLength: 16,
+							value: phoneEditHook[0].value,
+							placeholder: "11 位手机号，留空就是清除",
+							onChange: function (e) { phoneEditHook[1]({ login: p.login, value: e.target.value }); },
+							onKeyDown: function (e) { if (e.key === "Escape") phoneEditHook[1](null); }
+						}),
+						btn("保存", { submit: true, small: true, tone: "primary", disabled: busy }),
+						btn("取消", { small: true, tone: "ghost", onClick: function () { phoneEditHook[1](null); } })
+					));
+				}
 				if (pending) {
 					let text = "";
 					let go = "";
@@ -6435,17 +6479,25 @@ window.__ModuleLoader__.load({
 					noteHook[1]("初始密码至少 6 位，现在是 " + password.length + " 位。");
 					return;
 				}
+				const phone = String(newPhoneHook[0] || "").trim();
+				if (phone && !/^(\+?86)?1[3-9]\d{9}$/.test(phone.replace(/[\s-]/g, ""))) {
+					noteHook[1](peopleErr("phone-bad"));
+					return;
+				}
 				toneHook[1]("");
-				runAction({
+				const body = {
 					action: "add",
 					login: login,
 					role: roleHook[0] || "employee",
 					dept: newDept,
 					name: String(nameHook[0] || "").trim(),
 					password: password
-				}, "已发放 " + login);
+				};
+				if (phone && phoneAdmin) body.phone = phone;
+				runAction(body, "已发放 " + login);
 				passHook[1]("");
 				nameHook[1]("");
+				newPhoneHook[1]("");
 			}
 			return setPage("人员", "发放账号，管理部门，调整角色。停用会同时吊销这个人的模型令牌。",
 				groupedRows().map(function (g) {
@@ -6543,6 +6595,16 @@ window.__ModuleLoader__.load({
 									placeholder: "至少 6 位",
 									onChange: function (e) { passHook[1](e.target.value); }
 								})),
+							phoneAdmin ? el("label", { className: "cs-field" }, el("span", null, "手机号（可选，用来验证码登录）"),
+								el("input", {
+									className: "cs-input",
+									value: newPhoneHook[0],
+									inputMode: "numeric",
+									maxLength: 16,
+									autoComplete: "off",
+									placeholder: "11 位手机号",
+									onChange: function (e) { newPhoneHook[1](e.target.value); }
+								})) : null,
 							el("label", { className: "cs-field" }, el("span", null, "角色"),
 								selectBox(roleHook[0], roleChoices(), function (v) { roleHook[1](v); })),
 							el("label", { className: "cs-field" }, el("span", null, "部门"),
@@ -6555,7 +6617,8 @@ window.__ModuleLoader__.load({
 					)
 				),
 				setNote(noteHook[0], toneHook[0]),
-				setNote("种子管理员不能停用或降权，但可以吊销令牌。总监不能设管理员。登录名发放后不能改，显示名可以随时改。")
+				setNote("种子管理员不能停用或降权，但可以吊销令牌。总监不能设管理员。登录名发放后不能改，显示名可以随时改。" +
+					(phoneAdmin ? "登记了手机号的人可以用短信验证码登录；手机号只有管理员看得到。改手机号、停用、改密码都会让这个人在已记住的电脑上重新登录。" : ""))
 			);
 		}
 

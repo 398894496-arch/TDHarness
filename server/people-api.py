@@ -30,6 +30,7 @@ import chat_assist  # noqa: E402
 import chat_archive  # noqa: E402
 import chat_voice  # noqa: E402
 import chat_call  # noqa: E402
+import login_sms  # noqa: E402
 import chat_docs  # noqa: E402
 import erp_sso  # noqa: E402
 import erp_data  # noqa: E402
@@ -274,6 +275,9 @@ def set_password(login: str, pw: str, changed: bool = True) -> None:
     PASS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with PASS_FILE.open("a", encoding="utf-8") as fh:
         fh.write("%s:%s\n" % (login, hash_password(pw)))
+    if changed:
+        # company-login-remember-v1: a new password signs every remembered device of this person out.
+        login_sms.forget(TOKEN_STORE.parent, login=login)
     if login == SEED_ADMIN and changed:
         # The install-time password shown by setup is no longer valid.
         try:
@@ -406,6 +410,22 @@ def public_people() -> list:
             "pid": p.get("pid"),
         })
     return rows
+
+
+def phones() -> dict:
+    """company-login-sms-v1: login -> mobile number, for admins (the public roster never carries them)."""
+    out = {}
+    for p in load_roster().get("people") or []:
+        if isinstance(p, dict) and p.get("login") and p.get("phone"):
+            out[str(p["login"])] = str(p["phone"])
+    return out
+
+
+def login_of_phone(phone: str) -> str:
+    """The active person with this mobile number, "" when none (or, against the roster's rule, more than one)."""
+    hits = [p for p in load_roster().get("people") or []
+            if isinstance(p, dict) and p.get("phone") == phone and (p.get("status") or "active") == "active"]
+    return str(hits[0].get("login") or "") if len(hits) == 1 else ""
 
 
 def person(login: str) -> dict | None:
@@ -820,6 +840,15 @@ def check_login(username: str, password: str) -> dict | None:
         # Same password, now hashed. Not a change: setup's own login proof is the seed admin's
         # first sign-in, and treating it as one deleted seed-admin.txt before anyone saw it.
         set_password(login, password, changed=False)
+    return login_payload(login)
+
+
+def login_payload(login: str) -> dict | None:
+    """What a desk gets when `login` signs in, however they did (password, a text code, a remembered device): None for
+    someone who is not an active person."""
+    row = person(login)
+    if not row or row.get("status") != "active":
+        return None
     pid = str(row.get("pid") or ("p-" + login))
     ensure_personal_dir(row)
     # Own account first; the shared one only while the own one cannot be made.
@@ -837,6 +866,29 @@ def check_login(username: str, password: str) -> dict | None:
         "smb_user": smb_user,
         "smb_pass": smb_pass,
     }
+
+
+def _sms_test_sender():
+    """Proofs only (scripts/prove-login-sms.py): TDH_SMS_TEST_OUTBOX names a file the codes are written to instead of
+    being texted. A server without it sends through Alibaba Cloud (login_sms.send_aliyun)."""
+    box = os.environ.get("TDH_SMS_TEST_OUTBOX") or ""
+    if not box:
+        return None
+
+    def send(phone: str, code: str) -> bool:
+        with open(box, "a", encoding="utf-8") as fh:
+            fh.write("%s %s\n" % (phone, code))
+        return True
+    return send
+
+
+def with_remember(hit: dict, payload: dict, how: str) -> dict:
+    """company-login-remember-v1: a sign-in that asked to be remembered on its device gets a device token."""
+    if payload.get("remember") and hit.get("login"):
+        tok = login_sms.remember(TOKEN_STORE.parent, hit["login"], str(payload.get("device_id") or ""), how)
+        if tok:
+            hit = dict(hit, remember_token=tok, remember_days=login_sms.REMEMBER_S // 86400)
+    return hit
 
 
 def password_ok(username: str, password: str) -> bool:
@@ -1313,6 +1365,42 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return data if isinstance(data, dict) else None
 
+    def _login_more(self, what: str, payload: dict) -> None:
+        """company-login-sms-v1 / company-login-remember-v1: a text code (sms-code), signing in with it (sms), a
+        remembered device (resume), forgetting it (forget). Reached through Caddy's /company/login*."""
+        runtime = TOKEN_STORE.parent
+        src = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or self.client_address[0]
+        if what == "sms-code":
+            status, body = login_sms.request_code(runtime, payload.get("phone"), src, login_of_phone, _sms_test_sender())
+            sys.stderr.write("people-api login sms-code %s %s\n" % (status, body.get("error") or "sent"))
+            self._send(*json_bytes(body, status))
+            return
+        if what == "sms":
+            phone = login_sms.norm_phone(payload.get("phone"))
+            key = "sms:" + phone
+            if login_blocked(key, src):
+                self._send(*json_bytes({"ok": False, "error": "too-many-attempts", "hint": "验证码输错太多次，请 15 分钟后再试，或用密码登录。"}, 429))
+                return
+            login = login_sms.check_code(phone, payload.get("code"))
+            hit = login_payload(login) if login else None
+            if hit is None:
+                login_failed(key, src)
+                self._send(*json_bytes({"ok": False, "error": "bad-code", "hint": "验证码不对或已过期，请重新获取。"}, 401))
+                return
+            login_succeeded(key, src)
+            self._send(*json_bytes(with_remember(hit, payload, "sms")))
+            return
+        if what == "resume":
+            login = login_sms.resume(runtime, str(payload.get("token") or ""), str(payload.get("device_id") or ""))
+            hit = login_payload(login) if login else None
+            if hit is None:
+                self._send(*json_bytes({"ok": False, "error": "expired", "hint": "登录已过期，请重新登录。"}, 401))
+                return
+            self._send(*json_bytes(hit))
+            return
+        n = login_sms.forget(runtime, token=str(payload.get("token") or "")) if payload.get("token") else 0
+        self._send(*json_bytes({"ok": True, "forgot": n}))
+
     def _people(self, payload: dict) -> None:
         actor = person(self._actor())
         action = str(payload.get("action") or "")
@@ -1324,8 +1412,29 @@ class Handler(BaseHTTPRequestHandler):
         def done(extra: dict | None = None) -> None:
             save_roster(data)
             body = {"ok": True, "people": public_people(), "depts": public_depts()}
+            if actor.get("role") == "admin":
+                body["phones"] = phones()
+            else:
+                mine = phones().get(str(actor.get("login") or ""))
+                body["phones"] = {str(actor.get("login")): mine} if mine else {}
             body.update(extra or {})
             self._send(*json_bytes(body))
+
+        def set_phone(row: dict) -> str:
+            """company-login-sms-v1: the row's mobile number from payload["phone"] ("" clears it); an error or ""."""
+            raw = str(payload.get("phone") or "").strip()
+            if not raw:
+                row.pop("phone", None)
+                return ""
+            ph = login_sms.norm_phone(raw)
+            if not ph:
+                return "phone-bad"
+            if any(isinstance(r, dict) and r is not row and r.get("phone") == ph for r in data.get("people") or []):
+                return "phone-taken"
+            if ph != row.get("phone"):
+                login_sms.forget(TOKEN_STORE.parent, login=str(row.get("login") or ""))
+            row["phone"] = ph
+            return ""
 
         def fail(error: str, status: int = 400) -> None:
             self._send(*json_bytes({"ok": False, "error": error}, status))
@@ -1372,6 +1481,9 @@ class Handler(BaseHTTPRequestHandler):
                 set_password(me, new)
             done()
             return
+        if action == "phones":
+            done()
+            return
         if actor.get("role") != "admin":
             fail("forbidden", 403)
             return
@@ -1414,6 +1526,12 @@ class Handler(BaseHTTPRequestHandler):
                 "personal": str(ROOT / "company" / ("emp-" + login)),
                 "pid": "p-" + secrets.token_hex(6),
             })
+            if "phone" in payload:
+                why = set_phone(data["people"][-1])
+                if why:
+                    data["people"].pop()
+                    fail(why)
+                    return
             ensure_personal_dir(data["people"][-1])
             set_password(login, pw)
             done()
@@ -1443,6 +1561,11 @@ class Handler(BaseHTTPRequestHandler):
                     row["dept"] = dept
                 if "name" in payload:
                     row["name"] = clean_name(payload.get("name"))
+                if "phone" in payload:
+                    why = set_phone(row)
+                    if why:
+                        fail(why)
+                        return
                 done()
                 return
             if action == "disable":
@@ -1451,6 +1574,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 row["status"] = "disabled"
                 revoked = revoke_tokens(str(row.get("pid") or ""))
+                login_sms.forget(TOKEN_STORE.parent, login=login)
                 _SMB_OK.pop(login, None)
                 smb_account("disable", login)
                 done({"revoked": revoked})
@@ -1465,6 +1589,7 @@ class Handler(BaseHTTPRequestHandler):
                 fail("protect-seed-admin")
                 return
             revoked = revoke_tokens(str(row.get("pid") or ""))
+            login_sms.forget(TOKEN_STORE.parent, login=login)
             done({"revoked": revoked})
             return
 
@@ -1762,6 +1887,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(*json_bytes(tinode_auth(payload)))
             return
+        if path in ("/company/login/sms-code", "/company/login/sms", "/company/login/resume", "/company/login/forget"):
+            self._login_more(path[len("/company/login/"):], payload)
+            return
         if path == "/company/login":
             name = str(payload.get("username") or payload.get("login") or "").strip().lower()
             src = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip() or self.client_address[0]
@@ -1774,7 +1902,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(*json_bytes({"ok": False, "error": "bad-login"}, 401))
                 return
             login_succeeded(name, src)
-            self._send(*json_bytes(hit))
+            self._send(*json_bytes(with_remember(hit, payload, "password")))
             return
         if path == "/company/desk-lease":
             login = login_from_token(self._token())

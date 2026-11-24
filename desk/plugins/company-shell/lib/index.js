@@ -427,6 +427,40 @@ function proxyGw(pathName, method, body) {
 	});
 }
 
+// company-login-remember-v1: 退出登录 also ends this computer's remembered sign-in: the device token is forgotten on the
+// server and deleted here (remember.token, the Mac's; Windows keeps its own, encrypted, and forgets it in the shell).
+// Best effort: a server that cannot be reached still loses the file here.
+export function forgetRemembered(base = siteBase(), dir = rcDir()) {
+	const p = path.join(dir, "remember.token");
+	const tok = readTrim(p);
+	try {
+		if (existsSync(p)) unlinkSync(p);
+	} catch {
+		// keep going
+	}
+	if (!/^tdhr_[0-9a-f]{32}$/.test(tok)) return Promise.resolve(false);
+	return new Promise((resolve) => {
+		let u;
+		try {
+			u = new URL("/company/login/forget", base);
+		} catch {
+			resolve(false);
+			return;
+		}
+		const body = Buffer.from(JSON.stringify({ token: tok }), "utf8");
+		const lib = u.protocol === "http:" ? http : https;
+		const req = lib.request({ method: "POST", hostname: u.hostname, port: u.port || (u.protocol === "http:" ? 80 : 443), path: u.pathname,
+			rejectUnauthorized: false, timeout: 5000, headers: { "Content-Type": "application/json", "Content-Length": String(body.length) } }, (res) => {
+			res.resume();
+			res.on("end", () => resolve(res.statusCode === 200));
+		});
+		req.on("timeout", () => { req.destroy(); resolve(false); });
+		req.on("error", () => resolve(false));
+		req.write(body);
+		req.end();
+	});
+}
+
 function clearLoginFiles() {
 	const dir = rcDir();
 	// Same set AppHost.ClearLogin / Mac quit wipe. Next launch types the password.
@@ -2735,6 +2769,7 @@ export function apply(ctx) {
 					res.end(JSON.stringify({ ok: false, error: "method" }));
 					return;
 				}
+				await forgetRemembered();
 				clearLoginFiles();
 				res.writeHead(200, {
 					"content-type": "application/json; charset=utf-8",

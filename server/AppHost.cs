@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -518,8 +519,146 @@ internal static class AppHost
 
     internal static LoginHit CheckLogin(string user, string pass)
     {
-        var body = "{\"username\":\"" + JsonEscape(user) + "\",\"password\":\"" + JsonEscape(pass) + "\"}";
-        var req = (HttpWebRequest)WebRequest.Create(Site.LoginUrl);
+        return CheckLogin(user, pass, false);
+    }
+
+    // company-login-remember-v1: remember asks the server for this computer's device token (30 days).
+    internal static LoginHit CheckLogin(string user, string pass, bool remember)
+    {
+        var body = "{\"username\":\"" + JsonEscape(user) + "\",\"password\":\"" + JsonEscape(pass) + "\"" + RememberPart(remember) + "}";
+        return PostSignIn(Site.LoginUrl, body, user);
+    }
+
+    // company-login-sms-v1: sign in with a text code.
+    internal static LoginHit SmsLogin(string phone, string code, bool remember)
+    {
+        var body = "{\"phone\":\"" + JsonEscape(phone) + "\",\"code\":\"" + JsonEscape(code) + "\"" + RememberPart(remember) + "}";
+        return PostSignIn(Site.LoginUrl + "/sms", body, "");
+    }
+
+    // company-login-remember-v1: this computer's remembered sign-in.
+    internal static LoginHit Resume(string token)
+    {
+        var body = "{\"token\":\"" + JsonEscape(token) + "\",\"device_id\":\"" + JsonEscape(DeviceId()) + "\"}";
+        return PostSignIn(Site.LoginUrl + "/resume", body, "");
+    }
+
+    private static string RememberPart(bool remember)
+    {
+        return ",\"device_id\":\"" + JsonEscape(DeviceId()) + "\"" + (remember ? ",\"remember\":true" : "");
+    }
+
+    // A POST under the login address that answers whatever it answers: (status, body); status 0 when nothing answered.
+    internal static int PostLoginJson(string suffix, string body, out string text)
+    {
+        text = "";
+        try
+        {
+            var req = (HttpWebRequest)WebRequest.Create(Site.LoginUrl + suffix);
+            req.Method = "POST";
+            req.ContentType = "application/json; charset=utf-8";
+            req.Timeout = 15000;
+            var raw = Encoding.UTF8.GetBytes(body);
+            req.ContentLength = raw.Length;
+            using (var s = req.GetRequestStream()) s.Write(raw, 0, raw.Length);
+            using (var resp = (HttpWebResponse)req.GetResponse())
+            using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+            {
+                text = sr.ReadToEnd();
+                return (int)resp.StatusCode;
+            }
+        }
+        catch (WebException wex)
+        {
+            var answered = wex.Response as HttpWebResponse;
+            if (answered == null) return 0;
+            try
+            {
+                using (var sr = new StreamReader(answered.GetResponseStream(), Encoding.UTF8)) text = sr.ReadToEnd();
+            }
+            catch { }
+            return (int)answered.StatusCode;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    // company-login-remember-v1: the same device id desk-lease.js keeps (.dsh-company-rc8\device.id).
+    internal static string DeviceId()
+    {
+        var p = Path.Combine(Rc8Dir(), "device.id");
+        try
+        {
+            var have = File.ReadAllText(p).Trim();
+            if (Regex.IsMatch(have, @"^[A-Za-z0-9._-]{8,80}$")) return have;
+        }
+        catch { }
+        var b = new byte[8];
+        using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(b);
+        var id = "dev-" + BitConverter.ToString(b).Replace("-", "").ToLowerInvariant();
+        try
+        {
+            Directory.CreateDirectory(Rc8Dir());
+            File.WriteAllText(p, id + "\n");
+        }
+        catch { }
+        return id;
+    }
+
+    // The device token, encrypted for this Windows account (DPAPI): copied to another computer or account it reads as nothing.
+    private static readonly byte[] RememberSalt = Encoding.UTF8.GetBytes("tdh-login-remember-v1");
+
+    internal static string RememberFile()
+    {
+        return Path.Combine(Rc8Dir(), "remember.win");
+    }
+
+    internal static void SaveRemember(string token)
+    {
+        if (string.IsNullOrEmpty(token) || !Regex.IsMatch(token, @"^tdhr_[0-9a-f]{32}$")) return;
+        try
+        {
+            Directory.CreateDirectory(Rc8Dir());
+            var enc = ProtectedData.Protect(Encoding.UTF8.GetBytes(token), RememberSalt, DataProtectionScope.CurrentUser);
+            File.WriteAllBytes(RememberFile(), enc);
+            Log("remember-saved");
+        }
+        catch (Exception ex) { Log("remember-save " + ex.Message); }
+    }
+
+    internal static string LoadRemember()
+    {
+        try
+        {
+            if (!File.Exists(RememberFile())) return "";
+            var raw = ProtectedData.Unprotect(File.ReadAllBytes(RememberFile()), RememberSalt, DataProtectionScope.CurrentUser);
+            var tok = Encoding.UTF8.GetString(raw);
+            return Regex.IsMatch(tok, @"^tdhr_[0-9a-f]{32}$") ? tok : "";
+        }
+        catch { return ""; }
+    }
+
+    // 退出登录, or a sign-in that did not ask to be remembered: the file goes; the server forgets it too (in the background).
+    internal static void ForgetRemember(bool tellServer)
+    {
+        var tok = tellServer ? LoadRemember() : "";
+        try { if (File.Exists(RememberFile())) File.Delete(RememberFile()); } catch { }
+        if (tok.Length == 0) return;
+        var t = new Thread(new ThreadStart(delegate
+        {
+            string ignored;
+            PostLoginJson("/forget", "{\"token\":\"" + tok + "\"}", out ignored);
+        }));
+        t.IsBackground = true;
+        t.Start();
+        Log("remember-forgot");
+    }
+
+    private static LoginHit PostSignIn(string url, string body, string user)
+    {
+        var req = (HttpWebRequest)WebRequest.Create(url);
         req.Method = "POST";
         req.ContentType = "application/json; charset=utf-8";
         req.Timeout = 12000;
@@ -544,6 +683,7 @@ internal static class AppHost
             hit.GwToken = JsonField(text, "gw_token");
             hit.SmbUser = JsonField(text, "smb_user");
             hit.SmbPass = JsonField(text, "smb_pass");
+            hit.RememberToken = JsonField(text, "remember_token");
             return hit;
         }
     }
@@ -1672,6 +1812,8 @@ internal sealed class LoginHit
     // that has not been updated yet, in which case the legacy shared string
     // is used so an old server and a new client still talk.
     public string GwToken;
+    // company-login-remember-v1: this computer's device token, when the sign-in asked to be remembered.
+    public string RememberToken;
 }
 
 internal sealed class ShellForm : Form
@@ -1681,6 +1823,16 @@ internal sealed class ShellForm : Form
     private readonly TextBox _pass = new TextBox();
     private readonly Button _go = new Button();
     private readonly Label _err = new Label();
+    // company-login-sms-v1 / company-login-remember-v1: 账号密码 or 手机验证码, and 30 天内免登录.
+    private readonly Label _uLab = new Label();
+    private readonly Label _pLab = new Label();
+    private readonly LinkLabel _tabPwd = new LinkLabel();
+    private readonly LinkLabel _tabSms = new LinkLabel();
+    private readonly Button _codeBtn = new Button();
+    private readonly CheckBox _remember = new CheckBox();
+    private readonly System.Windows.Forms.Timer _codeTimer = new System.Windows.Forms.Timer();
+    private int _codeLeft;
+    private string _mode = "password";
     private WebView2 _web;
     private string _authUser = "";
     private string _authPass = "";
@@ -1706,42 +1858,76 @@ internal sealed class ShellForm : Form
         title.AutoSize = true;
         title.Font = new Font("Microsoft YaHei", 14, FontStyle.Bold);
         title.Location = new Point(24, 18);
-        var uLab = new Label();
+        _tabPwd.Text = "账号密码登录";
+        _tabPwd.AutoSize = true;
+        _tabPwd.Location = new Point(24, 56);
+        _tabPwd.LinkClicked += delegate { SetMode("password"); };
+        _tabSms.Text = "手机验证码登录";
+        _tabSms.AutoSize = true;
+        _tabSms.Location = new Point(140, 56);
+        _tabSms.LinkClicked += delegate { SetMode("sms"); };
+        var uLab = _uLab;
         uLab.Text = "账号";
         uLab.AutoSize = true;
-        uLab.Location = new Point(24, 58);
+        uLab.Location = new Point(24, 84);
         _user.Width = 350;
-        _user.Location = new Point(24, 82);
+        _user.Location = new Point(24, 108);
         try
         {
             var last = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), "last.login")).Trim();
             if (Regex.IsMatch(last, @"^[A-Za-z0-9._@-]{1,64}$")) _user.Text = last;
         }
         catch { }
-        var pLab = new Label();
+        var pLab = _pLab;
         pLab.Text = "密码";
         pLab.AutoSize = true;
-        pLab.Location = new Point(24, 114);
+        pLab.Location = new Point(24, 140);
         _pass.Width = 350;
         _pass.UseSystemPasswordChar = true;
-        _pass.Location = new Point(24, 138);
+        _pass.Location = new Point(24, 164);
+        _codeBtn.Text = "获取验证码";
+        _codeBtn.Width = 112;
+        _codeBtn.Height = 27;
+        _codeBtn.Location = new Point(262, 163);
+        _codeBtn.Visible = false;
+        _codeBtn.Click += delegate { SendCode(); };
+        _codeTimer.Interval = 1000;
+        _codeTimer.Tick += delegate
+        {
+            _codeLeft--;
+            if (_codeLeft <= 0)
+            {
+                _codeTimer.Stop();
+                _codeBtn.Text = "重新获取";
+                _codeBtn.Enabled = true;
+            }
+            else _codeBtn.Text = "重新获取(" + _codeLeft + ")";
+        };
+        _remember.Text = "30 天内这台电脑免登录";
+        _remember.AutoSize = true;
+        _remember.Checked = true;
+        _remember.Location = new Point(24, 198);
         _go.Text = "登录";
         _go.Width = 350;
         _go.Height = 36;
-        _go.Location = new Point(24, 178);
+        _go.Location = new Point(24, 226);
         var notice = new Label();
         // LOGIN_SHARE_NOT_UPLOAD
         notice.Text = "工作区和对话都在公司共享盘上，不另外上传。会操作你指定的已打开标签页；点击和导航第一次要你点头。Cookie 不上公司网关。聊天在本窗口，不要用 Chrome 侧栏再开一套对话。";
         notice.AutoSize = true;
         notice.MaximumSize = new Size(350, 0);
         notice.ForeColor = Color.FromArgb(90, 90, 90);
-        notice.Location = new Point(24, 220);
+        notice.Location = new Point(24, 270);
         _err.AutoSize = true;
         _err.ForeColor = Color.FromArgb(217, 45, 32);
-        _err.Location = new Point(24, 320);
+        _err.Location = new Point(24, 370);
         _err.MaximumSize = new Size(350, 0);
-        box.Height = 380;
+        box.Height = 430;
         box.Controls.Add(title);
+        box.Controls.Add(_tabPwd);
+        box.Controls.Add(_tabSms);
+        box.Controls.Add(_codeBtn);
+        box.Controls.Add(_remember);
         box.Controls.Add(uLab);
         box.Controls.Add(_user);
         box.Controls.Add(pLab);
@@ -1758,6 +1944,8 @@ internal sealed class ShellForm : Form
         Controls.Add(_login);
         AcceptButton = _go;
         _go.Click += delegate { SignIn(); };
+        // company-login-sms-v1: open in the way this computer signed in last (a phone kept: 手机验证码).
+        SetMode(File.Exists(Path.Combine(AppHost.Rc8Dir(), "last.phone")) ? "sms" : "password");
         FormClosing += delegate
         {
             if (_logoutWatch != null)
@@ -1785,6 +1973,9 @@ internal sealed class ShellForm : Form
                 catch (Exception wvEx) { AppHost.Log("webview2-boot " + wvEx.Message); }
                 try { CheckForUpdate(); }
                 catch (Exception upEx) { AppHost.Log("update-check " + upEx.Message); ShowNote("", false); }
+                // company-login-remember-v1: a computer signed in within 30 days goes straight in.
+                try { BeginInvoke(new Action(delegate { if (!IsDisposed && _web == null) AutoResume(); })); }
+                catch { }
             }));
             boot.IsBackground = true;
             boot.Start();
@@ -1909,9 +2100,140 @@ internal sealed class ShellForm : Form
                 _go.Enabled = on;
                 _user.Enabled = on;
                 _pass.Enabled = on;
+                _codeBtn.Enabled = on && _codeLeft <= 0;
             }));
         }
         catch { }
+    }
+
+    // company-login-sms-v1: the two ways in. The account box holds the phone number in 手机验证码.
+    private void SetMode(string mode)
+    {
+        _mode = mode == "sms" ? "sms" : "password";
+        var sms = _mode == "sms";
+        _uLab.Text = sms ? "手机号（花名册里登记的）" : "账号";
+        _pLab.Text = sms ? "验证码" : "密码";
+        _pass.Text = "";
+        _pass.UseSystemPasswordChar = !sms;
+        _pass.Width = sms ? 230 : 350;
+        _codeBtn.Visible = sms;
+        _tabPwd.LinkColor = sms ? Color.FromArgb(37, 99, 235) : Color.FromArgb(20, 20, 20);
+        _tabSms.LinkColor = sms ? Color.FromArgb(20, 20, 20) : Color.FromArgb(37, 99, 235);
+        var last = "";
+        try { last = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), sms ? "last.phone" : "last.login")).Trim(); }
+        catch { }
+        _user.Text = Regex.IsMatch(last, sms ? @"^[0-9+]{11,14}$" : @"^[A-Za-z0-9._@-]{1,64}$") ? last : "";
+        _err.Text = "";
+        if (_user.Text.Length > 0) _pass.Focus(); else _user.Focus();
+    }
+
+    private static string Digits(string s)
+    {
+        return Regex.Replace(s ?? "", @"[^0-9]", "");
+    }
+
+    private void SendCode()
+    {
+        var phone = Digits(_user.Text);
+        if (phone.Length == 13 && phone.StartsWith("86")) phone = phone.Substring(2);
+        if (!Regex.IsMatch(phone, @"^1[3-9][0-9]{9}$"))
+        {
+            _err.ForeColor = Color.FromArgb(217, 45, 32);
+            _err.Text = "请填 11 位手机号";
+            return;
+        }
+        _codeBtn.Enabled = false;
+        _err.ForeColor = Color.FromArgb(90, 90, 90);
+        _err.Text = "正在发送验证码…";
+        Application.DoEvents();
+        try { AppHost.EnsureCompanyNet(); }
+        catch (Exception tsEx) { AppHost.Log("ts " + tsEx.Message); }
+        string text;
+        var code = AppHost.PostLoginJson("/sms-code", "{\"phone\":\"" + phone + "\"}", out text);
+        var error = AppHost.JsonField(text, "error");
+        if (code == 200)
+        {
+            _err.Text = "验证码已发送，5 分钟内有效。收不到请确认这个号码已登记在公司花名册里。";
+            try { File.WriteAllText(Path.Combine(AppHost.Rc8Dir(), "last.phone"), phone + "\n"); } catch { }
+            StartCountdown(60);
+            _pass.Focus();
+            return;
+        }
+        _err.ForeColor = Color.FromArgb(217, 45, 32);
+        var hint = AppHost.JsonField(text, "hint");
+        if (code == 0)
+        {
+            var netHint = AppHost.CompanyNetHint();
+            _err.Text = netHint.Length > 0 ? netHint : "连不上公司网，请稍后再试";
+        }
+        else _err.Text = hint.Length > 0 ? hint : "验证码没发出去（" + code + "），请稍后再试";
+        if (error == "wait")
+        {
+            int wait;
+            StartCountdown(int.TryParse(AppHost.JsonField(text, "wait"), out wait) && wait > 0 ? wait : 60);
+            return;
+        }
+        _codeBtn.Enabled = true;
+        if (error == "sms-off") SetMode("password");
+    }
+
+    private void StartCountdown(int secs)
+    {
+        _codeLeft = secs;
+        _codeBtn.Enabled = false;
+        _codeBtn.Text = "重新获取(" + secs + ")";
+        _codeTimer.Stop();
+        _codeTimer.Start();
+    }
+
+    // company-login-remember-v1: straight in with this computer's remembered sign-in (after the update check).
+    private void AutoResume()
+    {
+        var tok = AppHost.LoadRemember();
+        if (tok.Length == 0) return;
+        _go.Enabled = false;
+        _err.ForeColor = Color.FromArgb(90, 90, 90);
+        _err.Text = "正在自动登录…";
+        Application.DoEvents();
+        try
+        {
+            LoginHit hit = null;
+            try { hit = AppHost.Resume(tok); }
+            catch (WebException wex)
+            {
+                var answered = wex.Response as HttpWebResponse;
+                var code = answered != null ? (int)answered.StatusCode : 0;
+                _err.ForeColor = Color.FromArgb(217, 45, 32);
+                if (code == 401 || code == 403)
+                {
+                    AppHost.ForgetRemember(false);
+                    _err.Text = "登录已过期，请重新登录";
+                    return;
+                }
+                var netHint = AppHost.CompanyNetHint();
+                _err.Text = "自动登录没成功：" + (netHint.Length > 0 ? netHint : "连不上公司网") + "。稍后点「登录」再试。";
+                return;
+            }
+            catch { hit = null; }
+            if (hit == null)
+            {
+                AppHost.ForgetRemember(false);
+                _err.ForeColor = Color.FromArgb(217, 45, 32);
+                _err.Text = "登录已过期，请重新登录";
+                return;
+            }
+            EnterDesk(hit, "", true);
+        }
+        catch (Exception ex)
+        {
+            _err.ForeColor = Color.FromArgb(217, 45, 32);
+            _err.Text = "打不开本机 Agent：" + AppHost.WithShareHint(ex.Message);
+            AppHost.Log(ex.ToString());
+        }
+        finally
+        {
+            _go.Enabled = true;
+        }
     }
 
     private void SignIn()
@@ -1920,7 +2242,25 @@ internal sealed class ShellForm : Form
         _err.Text = "";
         var user = _user.Text.Trim();
         var pass = _pass.Text;
-        if (user.Length < 2 || pass.Length < 4)
+        var sms = _mode == "sms";
+        // Back at the sign-in with nothing typed (a seat lost, a stopped Agent): the remembered sign-in, if any.
+        if (!sms && pass.Length == 0 && AppHost.LoadRemember().Length > 0)
+        {
+            AutoResume();
+            return;
+        }
+        if (sms)
+        {
+            user = Digits(user);
+            if (user.Length == 13 && user.StartsWith("86")) user = user.Substring(2);
+            pass = Digits(pass);
+            if (!Regex.IsMatch(user, @"^1[3-9][0-9]{9}$") || pass.Length != 6)
+            {
+                _err.Text = "请填手机号和 6 位验证码";
+                return;
+            }
+        }
+        else if (user.Length < 2 || pass.Length < 4)
         {
             _err.Text = "账号或密码不对";
             return;
@@ -1939,7 +2279,7 @@ internal sealed class ShellForm : Form
             _err.Text = "";
             Application.DoEvents();
             LoginHit hit;
-            try { hit = AppHost.CheckLogin(user, pass); }
+            try { hit = sms ? AppHost.SmsLogin(user, pass, _remember.Checked) : AppHost.CheckLogin(user, pass, _remember.Checked); }
             catch (WebException wex)
             {
                 // company-login-reason-v1: HttpWebRequest throws on 401 and 429 too. Those are the server's answer,
@@ -1949,12 +2289,12 @@ internal sealed class ShellForm : Form
                 var code = answered != null ? (int)answered.StatusCode : 0;
                 if (code == 401 || code == 403)
                 {
-                    _err.Text = "账号或密码不对";
+                    _err.Text = sms ? "验证码不对或已过期，请重新获取" : "账号或密码不对";
                     return;
                 }
                 if (code == 429)
                 {
-                    _err.Text = "登录失败次数太多，请 15 分钟后再试；忘了密码请找管理员重置";
+                    _err.Text = sms ? "验证码输错太多次，请 15 分钟后再试，或用账号密码登录" : "登录失败次数太多，请 15 分钟后再试；忘了密码请找管理员重置";
                     return;
                 }
                 if (code >= 400)
@@ -1969,9 +2309,29 @@ internal sealed class ShellForm : Form
             catch { hit = null; }
             if (hit == null)
             {
-                _err.Text = "账号或密码不对";
+                _err.Text = sms ? "验证码不对或已过期，请重新获取" : "账号或密码不对";
                 return;
             }
+            EnterDesk(hit, sms ? "" : pass, _remember.Checked);
+        }
+        catch (Exception ex)
+        {
+            _err.Text = "打不开本机 Agent：" + AppHost.WithShareHint(ex.Message);
+            AppHost.Log(ex.ToString());
+        }
+        finally
+        {
+            _go.Enabled = true;
+        }
+    }
+
+    // After any sign-in (password, text code, remembered): the share, the seat, the desk.
+    private void EnterDesk(LoginHit hit, string pass, bool remember)
+    {
+        {
+            if (!string.IsNullOrEmpty(hit.RememberToken)) AppHost.SaveRemember(hit.RememberToken);
+            else if (!remember) AppHost.ForgetRemember(true);
+            _err.ForeColor = Color.FromArgb(217, 45, 32);
             _err.Text = "正在挂入公司盘…";
             Application.DoEvents();
             AppHost.EnsureShare(hit.SmbUser, hit.SmbPass);
@@ -2041,15 +2401,6 @@ internal sealed class ShellForm : Form
             ShowDesk();
             WatchLogout();
         }
-        catch (Exception ex)
-        {
-            _err.Text = "打不开本机 Agent：" + AppHost.WithShareHint(ex.Message);
-            AppHost.Log(ex.ToString());
-        }
-        finally
-        {
-            _go.Enabled = true;
-        }
     }
 
     // company-seat-back-v1: back to the sign-in, the account kept (the password only in memory, as it was), the reason said.
@@ -2103,6 +2454,8 @@ internal sealed class ShellForm : Form
             try { _logoutWatch.Stop(); _logoutWatch.Dispose(); } catch { }
             _logoutWatch = null;
         }
+        // company-login-remember-v1: 退出登录 ends this computer's remembered sign-in too.
+        AppHost.ForgetRemember(true);
         AppHost.ClearLogin();
         var oldWatch = _leaseWatch;
         _leaseWatch = null;

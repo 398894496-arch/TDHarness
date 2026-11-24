@@ -77,9 +77,8 @@ export DEEPSEEK_BASE_URL=http://{{TDH_HOST}}:8450/v1
 case "$DEEPSEEK_BASE_URL" in
   *__SITE_*) echo "BLOCKED=unrendered-site-token" >&2; exit 2 ;;
 esac
-# ALWAYS_LOGIN=1
-# Every launch types roster user+password. Close/logout deletes gw.token.
-# Do not reuse a leftover token file to skip the dialog.
+# Close/logout deletes gw.token: a leftover token file never skips the sign-in. What does is the remembered device
+# (company-login-remember-v1, remember.token: 30 days from a sign-in, checked by the server, forgotten on 退出登录).
 unset DEEPSEEK_API_KEY
 TOKFILE="${HOME}/.dsh-company-rc8/gw.token"
 LOGIN_URL="https://{{TDH_HOST}}:8443/company/login"
@@ -154,7 +153,77 @@ if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ "$DEEPSEEK_API_KEY" = "company-gateway" ]
   # Browser GET of this URL is 404 not-found. Win AppHost POSTs JSON; Mac had no form.
   mkdir -p "$(dirname "$TOKFILE")"
   LOGIN_OK=0
+  LOGIN_WHY=""
+  # company-login-sms-v1 / company-login-remember-v1: mac-company-login.js does the asking (LOGIN_MODE and its
+  # LOGIN_* in the environment); its exit code says what happened, a HINT= line what the server said.
+  login_run() {
+    LOGIN_RC=0
+    LOGIN_OUT="$(LOGIN_URL="$LOGIN_URL" TOKFILE="$TOKFILE" "$NODEBIN" "$ROOT/mac-company-login.js" 2>/dev/null)" || LOGIN_RC=$?
+    LOGIN_HINT="$(printf '%s\n' "$LOGIN_OUT" | sed -n 's/^HINT=//p' | tail -1 | tr -d '"\\')"
+  }
+  login_why() {
+    case "$LOGIN_RC" in
+      3) LOGIN_WHY="连不上公司服务器。在公司请连公司的 Wi-Fi；不在公司请先打开右上角的 Tailscale，确认已连上，再试一次。" ;;
+      4) LOGIN_WHY="$1" ;;
+      5) LOGIN_WHY="${LOGIN_HINT:-登录失败次数太多，请 15 分钟后再试，或找管理员。}" ;;
+      7) LOGIN_WHY="公司还没开通手机验证码，请用账号和密码登录。" ;;
+      *) LOGIN_WHY="${LOGIN_HINT:-服务器没有正常回应，请稍后再试；一直这样请找管理员。}" ;;
+    esac
+    osascript -e "display dialog \"$LOGIN_WHY\" buttons {\"OK\"} default button \"OK\" with title \"TDHarness\"" >/dev/null 2>&1 || true
+  }
+  # A Mac that signed in within 30 days goes straight in (退出登录 ends that).
+  if [ -f "$HOME/.dsh-company-rc8/remember.token" ]; then
+    export LOGIN_MODE=resume
+    login_run
+    if [ "$LOGIN_RC" = 0 ]; then
+      LOGIN_OK=1
+    elif [ "$LOGIN_RC" = 3 ]; then
+      login_why ""
+    fi
+  fi
+  ONLY_PASSWORD=0
   for _try in 1 2 3; do
+  [ "$LOGIN_OK" = 1 ] && break
+  if [ "$ONLY_PASSWORD" = 1 ]; then
+    METHOD="账号密码"
+  else
+    METHOD="$(osascript -e 'button returned of (display dialog "登录 TDHarness" buttons {"取消", "账号密码", "手机验证码"} default button "手机验证码" with title "TDHarness")' || true)"
+  fi
+  if [ -z "$METHOD" ] || [ "$METHOD" = "取消" ]; then
+    printf '%s\n' "Error: 没有登录，已取消。" > "$DSH_HOME/web-runtime.err"
+    boot_status quit
+    echo "BLOCKED=gw-token-required" >&2
+    exit 2
+  fi
+  if [ "$METHOD" = "手机验证码" ]; then
+    LAST_PHONE="$( { head -1 "$HOME/.dsh-company-rc8/last.phone" 2>/dev/null || true; } | tr -cd '0-9+')"
+    PHONE="$(osascript -e "text returned of (display dialog \"手机号（花名册里登记的手机号）\" default answer \"$LAST_PHONE\" with title \"TDHarness\")" || true)"
+    PHONE="$(printf '%s' "$PHONE" | tr -cd '0-9+')"
+    [ -z "$PHONE" ] && continue
+    export LOGIN_MODE=sms-code LOGIN_PHONE="$PHONE"
+    login_run
+    if [ "$LOGIN_RC" = 7 ]; then
+      login_why ""
+      ONLY_PASSWORD=1
+      continue
+    fi
+    if [ "$LOGIN_RC" != 0 ] && ! printf '%s' "$LOGIN_HINT" | grep -q '已发送'; then
+      login_why "手机号不对，请填 11 位手机号。"
+      continue
+    fi
+    CODE="$(osascript -e "text returned of (display dialog \"验证码已发到 $PHONE，5 分钟内有效。收不到请确认这个号码已登记在公司花名册里。\" default answer \"\" with title \"TDHarness\")" || true)"
+    CODE="$(printf '%s' "$CODE" | tr -cd '0-9')"
+    [ -z "$CODE" ] && continue
+    export LOGIN_MODE=sms LOGIN_CODE="$CODE"
+    login_run
+    unset LOGIN_CODE
+    if [ "$LOGIN_RC" = 0 ]; then
+      LOGIN_OK=1
+      break
+    fi
+    login_why "${LOGIN_HINT:-验证码不对或已过期，请重新获取。}"
+    continue
+  fi
   # company-remember-login-v1: offer the last account that signed in on this Mac, not the seed admin.
   # Under set -euo pipefail a missing file (the first sign-in on this Mac) must not end the script: it did,
   # before the account dialog, and the window waited for the desk forever (2026-11-19).
@@ -162,28 +231,19 @@ if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ "$DEEPSEEK_API_KEY" = "company-gateway" ]
   USER="$(osascript -e "text returned of (display dialog \"账号（公司花名册里的账号，不是邮箱）\" default answer \"$LAST_USER\" with title \"TDHarness\")" || true)"
   PASS="$(osascript -e 'text returned of (display dialog "密码" default answer "" with hidden answer with title "TDHarness")' || true)"
   if [ -z "$USER" ] || [ -z "$PASS" ]; then
-    printf '%s\n' "Error: 没输入账号或密码，已取消。" > "$DSH_HOME/web-runtime.err"
-    boot_status quit
-    echo "BLOCKED=gw-token-required" >&2
-    exit 2
+    continue
   fi
   # company-mac-offlan-resolve-v1: say why it failed (mac-company-login.js exit code), not always "wrong password".
-  LOGIN_RC=0
-  LOGIN_USER="$USER" LOGIN_PASS="$PASS" LOGIN_URL="$LOGIN_URL" TOKFILE="$TOKFILE" \
-    "$NODEBIN" "$ROOT/mac-company-login.js" || LOGIN_RC=$?
+  export LOGIN_MODE=password LOGIN_USER="$USER" LOGIN_PASS="$PASS"
+  login_run
+  unset LOGIN_PASS
   if [ "$LOGIN_RC" = 0 ]; then
     LOGIN_OK=1
     break
   fi
-  case "$LOGIN_RC" in
-    3) LOGIN_WHY="连不上公司服务器。在公司请连公司的 Wi-Fi；不在公司请先打开右上角的 Tailscale，确认已连上，再试一次。" ;;
-    4) LOGIN_WHY="账号或密码不对，再试一次。" ;;
-    5) LOGIN_WHY="登录失败次数太多，请 15 分钟后再试，或找管理员。" ;;
-    *) LOGIN_WHY="服务器没有正常回应，请稍后再试；一直这样请找管理员。" ;;
-  esac
-  osascript -e "display dialog \"$LOGIN_WHY\" buttons {\"OK\"} default button \"OK\" with title \"TDHarness\"" >/dev/null 2>&1 || true
+  login_why "账号或密码不对，再试一次。"
   done
-  unset USER PASS LOGIN_USER LOGIN_PASS
+  unset USER PASS LOGIN_USER LOGIN_PASS LOGIN_MODE LOGIN_PHONE LOGIN_CODE
   if [ "$LOGIN_OK" != 1 ]; then
     printf '%s\n' "Error: 登录失败。${LOGIN_WHY:-花名册账号或密码不对。}" > "$DSH_HOME/web-runtime.err"
     boot_status fail

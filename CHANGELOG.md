@@ -4,6 +4,17 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.24.4
+
+**手机验证码登录，30 天内这台电脑免登录**
+- **手机验证码登录**（`company-login-sms-v1`，服务器和电脑端 Win、Mac，这一版起生效）：用户：「先解决手机验证码登录的问题并且解决登陆态保存的问题」（为手机版做准备：服务要开到公网，登录先加固）。
+  - Windows 登录窗口多了「账号密码登录 / 手机验证码登录」两种；Mac 打开时选「手机验证码」或「账号密码」。验证码 6 位、5 分钟有效、输错 5 次作废；同一号码 1 分钟 1 条、一天 10 条，同一地址一小时 30 条；没登记的号码也显示「已发送」但不发，不暴露谁是公司的人。日志里没有验证码和登录凭证。
+  - 短信走阿里云「短信认证」（号码认证服务 `SendSmsVerifyCode`），用阿里云赠送的签名「恒创联众」和登录模板 `100001`，不用营业执照（用户：「用免资质签名」）。验证码由公司服务器自己生成和校验。以后企业认证办好，`runtime/sms.json` 改成 `"provider": "dysms"` 加公司签名和模板，就能换成公司名签名。
+  - 手机号由管理员在「人员」页登记（发放账号时也能填），只有管理员看得到，公开的花名册里没有。
+  - 密码登录保留给所有人作备用（短信发不出去时还能进）。
+- **记住登录**（`company-login-remember-v1`）：登录时勾「30 天内这台电脑免登录」（Windows 默认勾上，Mac 默认记住），之后打开 TDH 直接进。服务器给这台设备发一个专用凭证，30 天有效、只认这台设备；Windows 上用当前 Windows 账号加密保存。点「退出登录」、管理员停用、改密码、改手机号，都会让已记住的电脑重新登录。
+- 服务器需要 `runtime/sms.json`（签名、模板）和 `runtime/aliyun-sms.key`（只能发短信的子账号 AccessKey），没有就只提示用密码登录。
+
 ## 2026.11.24.3
 
 **Mac 也能发语音、打语音电话了（Mac 和 Win、Mac 和 Mac 互通）**
