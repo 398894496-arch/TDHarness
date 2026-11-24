@@ -398,11 +398,15 @@ const find = (n, type) => (!n || typeof n !== "object" ? null : n.type === type 
 	assert.equal(aside.type, "aside");
 	assert.equal(aside.props.className, "cs-chat-dock cs-look-dock");
 	assert.equal(aside.props["aria-label"], "聊天");
+	// company-dock-grip-v1: the left edge's handle comes first (drag to widen, double-click to put it back).
+	assert.equal(aside.children[0].props.className, "cs-dock-grip");
+	assert.equal(typeof aside.children[0].props.onPointerDown, "function");
+	assert.equal(typeof aside.children[0].props.onDoubleClick, "function");
 	// company-look-today-v1: 今天 / 聊天 on top; the chat page stays mounted under 今天 (hidden), so it keeps ringing.
-	const tabsD = aside.children[0].children[0].children.slice(1);
+	const tabsD = aside.children[1].children[0].children.slice(1);
 	assert.deepEqual(tabsD.map((b) => b.props["data-page"]), ["today", "chat", "art"], "今天, 聊天 and 工件 (company-dock-art-v1: the kernel's right column)");
 	assert.equal(tabsD[0].props["aria-selected"], true, "opens on 今天");
-	const dockBody = aside.children[1];
+	const dockBody = aside.children[2];
 	assert.equal(dockBody.children[0].type.name, "TodayPane");
 	assert.equal(dockBody.children[1], null, "工件's list only on 工件 (company-dock-art-v2)");
 	assert.equal(dockBody.children[2], null, "its 全部工件 bar only over an open artifact");

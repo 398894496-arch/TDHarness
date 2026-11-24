@@ -106,22 +106,30 @@ label.f input::placeholder { color: var(--ink3); }
 body.waiting .seg, body.waiting .form, body.waiting .keep, body.waiting .go, body.waiting .msg, body.waiting .note { display: none !important; }
 body.waiting .wait { display: flex; animation: fade .4s ease both; }
 body.waiting .card { width: 340px; }
-.orb { position: relative; width: 92px; height: 92px; }
-.orb i { position: absolute; inset: 0; border-radius: 42% 58% 61% 39% / 45% 41% 59% 55%; filter: blur(.4px);
-	background: conic-gradient(from 0deg, var(--sky), var(--accent), var(--peach), var(--sky)); opacity: .85;
-	animation: blob 3.2s linear infinite; }
-.orb i:nth-child(2) { inset: 8px; opacity: .55; animation-duration: 4.4s; animation-direction: reverse; border-radius: 55% 45% 38% 62% / 52% 60% 40% 48%; }
-.orb i:nth-child(3) { inset: 22px; border-radius: 50%; background: var(--glass); opacity: 1; animation: breathe 2.2s ease-in-out infinite;
-	backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5); }
-@keyframes blob { to { transform: rotate(360deg); } }
-@keyframes breathe { 50% { transform: scale(.86); } }
+body.waiting .brand { display: none; }
+body.waiting .wait { padding-top: 18px; }
+/* the lava lamp (the desk's own 正在思考): three drops melting into one another, larger here. All of it is one SVG
+   (the drops, the goo filter, SMIL motion): WebKit, the Mac window, does not apply an SVG filter to HTML boxes when it
+   draws them live, and the drops were three separate dots (the user, 2026-11-24). */
+.lava { display: block; width: 120px; height: 64px; overflow: visible; }
+.lava .d1 { fill: #4f7cdc; } .lava .d2 { fill: #8fbcef; } .lava .d3 { fill: #f0b98a; }
+@media (prefers-color-scheme: dark) { .lava .d1 { fill: #8fb3ff; } .lava .d2 { fill: #5b8fd6; } .lava .d3 { fill: #d49a6a; } }
 .wait-t { margin: 26px 0 0; min-height: 22px; font-size: 15px; font-weight: 500; color: var(--ink); text-align: center; transition: opacity .25s, transform .35s var(--spring); }
 .wait-t.swap { opacity: 0; transform: translateY(6px); }
 .wait-s { margin: 8px 0 0; font-size: 12.5px; color: var(--ink3); text-align: center; }
 .bar { position: relative; width: 160px; height: 4px; margin-top: 18px; border-radius: 2px; background: var(--track); overflow: hidden; }
 .bar i { position: absolute; top: 0; bottom: 0; width: 40%; border-radius: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: slide 1.4s ease-in-out infinite; }
 @keyframes slide { from { left: -40%; } to { left: 100%; } }
-@media (prefers-reduced-motion: reduce) { .orb i, .bar i { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .bar i { animation: none; } }
+/* something went wrong while starting: said here, with the two ways on (the Mac shell answers the buttons) */
+body.failed .lava { filter: grayscale(.7); opacity: .55; }
+body.failed .bar { display: none; }
+.acts { display: none; gap: 10px; margin-top: 18px; }
+body.failed .acts { display: flex; }
+.acts button { height: 38px; padding: 0 20px; border-radius: 19px; cursor: pointer; font: 500 14px/1 var(--font); transition: transform .35s var(--spring); }
+.acts button:hover { transform: scale(1.04); }
+.acts .primary { border: 0; background: var(--btn); color: var(--on-btn); }
+.acts .plain { border: 1px solid var(--field-line); background: var(--field); color: var(--ink); }
 </style>
 </head>
 <body>
@@ -153,10 +161,16 @@ body.waiting .card { width: 340px; }
 	<div class="msg" id="msg" role="status" aria-live="polite"></div>
 	<div class="note" id="note" hidden></div>
 	<div class="wait" id="wait" aria-live="polite">
-		<div class="orb" aria-hidden="true"><i></i><i></i><i></i></div>
+		<svg class="lava" id="lava" viewBox="0 0 120 64" aria-hidden="true"><defs><filter id="goo" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/><feColorMatrix in="b" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9"/></filter></defs>
+			<g filter="url(#goo)">
+				<circle class="d1" cx="21" cy="26" r="17"><animate attributeName="cx" values="21;93;21" dur="4.6s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/><animate attributeName="cy" values="26;38;26" dur="4.6s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/></circle>
+				<circle class="d2" cx="101" cy="40" r="13"><animate attributeName="cx" values="101;23;101" dur="6.2s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/><animate attributeName="cy" values="40;24;40" dur="6.2s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/></circle>
+				<circle class="d3" cx="55" cy="18" r="13.2"><animate attributeName="cx" values="55;95;55" dur="3.4s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/><animate attributeName="cy" values="18;44;18" dur="3.4s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/><animate attributeName="r" values="13.2;8.8;13.2" dur="3.4s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/></circle>
+			</g></svg>
 		<p class="wait-t" id="wait-t">正在打开…</p>
 		<p class="wait-s" id="wait-s">第一次打开会慢一点</p>
 		<div class="bar" aria-hidden="true"><i></i></div>
+		<div class="acts"><button type="button" class="plain" id="quit">退出</button><button type="button" class="primary" id="again">重新打开</button></div>
 	</div>
 </main>
 <script>
@@ -197,7 +211,16 @@ body.waiting .card { width: 340px; }
 		waitTimer = setTimeout(function () { waitT.textContent = text; waitT.classList.remove("swap"); }, 180);
 	}
 	function waitDone() { document.body.classList.remove("waiting"); $("sub").textContent = "登录你的工作台"; }
-	window.tdhWait = function (text, sub) { waitFor(String(text || ""), sub == null ? undefined : String(sub)); };
+	window.tdhWait = function (text, sub) { document.body.classList.remove("failed"); try { if (!matchMedia("(prefers-reduced-motion: reduce)").matches) document.getElementById("lava").unpauseAnimations(); } catch (e) {} waitFor(String(text || ""), sub == null ? undefined : String(sub)); };
+	// The Mac shell: a start that failed is told on this card, not in a system dialog.
+	var shell = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.tdh;
+	window.tdhFail = function (text) {
+		document.body.classList.add("failed");
+		try { document.getElementById("lava").pauseAnimations(); } catch (e) {}
+		waitFor(String(text || "没有打开成功"), shell ? "可以重新打开再试一次" : "");
+	};
+	$("quit").addEventListener("click", function () { if (shell) shell.postMessage("quit"); });
+	$("again").addEventListener("click", function () { if (shell) shell.postMessage("relaunch"); });
 	function setMode(m, quiet) {
 		if (smsOff && m === "sms") m = "pwd";
 		mode = m;
@@ -222,6 +245,7 @@ body.waiting .card { width: 340px; }
 			if (busy && document.body.classList.contains("waiting")) { if (s.msg && !s.bad) waitFor(s.msg); }
 			else say(s.msg, s.bad ? "bad" : "");
 		}
+		if (typeof s.wait === "string") { if (s.wait) waitFor(s.wait, typeof s.waitSub === "string" ? s.waitSub : undefined); else if (!busy) waitDone(); }
 		if (s.smsOff) { smsOff = true; seg.style.display = "none"; setMode("pwd", true); }
 		if (s.lastLogin && !$("user").value) $("user").value = s.lastLogin;
 		if (s.lastPhone && !$("phone").value) $("phone").value = s.lastPhone;

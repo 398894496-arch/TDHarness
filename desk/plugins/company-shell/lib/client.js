@@ -83,6 +83,9 @@ window.__ModuleLoader__.load({
 		// page goes to one column at a time under 640px).
 		const CHAT_DOCK_MEDIA = "(min-width: 1100px)";
 		const CHAT_DOCK_WIDTH = "clamp(300px, 26vw, 400px)";
+		const DOCK_W_KEY = "cs-dock-w";
+		// The kernel keeps its two columns (about 560px with the left one); the chat column takes the rest at most.
+		function dockClamp(w) { return Math.round(Math.max(300, Math.min(Number(w) || 300, window.innerWidth - 560, 1400))); }
 		// Layout hard-codes the collapsed track at 56. We paint a 48px rail and
 		// override the frame's first grid track when the sidebar is collapsed
 		// (see [data-sidebar-collapsed] below). Keep the two numbers in lockstep.
@@ -414,7 +417,11 @@ window.__ModuleLoader__.load({
 			"body[data-ds-dark-theme] { --look-wash: radial-gradient(1100px 760px at -8% -12%, rgba(31,58,94,.75), transparent 62%), radial-gradient(900px 700px at 108% 112%, rgba(74,54,38,.7), transparent 60%),",
 			"  radial-gradient(760px 560px at 58% 38%, rgba(34,51,73,.5), transparent 70%), linear-gradient(180deg, #17191d 0%, #161618 100%); }",
 			"[class*='_frame'] { background: transparent !important; overflow-x: clip !important; }",
-			"[class*='_centerCol'] [class$='_root'], [class*='_centerCol'] [class*='_root '] { background: transparent !important; }",
+			"[class*='_centerCol'] [class$='_root']:not([data-testid='todo-panel']), [class*='_centerCol'] [class*='_root ']:not([data-testid='todo-panel']) { background: transparent !important; }",
+			// The task bar over the composer (the kernel's todo panel): its own glass, a frosted tint the text behind blurs under.
+			"[class*='_centerCol'] [data-testid='todo-panel'] { background: rgba(255,255,255,.55) !important; -webkit-backdrop-filter: blur(22px) saturate(1.7) !important;",
+			"  backdrop-filter: blur(22px) saturate(1.7) !important; border: 1px solid var(--look-glass-line) !important; }",
+			"body[data-ds-dark-theme] [class*='_centerCol'] [data-testid='todo-panel'] { background: rgba(30,32,38,.55) !important; }",
 			// the left column: a floating glass card
 			"[class*='_sidebarCol'] { background: transparent !important; border: 0 !important; padding: 10px 0 10px 10px; box-sizing: border-box; }",
 			".cs-side { background: linear-gradient(180deg, rgba(255,255,255,.52), rgba(255,255,255,.34)) !important; border: 1px solid rgba(255,255,255,.7); border-radius: 22px;",
@@ -524,7 +531,10 @@ window.__ModuleLoader__.load({
 			"[class*='_centerCol'] { padding-top: 56px !important; box-sizing: border-box; }",
 			// company-flow-motion-v1: the three regions a switch can change, and how each one goes (blur out, focus in, a soft
 			// spring); a region that did not change crossfades with itself and so stands still. The page itself does not fade.
-			"[class*='_centerCol'] { view-transition-name: cs-mid; }",
+			// company-vt-only-while-switching-v1 (the user, 2026-11-25: 「对话框上面这个任务栏的毛玻璃没起效」): WebKit (the Mac
+			// window) does not blur through a backdrop-filter inside an element that carries a view-transition-name, so the
+			// names are on only while a switch runs (html.cs-vt-on, set by flowSwap) and the glass works the rest of the time.
+			"html.cs-vt-on [class*='_centerCol'] { view-transition-name: cs-mid; }",
 			// company-dock-art-v1: the kernel's right column inside the chat column's 工件 page (under its 今天 / 聊天 / 工件),
 			// hidden on the other two; its resize handle goes with it. Only while the chat column is there (wide windows).
 			"html[data-company-chat-dock] [data-rightbar-col] { position: fixed !important; top: 108px; right: 11px; bottom: 11px; width: calc(var(--company-chat-dock-width) - 2px) !important;",
@@ -564,20 +574,34 @@ window.__ModuleLoader__.load({
 			".cs-art-bar-back:hover { transform: scale(1.08) translateX(-1px); }",
 			".cs-art-bar-title { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; color: var(--look-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
 			".cs-art-sheet { position: relative; flex: 1; min-height: 0; border-radius: 18px; overflow: hidden; background: #fff; border: 1px solid var(--look-glass-line); box-shadow: var(--look-shadow); }",
-			"body[data-ds-dark-theme] .cs-art-sheet { background: #1c1c1e; }",
-			".cs-art-sheet iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; }",
+			// company-art-dark-v1 (the user, 2026-11-24: 「切换夜晚模式以后背景色一样变成深色渐变」): at night the sheet is no card;
+			// the artifact itself is turned to dark inside its frame (ART_THEME_SHIM), on the column's own gradient.
+			"body[data-ds-dark-theme] .cs-art-sheet { background: rgba(255,255,255,.035); border-color: rgba(255,255,255,.08); box-shadow: none; }",
+			".cs-art-sheet iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }",
+			// company-art-full-v1 (the user, 2026-11-24: 「工件页面能不能拖拽拉开…或者刷新旁边加一个全屏按钮」): the reader over the
+			// whole window, on the column's gradient; Esc or the same button brings it back.
+			".cs-art-bar .cs-art-refresh { margin-left: 0; }",
+			".cs-art-full { position: fixed; inset: 12px; z-index: 1700; border-radius: 26px; overflow: hidden; border: 1px solid var(--look-glass-line);",
+			"  background: linear-gradient(180deg, var(--look-sky) 0%, var(--look-mist) 40%, var(--look-peach) 100%); box-shadow: 0 30px 80px rgba(20,30,60,.28);",
+			"  animation: cs-art-full-in .55s cubic-bezier(.22,1,.36,1) both; }",
+			".cs-art-full .cs-art-view { padding: 10px 16px 16px; animation: none; }",
+			"@keyframes cs-art-full-in { from { opacity: 0; transform: scale(.96) translateY(10px); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }",
+			"@media (prefers-reduced-motion: reduce) { .cs-art-full { animation: none; } }",
+			// company-dock-grip-v1: the column's left edge pulls it wider (or narrower); double-click puts it back.
+			".cs-dock-grip { position: absolute; top: 0; bottom: 0; left: 0; width: 9px; z-index: 8; cursor: col-resize; touch-action: none; }",
+			".cs-dock-grip::after { content: ''; position: absolute; top: 50%; left: 3px; width: 3px; height: 44px; margin-top: -22px; border-radius: 2px;",
+			"  background: var(--look-ink3, rgba(0,0,0,.3)); opacity: 0; transition: opacity .25s, height .35s " + LOOK_SPRING + ", margin-top .35s " + LOOK_SPRING + "; }",
+			".cs-dock-grip:hover::after, html.cs-dock-dragging .cs-dock-grip::after { opacity: .55; height: 72px; margin-top: -36px; }",
+			"html.cs-dock-dragging, html.cs-dock-dragging * { cursor: col-resize !important; user-select: none !important; }",
+			"html.cs-dock-dragging iframe { pointer-events: none !important; }",
+			"html.cs-dock-dragging .cs-look-dock, html.cs-dock-dragging #root, html.cs-dock-dragging [class*='_frame'] { transition: none !important; view-transition-name: none !important; }",
 			".cs-art-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13.5px; color: var(--look-ink2); }",
 			".cs-art-lava { position: relative; display: inline-block; width: 34px; height: 20px; }",
-			".cs-art-loading .cs-lava { position: absolute; inset: 0; filter: url(#cs-goo); }",
-			".cs-art-loading .cs-lava i { position: absolute; border-radius: 50%; }",
-			".cs-art-loading .cs-lava i:nth-child(1) { width: 11px; height: 11px; top: 4px; background: #4f7cdc; animation: cs-lava1 2.3s ease-in-out infinite alternate; }",
-			".cs-art-loading .cs-lava i:nth-child(2) { width: 8px; height: 8px; top: 6px; background: #8fbcef; animation: cs-lava2 3.1s ease-in-out infinite alternate; }",
-			".cs-art-loading .cs-lava i:nth-child(3) { width: 7px; height: 7px; top: 6.5px; background: #f0b98a; animation: cs-lava3 1.7s ease-in-out infinite alternate; }",
 			".cs-art-back { position: absolute; z-index: 7; top: 0; left: 12px; right: 12px; height: 34px; display: flex; align-items: center; gap: 4px; padding: 0 12px; border-radius: 17px;",
 			"  border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink); font: 500 13.5px/1 " + FONT + "; cursor: pointer; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }",
 			".cs-art-back:hover { background: var(--look-card); }",
-			".cs-side { view-transition-name: cs-side; }",
-			".cs-look-dock { view-transition-name: cs-dock; }",
+			"html.cs-vt-on .cs-side { view-transition-name: cs-side; }",
+			"html.cs-vt-on .cs-look-dock { view-transition-name: cs-dock; }",
 			"::view-transition-old(root), ::view-transition-new(root) { animation: none; }",
 			"::view-transition-group(cs-mid), ::view-transition-group(cs-side), ::view-transition-group(cs-dock) { animation-duration: .6s; animation-timing-function: cubic-bezier(.22,1,.36,1); }",
 			"::view-transition-old(cs-mid), ::view-transition-old(cs-side), ::view-transition-old(cs-dock) { animation: cs-flow-out .32s cubic-bezier(.4,0,1,1) both; }",
@@ -664,20 +688,13 @@ window.__ModuleLoader__.load({
 			// three drops (sky, blue, apricot) drifting at their own pace, melting into one another and parting (an SVG goo
 			// filter, #cs-goo, put in the page by thinkWords()); the words in the page's own grey, the clock kept.
 			"[data-chat-running] [class*='_runningIcon'] { contain: none !important; overflow: visible !important; width: 34px !important; height: 20px !important; margin-right: 2px; }",
-			"[data-chat-running] .cs-lava { position: absolute; inset: 0; filter: url(#cs-goo); }",
-			"[data-chat-running] .cs-lava i { position: absolute; border-radius: 50%; }",
-			"[data-chat-running] .cs-lava i:nth-child(1) { width: 11px; height: 11px; top: 4px; background: #4f7cdc; animation: cs-lava1 2.3s ease-in-out infinite alternate; }",
-			"[data-chat-running] .cs-lava i:nth-child(2) { width: 8px; height: 8px; top: 6px; background: #8fbcef; animation: cs-lava2 3.1s ease-in-out infinite alternate; }",
-			"[data-chat-running] .cs-lava i:nth-child(3) { width: 7px; height: 7px; top: 6.5px; background: #f0b98a; animation: cs-lava3 1.7s ease-in-out infinite alternate; }",
-			"body[data-ds-dark-theme] [data-chat-running] .cs-lava i:nth-child(1) { background: #8fb3ff; }",
-			"body[data-ds-dark-theme] [data-chat-running] .cs-lava i:nth-child(2) { background: #5b8fd6; }",
-			"body[data-ds-dark-theme] [data-chat-running] .cs-lava i:nth-child(3) { background: #d49a6a; }",
-			"@keyframes cs-lava1 { from { left: 1px; transform: translateY(-2px); } to { left: 21px; transform: translateY(2px); } }",
-			"@keyframes cs-lava2 { from { left: 25px; transform: translateY(3px); } to { left: 3px; transform: translateY(-3px); } }",
-			"@keyframes cs-lava3 { from { left: 12px; transform: translateY(-5px) scale(1.2); } to { left: 24px; transform: translateY(4px) scale(.8); } }",
+			// One SVG per lamp (lavaNode): the drops, their goo filter and their SMIL motion together. WebKit (the Mac window)
+			// does not apply an SVG filter to HTML boxes when it draws them live: the drops were three separate dots there.
+			".cs-lava { position: absolute; inset: 0; display: block; width: 34px; height: 20px; overflow: visible; }",
+			".cs-lava .d1 { fill: #4f7cdc; } .cs-lava .d2 { fill: #8fbcef; } .cs-lava .d3 { fill: #f0b98a; }",
+			"body[data-ds-dark-theme] .cs-lava .d1 { fill: #8fb3ff; } body[data-ds-dark-theme] .cs-lava .d2 { fill: #5b8fd6; } body[data-ds-dark-theme] .cs-lava .d3 { fill: #d49a6a; }",
 			"[data-chat-running] [class*='_runningText'], [data-chat-running] [class*='_runningText'] * { background: none !important; color: var(--look-ink2) !important;",
 			"  -webkit-text-fill-color: currentColor !important; animation: none !important; font-weight: 400 !important; letter-spacing: .2px; }",
-			"@media (prefers-reduced-motion: reduce) { [data-chat-running] .cs-lava i { animation: none !important; } }",
 			"[class*='_centerCol'] [class*='_menuAnchor']:has(> button[class$='_seat']), [class*='_centerCol'] button[class$='_seat'] { display: none !important; }",
 			// 白天 / 夜间 where the right-sidebar button was
 			".cs-theme-btn { position: fixed; top: 12px; z-index: 1500; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;",
@@ -3852,11 +3869,12 @@ window.__ModuleLoader__.load({
 			// crossfade, no blur.
 			const root = document.documentElement;
 			if (mode === "morph") root.classList.add("cs-vt-morph");
+			root.classList.add("cs-vt-on");
 			try {
 				const vt = document.startViewTransition(run);
-				const done = function () { flowBusy = false; root.classList.remove("cs-vt-morph"); };
+				const done = function () { flowBusy = false; root.classList.remove("cs-vt-morph"); root.classList.remove("cs-vt-on"); };
 				if (vt && vt.finished && typeof vt.finished.then === "function") vt.finished.then(done, done); else done();
-			} catch (err) { flowBusy = false; fn(); }
+			} catch (err) { flowBusy = false; root.classList.remove("cs-vt-on"); fn(); }
 		}
 		function TodayNav(props) {
 			const wide = props.wide;
@@ -4079,6 +4097,43 @@ window.__ModuleLoader__.load({
 		// company-look-today-v1 (the user, 2026-11-24: 「之前放展开折叠的位置，换成切换白天和晚上的按钮」): one round glass button at the
 		// middle column's top right; it flips the kernel's own theme preference (ui-theme, theme.setTheme), so 设置 → 外观
 		// shows the same choice.
+		// The lava lamp (正在思考, an artifact opening): one SVG, 34 × 20, three drops on their own paths through a goo
+		// filter of its own (an id per lamp). SMIL moves them; nothing in it is an HTML box (see .cs-lava).
+		let lavaSeq = 0;
+		function lavaNode() {
+			const ns = "http://www.w3.org/2000/svg";
+			const id = "cs-goo-" + (++lavaSeq);
+			const svg = document.createElementNS(ns, "svg");
+			svg.setAttribute("class", "cs-lava");
+			svg.setAttribute("viewBox", "0 0 34 20");
+			svg.setAttribute("aria-hidden", "true");
+			const el = function (parent, name, attrs) {
+				const n = document.createElementNS(ns, name);
+				Object.keys(attrs).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+				parent.appendChild(n);
+				return n;
+			};
+			const f = el(el(svg, "defs", {}), "filter", { id: id, x: "-40%", y: "-80%", width: "180%", height: "260%" });
+			el(f, "feGaussianBlur", { "in": "SourceGraphic", stdDeviation: "2.6", result: "b" });
+			el(f, "feColorMatrix", { "in": "b", values: "1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -8" });
+			const g = el(svg, "g", { filter: "url(#" + id + ")" });
+			const still = (function () { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (err) { return false; } })();
+			[
+				{ c: "d1", cx: "6.5;26.5;6.5", cy: "7.5;11.5;7.5", r: "5.5", dur: "4.6s" },
+				{ c: "d2", cx: "29;7;29", cy: "13;7;13", r: "4", dur: "6.2s" },
+				{ c: "d3", cx: "15.5;27.5;15.5", cy: "5;14;5", r: "4.2;2.8;4.2", dur: "3.4s" }
+			].forEach(function (d) {
+				const first = function (v) { return v.split(";")[0]; };
+				const c = el(g, "circle", { "class": d.c, cx: first(d.cx), cy: first(d.cy), r: first(d.r) });
+				if (still) return;
+				["cx", "cy", "r"].forEach(function (k) {
+					if (d[k].indexOf(";") < 0) return;
+					el(c, "animate", { attributeName: k, values: d[k], dur: d.dur, calcMode: "spline", keyTimes: "0;.5;1",
+						keySplines: ".42 0 .58 1;.42 0 .58 1", repeatCount: "indefinite" });
+				});
+			});
+			return svg;
+		}
 		function bodyDark() { try { return !!(document.body && document.body.hasAttribute("data-ds-dark-theme")); } catch (err) { return false; } }
 		function subscribeBodyDark(fn) {
 			if (typeof MutationObserver === "undefined" || !document.body) return function () {};
@@ -8070,15 +8125,66 @@ window.__ModuleLoader__.load({
 				artStore.fail = "";
 				artStore.at = Date.now();
 				artCacheWrite(list);
+				artPrefetch(list);
 			}, function (err) {
 				artStore.fail = String((err && err.message) || err);
 			}).then(function () { artStore.busy = false; artEmit(); });
 		}
 		// The user (2026-11-24: 「点开依然是在我们的UI里的，能不能完美融合而不是单独又打开了侧边栏」): an artifact opens in this
 		// page — dsh-artifact's readArtifact, the HTML in a sandboxed frame (its scripts run, it cannot reach the desk).
+		// company-art-cache-v1 (the user, 2026-11-24: 「工件列表现在出来很快，但是打开还是缓存很久」): every artifact read is
+		// kept in this browser (IndexedDB, by path, with the list's modified time), and after each list refresh the
+		// newest ones are read ahead, one at a time, so a card opens on a body already here. A kept body is shown at
+		// once even when the file has changed since; the new one replaces it when it arrives.
 		const artBodies = new Map();
-		function artRead(path) {
-			if (artBodies.has(path)) return Promise.resolve(artBodies.get(path));
+		const ART_DB = "cs-art-bodies";
+		const ART_KEEP = 80;
+		const ART_AHEAD = 8;
+		const ART_BIG = 6 * 1024 * 1024;
+		let artDbP = null;
+		function artDb() {
+			if (artDbP) return artDbP;
+			artDbP = new Promise(function (res) {
+				try {
+					const r = indexedDB.open(ART_DB, 1);
+					r.onupgradeneeded = function () { try { r.result.createObjectStore("b", { keyPath: "path" }); } catch (err) {} };
+					r.onsuccess = function () { res(r.result); };
+					r.onerror = function () { res(null); };
+					r.onblocked = function () { res(null); };
+				} catch (err) { res(null); }
+			});
+			return artDbP;
+		}
+		function artDbGet(path) {
+			return artDb().then(function (db) {
+				if (!db) return null;
+				return new Promise(function (res) {
+					try {
+						const q = db.transaction("b").objectStore("b").get(path);
+						q.onsuccess = function () { res(q.result || null); };
+						q.onerror = function () { res(null); };
+					} catch (err) { res(null); }
+				});
+			});
+		}
+		function artDbPut(rec) {
+			if (!rec || rec.content.length > ART_BIG) return;
+			artDb().then(function (db) {
+				if (!db) return;
+				try { db.transaction("b", "readwrite").objectStore("b").put(rec); } catch (err) {}
+			});
+		}
+		function artDbPrune(keep) {
+			artDb().then(function (db) {
+				if (!db) return;
+				try {
+					const store = db.transaction("b", "readwrite").objectStore("b");
+					const q = store.getAllKeys();
+					q.onsuccess = function () { (q.result || []).forEach(function (k) { if (!keep.has(k)) { try { store.delete(k); } catch (err) {} } }); };
+				} catch (err) {}
+			});
+		}
+		function artRemote(path, modified) {
 			let remote = null;
 			try { remote = artifactRemoteGet ? artifactRemoteGet() : null; } catch (err) { remote = null; }
 			if (!remote || typeof remote.readArtifact !== "function") return Promise.reject(new Error("no-artifacts"));
@@ -8086,38 +8192,124 @@ window.__ModuleLoader__.load({
 				let r = reply;
 				for (let k = 0; k < 3 && r && r.ok === true && r.value && typeof r.value === "object" && "ok" in r.value; k++) r = r.value;
 				if (!r || r.ok !== true || !r.value || typeof r.value.content !== "string") throw new Error((r && r.error && r.error.code) || "read-failed");
-				const body = { content: r.value.content, title: String(r.value.title || "") };
-				artBodies.set(path, body);
-				if (artBodies.size > 30) artBodies.delete(artBodies.keys().next().value);
+				const body = { path: path, modified: Number(modified) || 0, content: r.value.content, title: String(r.value.title || ""), at: Date.now() };
+				artKeep(body);
+				artDbPut(body);
 				return body;
 			});
+		}
+		function artKeep(body) {
+			artBodies.delete(body.path);
+			artBodies.set(body.path, body);
+			if (artBodies.size > 30) artBodies.delete(artBodies.keys().next().value);
+		}
+		// What this browser already has for a path (any age): memory, then IndexedDB.
+		function artPeek(path) {
+			if (artBodies.has(path)) return Promise.resolve(artBodies.get(path));
+			return artDbGet(path).then(function (rec) {
+				if (rec && typeof rec.content === "string") { artKeep(rec); return rec; }
+				return null;
+			});
+		}
+		function artFresh(body, modified) { return !!body && (!Number(modified) || body.modified === Number(modified)); }
+		let artAheadRun = 0;
+		function artPrefetch(list) {
+			const run = ++artAheadRun;
+			const items = (list || []).slice(0, ART_AHEAD);
+			artDbPrune(new Set((list || []).slice(0, ART_KEEP).map(function (a) { return a.path; })));
+			let i = 0;
+			(function next() {
+				if (run !== artAheadRun || i >= items.length) return;
+				const a = items[i++];
+				artPeek(a.path).then(function (b) {
+					if (artFresh(b, a.modified)) return null;
+					return artRemote(a.path, a.modified);
+				}).catch(function () { return null; }).then(function () { setTimeout(next, 150); });
+			})();
+		}
+		// company-art-dark-v1: put at the top of every artifact's page. It turns the page to dark at night (its own
+		// background gives way to the column's gradient, colours inverted, pictures kept as they are) and follows the
+		// desk when the theme changes (a message from this page; the frame has no other way in).
+		function artThemeShim(dark) {
+			return "<style id=\"tdh-art-theme\">html.tdh-dark{background:transparent!important;filter:invert(.92) hue-rotate(180deg)}" +
+				"html.tdh-dark body{background:transparent!important}" +
+				"html.tdh-dark img,html.tdh-dark video,html.tdh-dark picture,html.tdh-dark canvas,html.tdh-dark iframe,html.tdh-dark [style*=\"background-image\"]{filter:invert(1) hue-rotate(180deg)}" +
+				"html.tdh-dark ::-webkit-scrollbar-thumb{background:rgba(0,0,0,.25)}</style>" +
+				"<script>(function(){var h=document.documentElement;function s(d){h.classList.toggle(\"tdh-dark\",!!d)}s(" + (dark ? "1" : "0") + ");" +
+				"addEventListener(\"message\",function(e){if(e.source===parent&&e.data&&e.data.type===\"tdh-theme\")s(e.data.theme===\"dark\")})})();<\/script>";
+		}
+		function artWithTheme(content, dark) {
+			const shim = artThemeShim(dark);
+			const text = String(content || "");
+			const at = function (re) { const m = re.exec(text); return m ? m.index + m[0].length : -1; };
+			let k = at(/<head\b[^>]*>/i);
+			if (k < 0) k = at(/<html\b[^>]*>/i);
+			if (k < 0) k = at(/^\s*<!doctype[^>]*>/i);
+			return k < 0 ? shim + text : text.slice(0, k) + shim + text.slice(k);
 		}
 		function ArtView(props) {
 			const a = props.item;
 			const stHook = React.useState(artBodies.get(a.path) || null);
 			const failHook = React.useState("");
+			const fullHook = React.useState(false);
+			const full = fullHook[0];
+			const dark = React.useSyncExternalStore(subscribeBodyDark, bodyDark);
+			// The theme the frame was written with; later flips go in as a message, so the page is not reloaded.
+			const darkAtLoad = React.useRef(dark);
+			const frame = React.useRef(null);
 			const load = React.useCallback(function (fresh) {
-				if (fresh) artBodies.delete(a.path);
+				let live = true;
 				failHook[1]("");
-				if (!artBodies.has(a.path)) stHook[1](null);
-				artRead(a.path).then(function (b) { stHook[1](b); }, function (err) { failHook[1](String((err && err.message) || err)); });
-			}, [a.path]);
-			React.useEffect(function () { load(false); }, [load]);
+				if (fresh) {
+					artRemote(a.path, a.modified).then(function (b) { if (live) stHook[1](b); }, function (err) { if (live) failHook[1](String((err && err.message) || err)); });
+					return function () { live = false; };
+				}
+				artPeek(a.path).then(function (kept) {
+					if (!live) return;
+					if (kept) stHook[1](kept);
+					if (artFresh(kept, a.modified)) return;
+					artRemote(a.path, a.modified).then(function (b) { if (live) stHook[1](b); }, function (err) { if (live && !kept) failHook[1](String((err && err.message) || err)); });
+				});
+				return function () { live = false; };
+			}, [a.path, a.modified]);
+			React.useEffect(function () { return load(false); }, [load]);
+			React.useEffect(function () {
+				try { if (frame.current && frame.current.contentWindow) frame.current.contentWindow.postMessage({ type: "tdh-theme", theme: dark ? "dark" : "light" }, "*"); } catch (err) {}
+			}, [dark]);
+			React.useEffect(function () {
+				if (!full) return undefined;
+				const onKey = function (e) { if (e.key === "Escape") flowSwap(function () { fullHook[1](false); }); };
+				window.addEventListener("keydown", onKey);
+				return function () { window.removeEventListener("keydown", onKey); };
+			}, [full]);
 			const body = stHook[0];
-			return React.createElement("div", { className: "cs-art-view" },
+			const srcDoc = React.useMemo(function () { darkAtLoad.current = dark; return body ? artWithTheme(body.content, dark) : ""; }, [body, full]);
+			const icon = function (d) {
+				return React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
+					d.map(function (x, i) { return React.createElement("path", { key: i, d: x }); }));
+			};
+			const view = React.createElement("div", { className: "cs-art-view" },
 				React.createElement("div", { className: "cs-art-bar" },
-					React.createElement("button", { type: "button", className: "cs-art-bar-back", "aria-label": "返回全部工件", onClick: props.onBack },
+					React.createElement("button", { type: "button", className: "cs-art-bar-back", "aria-label": full ? "退出全屏" : "返回全部工件",
+						onClick: full ? function () { flowSwap(function () { fullHook[1](false); }); } : props.onBack },
 						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M15 18l-6-6 6-6" }))),
 					React.createElement("span", { className: "cs-art-bar-title", title: a.title }, (body && body.title) || a.title),
 					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "重新读取", title: "重新读取", onClick: function () { load(true); } },
-						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
-							React.createElement("path", { d: "M20 11a8 8 0 1 0-2.3 5.7" }), React.createElement("path", { d: "M20 4v7h-7" })))),
+						icon(["M20 11a8 8 0 1 0-2.3 5.7", "M20 4v7h-7"])),
+					React.createElement("button", { type: "button", className: "cs-art-refresh cs-art-full-btn", "aria-label": full ? "退出全屏" : "全屏", title: full ? "退出全屏（Esc）" : "全屏",
+						onClick: function () { flowSwap(function () { fullHook[1](!full); }); } },
+						full ? icon(["M9 4v5H4", "M15 4v5h5", "M9 20v-5H4", "M15 20v-5h5"]) : icon(["M4 9V4h5", "M20 9V4h-5", "M4 15v5h5", "M20 15v5h-5"]))),
 				React.createElement("div", { className: "cs-art-sheet" },
-					body ? React.createElement("iframe", { key: a.path, title: a.title, sandbox: "allow-scripts allow-popups allow-forms allow-modals", srcDoc: body.content, referrerPolicy: "no-referrer" }) :
+					body ? React.createElement("iframe", { key: a.path + (full ? ":full" : ""), ref: frame, title: a.title, sandbox: "allow-scripts allow-popups allow-forms allow-modals", srcDoc: srcDoc, referrerPolicy: "no-referrer",
+						onLoad: function () { if (darkAtLoad.current !== bodyDark()) { try { frame.current.contentWindow.postMessage({ type: "tdh-theme", theme: bodyDark() ? "dark" : "light" }, "*"); } catch (err) {} } } }) :
 					failHook[0] ? React.createElement("div", { className: "cs-art-empty" }, React.createElement("b", null, "这个工件没有读出来"), React.createElement("span", null, "公司盘可能还没连上，稍后点右上角重新读取。")) :
 					React.createElement("div", { className: "cs-art-loading", "data-chat-running": "" },
-						React.createElement("span", { className: "cs-art-lava" }, React.createElement("span", { className: "cs-lava", "aria-hidden": "true" }, React.createElement("i"), React.createElement("i"), React.createElement("i"))),
+						React.createElement("span", { className: "cs-art-lava", ref: function (el) { if (el && !el.firstChild) el.appendChild(lavaNode()); } }),
 						React.createElement("span", null, "正在打开…"))));
+			if (!full || !document.body) return view;
+			return React.createElement(React.Fragment, null,
+				React.createElement("div", { className: "cs-art-empty" }, React.createElement("b", null, "正在全屏查看"), React.createElement("span", null, "按 Esc 或右上角按钮退出全屏。")),
+				ReactDOM.createPortal(React.createElement("div", { className: "cs-art-full", role: "dialog", "aria-label": a.title }, view), document.body));
 		}
 		function artWhen(ms) {
 			if (!ms) return "";
@@ -8270,12 +8462,60 @@ window.__ModuleLoader__.load({
 				th.style.left = el.offsetLeft + "px";
 				th.style.width = el.offsetWidth + "px";
 			});
+			// company-dock-grip-v1 (the user, 2026-11-24: 「工件页面能不能拖拽拉开，我希望左侧可以拖拽拉开，否则很多工件看不完整」):
+			// the column's width is the person's, kept in this browser; the kernel's columns give way to it.
+			React.useEffect(function () {
+				const root = document.documentElement;
+				if (!wide || !root || !root.style || typeof window.addEventListener !== "function") return undefined;
+				let saved = 0;
+				try { saved = Number(localStorage.getItem(DOCK_W_KEY)) || 0; } catch (err) {}
+				if (saved) root.style.setProperty("--company-chat-dock-width", dockClamp(saved) + "px");
+				const onResize = function () {
+					const cur = parseFloat(root.style.getPropertyValue("--company-chat-dock-width")) || 0;
+					if (cur) root.style.setProperty("--company-chat-dock-width", dockClamp(cur) + "px");
+				};
+				window.addEventListener("resize", onResize);
+				return function () { window.removeEventListener("resize", onResize); root.style.removeProperty("--company-chat-dock-width"); };
+			}, [wide]);
+			const onGrip = React.useCallback(function (e) {
+				if (e.button !== 0) return;
+				e.preventDefault();
+				const root = document.documentElement;
+				const grip = e.currentTarget;
+				try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+				root.classList.add("cs-dock-dragging");
+				let w = 0;
+				let raf = 0;
+				const move = function (ev) {
+					w = dockClamp(window.innerWidth - 10 - ev.clientX);
+					if (raf) return;
+					raf = requestAnimationFrame(function () { raf = 0; root.style.setProperty("--company-chat-dock-width", w + "px"); });
+				};
+				const up = function () {
+					grip.removeEventListener("pointermove", move);
+					grip.removeEventListener("pointerup", up);
+					grip.removeEventListener("pointercancel", up);
+					root.classList.remove("cs-dock-dragging");
+					if (w) { try { localStorage.setItem(DOCK_W_KEY, String(w)); } catch (err) {} }
+					window.dispatchEvent(new Event("resize"));
+				};
+				grip.addEventListener("pointermove", move);
+				grip.addEventListener("pointerup", up);
+				grip.addEventListener("pointercancel", up);
+			}, []);
+			const onGripReset = React.useCallback(function () {
+				document.documentElement.style.removeProperty("--company-chat-dock-width");
+				try { localStorage.removeItem(DOCK_W_KEY); } catch (err) {}
+				window.dispatchEvent(new Event("resize"));
+			}, []);
 			const unread = React.useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot).count;
 			if (!wide || !document.body) return null;
 			// company-look-today-v1: the column is a page of its own (the gradient), with 今天 and 聊天; the chat stays
 			// mounted under 今天, so it keeps its place and keeps ringing.
 			return ReactDOM.createPortal(
 				React.createElement("aside", { className: "cs-chat-dock cs-look-dock", "data-company-chat-dock": "1", "aria-label": "聊天" },
+					React.createElement("div", { className: "cs-dock-grip", role: "separator", "aria-orientation": "vertical", "aria-label": "拖动调整宽度，双击还原", title: "拖动调整宽度，双击还原",
+						onPointerDown: onGrip, onDoubleClick: onGripReset }),
 					React.createElement("div", { className: "cs-dock-head" },
 						React.createElement("div", { className: "cs-dock-seg", ref: segBox, role: "tablist" },
 							React.createElement("span", { className: "cs-dock-thumb", ref: segThumb, "aria-hidden": "true" }),
@@ -8347,6 +8587,18 @@ window.__ModuleLoader__.load({
 			const [url, setUrl] = React.useState("");
 			const [why, setWhy] = React.useState("");
 			const [round, setRound] = React.useState(0);
+			// company-erp-dark-v1: ERPNext wears the desk's day or night (erp-relay.js THEME_SHIM takes the message).
+			const dark = React.useSyncExternalStore(subscribeBodyDark, bodyDark);
+			const erpFrame = React.useRef(null);
+			const tellErp = function () {
+				try { if (erpFrame.current && erpFrame.current.contentWindow) erpFrame.current.contentWindow.postMessage({ type: "tdh-theme", theme: bodyDark() ? "dark" : "light" }, "*"); } catch (err) {}
+			};
+			React.useEffect(function () {
+				// The frame's load event waits for all of ERPNext; its first lines listen much earlier, so say it a few times.
+				tellErp();
+				const ts = [400, 1200, 2500, 5000].map(function (ms) { return setTimeout(tellErp, ms); });
+				return function () { ts.forEach(clearTimeout); };
+			}, [dark, url]);
 			React.useEffect(function () {
 				let live = true;
 				setUrl("");
@@ -8376,8 +8628,10 @@ window.__ModuleLoader__.load({
 				url ? React.createElement("iframe", {
 					key: url,
 					src: url,
+					ref: erpFrame,
+					onLoad: tellErp,
 					title: "ERPNext",
-					style: { flex: 1, width: "100%", minHeight: 0, border: 0, display: "block", background: "#fff" },
+					style: { flex: 1, width: "100%", minHeight: 0, border: 0, display: "block", background: dark ? "transparent" : "#fff" },
 					allow: "clipboard-read; clipboard-write; fullscreen"
 				}) : React.createElement("div", {
 					style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
@@ -9312,28 +9566,12 @@ window.__ModuleLoader__.load({
 			// company-look-today-v1: the running line says 正在思考, not the kernel's 深度求索中 (its dictionary cannot be
 			// registered twice); the clock after it stays. Rewritten where it is drawn, before the frame is painted.
 			try {
-				const plantGoo = function () {
-					if (document.getElementById("cs-goo")) return;
-					const ns = "http://www.w3.org/2000/svg";
-					const svg = document.createElementNS(ns, "svg");
-					svg.setAttribute("width", "0"); svg.setAttribute("height", "0"); svg.setAttribute("aria-hidden", "true");
-					svg.style.position = "absolute";
-					const f = document.createElementNS(ns, "filter"); f.setAttribute("id", "cs-goo");
-					const blur = document.createElementNS(ns, "feGaussianBlur"); blur.setAttribute("in", "SourceGraphic"); blur.setAttribute("stdDeviation", "2.6"); blur.setAttribute("result", "b");
-					const cm = document.createElementNS(ns, "feColorMatrix"); cm.setAttribute("in", "b"); cm.setAttribute("values", "1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -8");
-					f.appendChild(blur); f.appendChild(cm); svg.appendChild(f); document.body.appendChild(svg);
-				};
 				const thinkWords = function (root) {
 					const rows = root && root.querySelectorAll ? root.querySelectorAll("[data-chat-running]") : [];
 					for (let i = 0; i < rows.length; i++) {
 						const icon = rows[i].querySelector("[class*='_runningIcon']");
 						if (icon && !icon.querySelector(".cs-lava")) {
-							plantGoo();
-							const lava = document.createElement("span");
-							lava.className = "cs-lava";
-							lava.setAttribute("aria-hidden", "true");
-							lava.appendChild(document.createElement("i")); lava.appendChild(document.createElement("i")); lava.appendChild(document.createElement("i"));
-							icon.appendChild(lava);
+							icon.appendChild(lavaNode());
 						}
 						const walk = document.createTreeWalker(rows[i], NodeFilter.SHOW_TEXT);
 						for (let n = walk.nextNode(); n; n = walk.nextNode()) {

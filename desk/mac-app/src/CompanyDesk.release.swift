@@ -158,7 +158,7 @@ func installMenus() {
   NSApp.mainMenu = main
 }
 
-final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate {
+final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
   var window: NSWindow!
   var web: WKWebView?
   var loginWeb: WKWebView?
@@ -166,6 +166,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
   // for a pack without login.html.
   var waitWeb: WKWebView?
   var lastStatus = "正在打开本机 Agent…"
+  // A start that failed: said on the waiting page (its 退出 / 重新打开 come back here as "quit" / "relaunch").
+  var lastFail: String?
   var status: NSTextField!
   var logoutWatch: Timer?
   var portMisses = 0
@@ -305,6 +307,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
     switch boot {
     case "updating": return updatingLabel()
     case "starting": return "正在打开本机 Agent…"
+    case "share": return "正在连接公司盘…"
+    case "lease": return "正在领取座位、同步会话…"
+    case "agent": return "正在启动本机 Agent…"
     case "ready": return "正在打开工作台…"
     case "fail": return "更新失败"
     case "quit": return "已取消"
@@ -330,7 +335,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
           var parts = URLComponents(url: file, resolvingAgainstBaseURL: false) else { return }
     parts.fragment = "wait"
     guard let url = parts.url else { return }
-    let w = WKWebView(frame: window.contentView!.bounds, configuration: WKWebViewConfiguration())
+    let cfg = WKWebViewConfiguration()
+    cfg.userContentController.add(self, name: "tdh")
+    let w = WKWebView(frame: window.contentView!.bounds, configuration: cfg)
     w.autoresizingMask = [.width, .height]
     w.setValue(false, forKey: "drawsBackground")
     w.navigationDelegate = self
@@ -343,11 +350,35 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
   func pushWait() {
     guard let w = waitWeb else { return }
     let words = lastStatus.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-    w.evaluateJavaScript("window.tdhWait && window.tdhWait(\"" + words + "\")", completionHandler: nil)
+    // The steps that read and write the company share wait on its link; say so, away from the office it is slow.
+    let slow = lastStatus.contains("公司盘") || lastStatus.contains("座位")
+    let sub = slow ? "要读写公司盘；不在公司时会慢一些" : "第一次打开会慢一点"
+    w.evaluateJavaScript("window.tdhWait && window.tdhWait(\"" + words + "\", \"" + sub + "\")", completionHandler: nil)
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-    if webView === waitWeb { pushWait() }
+    if webView === waitWeb {
+      if let f = lastFail { pushFail(f) } else { pushWait() }
+    }
+  }
+
+  func pushFail(_ text: String) {
+    guard let w = waitWeb else { return }
+    let words = text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: " ")
+    w.evaluateJavaScript("window.tdhFail && window.tdhFail(\"" + words + "\")", completionHandler: nil)
+  }
+
+  func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+    guard message.name == "tdh", let what = message.body as? String else { return }
+    if what == "quit" { NSApp.terminate(nil) }
+    if what == "relaunch" {
+      let bundle = Bundle.main.bundleURL
+      let task = Process()
+      task.executableURL = URL(fileURLWithPath: "/bin/sh")
+      task.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", bundle.path]
+      try? task.run()
+      NSApp.terminate(nil)
+    }
   }
 
   func showLogin() {
@@ -408,6 +439,16 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
   }
 
   func fail(_ message: String) {
+    // company-login-page-v1 (the user, 2026-11-24: 「弹窗能取消都取消，全部做在开机动态里」): on the waiting page when the
+    // pack has it; the system alert only for a pack without login.html.
+    loginWeb?.removeFromSuperview()
+    loginWeb = nil
+    if waitWeb == nil { showWaitPage() }
+    if waitWeb != nil {
+      lastFail = message
+      pushFail(message)
+      return
+    }
     let alert = NSAlert()
     alert.messageText = "TDHarness"
     alert.informativeText = message

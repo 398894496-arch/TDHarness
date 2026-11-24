@@ -26,6 +26,35 @@ const DROP_RES = new Set(["x-frame-options", "content-security-policy", "content
 const AGENT = new https.Agent({ keepAlive: true, maxSockets: 24, rejectUnauthorized: false });
 const START_RE = /^\/tdh-sso\/start\?t=[A-Za-z0-9_-]{8,80}$/;
 
+// company-erp-dark-v1 (the user, 2026-11-24: 「工件也好 ERP 也好，切换夜晚模式以后背景色一样变成深色」): ERPNext's own
+// pages get a few lines at the top of <head>: they put ERPNext's own dark or light theme on (html[data-theme], as its
+// user menu does, for this frame only, nothing saved in ERPNext) as the desk tells them (a message from the desk's
+// page, kept for the frame's next pages in sessionStorage), and at night the page's own background gives way to the
+// desk's gradient behind the frame.
+export const THEME_SHIM = "<script>(function(){var h=document.documentElement,k=\"tdh-theme\",w=\"\";" +
+	"function put(){if(w&&h.getAttribute(\"data-theme\")!==w){h.setAttribute(\"data-theme\",w);h.setAttribute(\"data-theme-mode\",w)}}" +
+	"function set(t){if(t!==\"dark\"&&t!==\"light\")return;w=t;try{sessionStorage.setItem(k,t)}catch(e){}put()}" +
+	"try{set(sessionStorage.getItem(k))}catch(e){}" +
+	"try{new MutationObserver(put).observe(h,{attributes:true,attributeFilter:[\"data-theme\"]})}catch(e){}" +
+	"addEventListener(\"message\",function(e){if(e.source===parent&&e.data&&e.data.type===\"tdh-theme\")set(e.data.theme)});" +
+	"h.setAttribute(\"data-tdh-embed\",\"\")})();</script>" +
+	"<style>html[data-tdh-embed][data-theme=dark],html[data-tdh-embed][data-theme=dark] body{background:transparent!important}</style>";
+const HTML_MAX = 8 * 1024 * 1024;
+
+// A page load (not an API call, not a file): the only answers the shim goes into.
+export function wantsPage(req, pathname) {
+	if (req.method !== "GET") return false;
+	if (!/text\/html/i.test(String(req.headers.accept || ""))) return false;
+	return !/^\/(api|assets|files|private|socket\.io)\//.test(pathname);
+}
+
+export function withShim(html) {
+	const m = /<head\b[^>]*>/i.exec(html);
+	if (!m) return html;
+	const k = m.index + m[0].length;
+	return html.slice(0, k) + THEME_SHIM + html.slice(k);
+}
+
 function libFor(u) {
 	return u.protocol === "http:" ? http : https;
 }
@@ -105,12 +134,16 @@ export function startErpRelay(opts) {
 	function relay(req, res, u) {
 		const base = site();
 		const up = new URL(upstreamPath(u.pathname) + u.search, base);
+		const page = wantsPage(req, u.pathname);
+		const headers = headersFor(req);
+		// The page comes back plain so the shim can go in (a page is small; files and API answers stay compressed).
+		if (page) headers["accept-encoding"] = "identity";
 		const out = libFor(up).request({
 			hostname: up.hostname,
 			port: up.port || 443,
 			method: req.method,
 			path: up.pathname + up.search,
-			headers: headersFor(req),
+			headers,
 			agent: up.protocol === "https:" ? AGENT : undefined,
 			rejectUnauthorized: false,
 		}, (ures) => {
@@ -121,6 +154,30 @@ export function startErpRelay(opts) {
 			if (ures.headers.location) {
 				const loc = localLocation(ures.headers.location, erp, base);
 				if (loc) h.location = loc;
+			}
+			const enc = String(ures.headers["content-encoding"] || "identity").toLowerCase();
+			const len = Number(ures.headers["content-length"] || 0);
+			if (page && /text\/html/i.test(String(ures.headers["content-type"] || "")) && enc === "identity" && len <= HTML_MAX) {
+				const parts = [];
+				let size = 0;
+				let over = false;
+				ures.on("data", (c) => {
+					if (over) return;
+					size += c.length;
+					if (size > HTML_MAX) { over = true; ures.destroy(); res.destroy(); return; }
+					parts.push(c);
+				});
+				ures.on("end", () => {
+					if (over) return;
+					const body = Buffer.from(withShim(Buffer.concat(parts).toString("utf8")), "utf8");
+					delete h["content-length"];
+					delete h["etag"];
+					h["content-length"] = String(body.length);
+					res.writeHead(ures.statusCode || 502, h);
+					res.end(body);
+				});
+				ures.on("error", () => res.destroy());
+				return;
 			}
 			res.writeHead(ures.statusCode || 502, h);
 			ures.pipe(res);

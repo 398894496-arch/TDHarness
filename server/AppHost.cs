@@ -2026,12 +2026,17 @@ internal sealed class ShellForm : Form
         var ask = reason.Length > 0
             ? "这台电脑缺少新版的部分组件（" + reason.Substring("incomplete:".Length) + "），需要补装一次。\n\n是 = 现在补装\n否 = 稍后再说\n取消 = 退出"
             : "公司已发新版。\n\n点「是」一键更新，不用打开下载页。\n\n是 = 现在更新\n否 = 稍后再说\n取消 = 退出";
-        var dr = DialogResult.No;
-        Invoke(new Action(delegate
+        // company-login-page-v1 (the user, 2026-11-24: 「更新什么的这些弹窗能省则省，更新也做到 UI 里」): with the sign-in page
+        // up, the update just runs and its progress is on the page's waiting card; the question stays for the native window.
+        var dr = DialogResult.Yes;
+        if (_loginWeb == null)
         {
-            dr = MessageBox.Show(this, ask, "TDHarness",
-                MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1);
-        }));
+            Invoke(new Action(delegate
+            {
+                dr = MessageBox.Show(this, ask, "TDHarness",
+                    MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1);
+            }));
+        }
         if (dr == DialogResult.Cancel)
         {
             BeginInvoke(new Action(delegate { Close(); }));
@@ -2052,36 +2057,45 @@ internal sealed class ShellForm : Form
     {
         SetLoginEnabled(false);
         ShowNote(first, false);
+        PushWait(first);
         bool installed;
         try
         {
             installed = AppHost.RestoreProductSettled(delegate(string line)
             {
                 var text = AppHost.ProgressText(line);
-                if (text.Length > 0) ShowNote(text, false);
+                if (text.Length > 0) { ShowNote(text, false); PushWait(text); }
             }, delegate
             {
                 ShowNote("服务器正在发布新版本，一分钟后重新下载…", false);
+                PushWait("服务器正在发布新版本，一分钟后重新下载…");
             });
         }
         catch (Exception ex)
         {
             AppHost.Log("update-restore-fail " + ex.Message);
+            PushWait("");
             ShowNote("更新没完成（" + ex.Message + "），先用现在这版登录。", true);
             SetLoginEnabled(true);
             return;
         }
         if (!installed)
         {
+            PushWait("");
             ShowNote("服务器正在发布新版本，这次先用现在这版登录，下次打开再更新。", false);
             SetLoginEnabled(true);
             return;
         }
         ShowNote("更新完成，正在重新打开…", false);
-        Invoke(new Action(delegate
+        PushWait("更新完成，正在重新打开…");
+        if (_loginWeb == null)
         {
-            MessageBox.Show(this, "更新完成。请重新登录。", "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }));
+            Invoke(new Action(delegate
+            {
+                MessageBox.Show(this, "更新完成。请重新登录。", "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }));
+        }
+        else Thread.Sleep(800);
         AppHost.RelaunchSelf();
     }
 
@@ -2576,6 +2590,14 @@ internal sealed class ShellForm : Form
     {
         if (_loginWeb == null || _loginWeb.CoreWebView2 == null) return;
         try { _loginWeb.CoreWebView2.PostWebMessageAsString(json); }
+        catch { }
+    }
+
+    // The page's waiting card (an update's progress); "" puts the form back. Any thread.
+    private void PushWait(string text)
+    {
+        if (_loginWeb == null) return;
+        try { BeginInvoke(new Action(delegate { PostToLogin("{\"type\":\"state\",\"wait\":" + JsonText(text) + ",\"waitSub\":\"\"}"); })); }
         catch { }
     }
 
