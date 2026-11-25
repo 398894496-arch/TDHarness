@@ -70,6 +70,7 @@ struct MainView: View {
             }
             .environmentObject(desk)
             .sheet(isPresented: $showSettings) { SettingsSheet() }
+            .fullScreenCover(isPresented: $session.needsAvatar) { AvatarSetupView().environmentObject(session) }
             .onChange(of: tab) { _, now in
                 guard now == 3 else { return }
                 tab = 1

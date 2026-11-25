@@ -306,6 +306,12 @@ final class ChatRelay {
     // One login over long polling: open a session, {hi}, {login basic "login:<gateway token>"}; the answer carries
     // the chat token.
     private func chatLogin() async -> (token: String, expires: String)? {
+        guard let lp = await signedIn(login: login, gwToken: gwToken), let p = lp.params, let tok = p["token"] as? String else { return nil }
+        return (tok, p["expires"] as? String ?? "")
+    }
+
+    /// A long-polling session of this person's own on the chat ({hi} and the basic login done); nil when it failed.
+    private func signedIn(login: String, gwToken: String) async -> LPSession? {
         guard !login.isEmpty, !gwToken.isEmpty, let key = await apiKey() else { return nil }
         let lp = "/v0/channels/lp?apikey=" + (key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key)
         guard let open = await get(lp) else { return nil }
@@ -314,25 +320,70 @@ final class ChatRelay {
             if let ctrl = m["ctrl"] as? [String: Any], let p = ctrl["params"] as? [String: Any], let s = p["sid"] as? String { sid = s }
         }
         guard !sid.isEmpty else { return nil }
-        let at = lp + "&sid=" + (sid.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sid)
-        func send(_ msg: [String: Any], _ id: String) async -> [String: Any]? {
-            guard let body = try? JSONSerialization.data(withJSONObject: msg), var got = await post(at, body) else { return nil }
-            let deadline = Date().addingTimeInterval(15)
-            while Date() < deadline {
-                for m in Self.lines(got) {
-                    if let ctrl = m["ctrl"] as? [String: Any], (ctrl["id"] as? String) == id { return ctrl }
-                }
-                guard let more = await get(at) else { return nil }
-                got = more
-            }
-            return nil
-        }
-        guard let hi = await send(["hi": ["id": "1", "ver": "0.25", "ua": "TDH-iOS/1.0"]], "1"),
+        let s = LPSession(at: lp + "&sid=" + (sid.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sid), relay: self)
+        guard let hi = await s.send(["hi": ["id": "1", "ver": "0.25", "ua": "TDH-iOS/1.0"]], "1").ctrl,
               (hi["code"] as? Int ?? 500) < 300 else { return nil }
         let secret = Data((login + ":" + gwToken).utf8).base64EncodedString()
-        guard let r = await send(["login": ["id": "2", "scheme": "basic", "secret": secret]], "2"),
-              (r["code"] as? Int ?? 500) < 300, let p = r["params"] as? [String: Any], let tok = p["token"] as? String else { return nil }
-        return (tok, p["expires"] as? String ?? "")
+        guard let r = await s.send(["login": ["id": "2", "scheme": "basic", "secret": secret]], "2").ctrl,
+              (r["code"] as? Int ?? 500) < 300 else { return nil }
+        s.params = r["params"] as? [String: Any]
+        return s
+    }
+
+    final class LPSession {
+        let at: String
+        unowned let relay: ChatRelay
+        var params: [String: Any]?
+        init(at: String, relay: ChatRelay) { self.at = at; self.relay = relay }
+
+        /// Sends one message and waits (15 s at most) for its answer: the {ctrl} with its id, or a {meta} with its id
+        /// (a {get}); every message seen on the way comes back too.
+        func send(_ msg: [String: Any], _ id: String) async -> (ctrl: [String: Any]?, meta: [String: Any]?, seen: [[String: Any]]) {
+            var seen: [[String: Any]] = []
+            guard let body = try? JSONSerialization.data(withJSONObject: msg), var got = await relay.post(at, body) else { return (nil, nil, seen) }
+            let deadline = Date().addingTimeInterval(15)
+            while Date() < deadline {
+                for m in ChatRelay.lines(got) {
+                    seen.append(m)
+                    if let ctrl = m["ctrl"] as? [String: Any], (ctrl["id"] as? String) == id { return (ctrl, nil, seen) }
+                    if let meta = m["meta"] as? [String: Any], (meta["id"] as? String) == id { return (nil, meta, seen) }
+                }
+                guard let more = await relay.get(at) else { break }
+                got = more
+            }
+            return (nil, nil, seen)
+        }
+    }
+
+    // company-chat-avatar-v1 (the user, 2026-11-25: 「手机登录 我要求一定要上传头像 否则这个聊天窗口好丑啊」): the person's
+    // picture is the photo on their own chat card ("me", public.photo: base64 JPEG, type "jpeg", as the chat page
+    // writes it). The phone checks it at sign-in and asks for one until there is one.
+    enum AvatarState { case has, missing, unknown }
+
+    private func myCard(login: String, gwToken: String) async -> (LPSession, [String: Any])? {
+        guard let s = await signedIn(login: login, gwToken: gwToken) else { return nil }
+        guard let sub = await s.send(["sub": ["id": "3", "topic": "me"]], "3").ctrl, (sub["code"] as? Int ?? 500) < 300 else { return nil }
+        let got = await s.send(["get": ["id": "4", "topic": "me", "what": "desc"]], "4")
+        if let c = got.ctrl, (c["code"] as? Int ?? 500) >= 300 { return nil }
+        let desc = got.meta?["desc"] as? [String: Any]
+        return (s, desc?["public"] as? [String: Any] ?? [:])
+    }
+
+    func avatarState(login: String, gwToken: String) async -> AvatarState {
+        guard let (_, pub) = await myCard(login: login, gwToken: gwToken) else { return .unknown }
+        let photo = pub["photo"] as? [String: Any]
+        let data = (photo?["data"] as? String) ?? ""
+        let ref = (photo?["ref"] as? String) ?? ""
+        return data.count > 64 || (ref.count > 4 && ref != "\u{2421}") ? .has : .missing
+    }
+
+    /// Puts the picture on the person's chat card, the rest of the card kept as it is.
+    func setAvatar(_ jpeg: Data, login: String, gwToken: String) async -> Bool {
+        guard let (s, old) = await myCard(login: login, gwToken: gwToken) else { return false }
+        var pub = old
+        pub["photo"] = ["data": jpeg.base64EncodedString(), "type": "jpeg"]
+        let r = await s.send(["set": ["id": "5", "topic": "me", "desc": ["public": pub]]], "5").ctrl
+        return (r?["code"] as? Int ?? 500) < 300
     }
 
     private var apiKeyCache = ""
@@ -344,14 +395,14 @@ final class ChatRelay {
         return apiKeyCache
     }
 
-    private func get(_ path: String) async -> Data? {
+    fileprivate func get(_ path: String) async -> Data? {
         guard let u = try? await Net.url(path) else { return nil }
         var r = URLRequest(url: u)
         r.timeoutInterval = 20
         return try? await Net.session.data(for: r).0
     }
 
-    private func post(_ path: String, _ body: Data) async -> Data? {
+    fileprivate func post(_ path: String, _ body: Data) async -> Data? {
         guard let u = try? await Net.url(path) else { return nil }
         var r = URLRequest(url: u)
         r.httpMethod = "POST"

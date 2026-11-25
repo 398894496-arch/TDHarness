@@ -19,6 +19,8 @@ final class Session: ObservableObject {
     @Published var person: Person?
     @Published var note = ""
     @Published var server: String = ""
+    /// company-chat-avatar-v1: the person's chat card has no picture yet; the app asks for one before anything else.
+    @Published var needsAvatar = false
 
     private var rememberKey: String { "remember.token" }
 
@@ -93,6 +95,27 @@ final class Session: ObservableObject {
     /// company-desk-hub-warm-v1: the person's kernel on the server comes up while they look at the screen.
     private func warm(_ p: Person) {
         Task.detached { _ = try? await Net.getJSON("/desk-hub/_hub/warm", token: p.gwToken, timeout: 20) }
+        Task { await checkAvatar(p) }
+    }
+
+    /// No picture on the chat card: ask for one, and nothing else until there is one (the user, 2026-11-25: 「第一次手机
+    /// 登录就要求设置头像 锁死」). A check that cannot be made is tried again, then counts as no picture.
+    private func checkAvatar(_ p: Person) async {
+        #if DEBUG
+        if UserDefaults.standard.bool(forKey: "tdhAvatarForce") { needsAvatar = true; return }
+        #endif
+        var st = ChatRelay.AvatarState.unknown
+        for wait in [0, 3, 8] as [UInt64] {
+            if wait > 0 { try? await Task.sleep(nanoseconds: wait * 1_000_000_000) }
+            st = await ChatRelay.shared.avatarState(login: p.login, gwToken: p.gwToken)
+            if st != .unknown || person?.login != p.login { break }
+        }
+        if person?.login == p.login { needsAvatar = st != .has }
+    }
+
+    func setAvatar(_ jpeg: Data) async -> Bool {
+        guard let p = person else { return false }
+        return await ChatRelay.shared.setAvatar(jpeg, login: p.login, gwToken: p.gwToken)
     }
 
     private func take(_ j: [String: Any]) -> Person? {
@@ -108,6 +131,7 @@ final class Session: ObservableObject {
         Keychain.delete(rememberKey)
         ChatRelay.shared.stop()
         DeskRelay.shared.stop()
+        needsAvatar = false
         person = nil
         phase = .signedOut
     }
