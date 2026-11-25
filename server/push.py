@@ -17,7 +17,7 @@ Off until the site configures it. D:/dsh/runtime/apns.env (admins only):
     APNS_TEAM_ID=XXXXXXXXXX
     APNS_TOPIC=cn.tdharness.mobile        # the app's bundle id (default)
 
-The phones: D:/dsh/runtime/push-devices.json, {login: [{"token", "env", "at"}]}. Apple's answer that a token is gone
+The phones: D:/dsh/runtime/push-devices.json, {login: [{"token", "env", "device", "at"}]}. Apple's answer that a token is gone
 (410, BadDeviceToken, Unregistered) removes it. The sending is server/apns-send.js (HTTP/2 and ES256 are Node's). The
 log has who, what kind, how many, the result; never what was said, never a token in full.
 """
@@ -36,6 +36,7 @@ HERE = Path(__file__).resolve().parent
 TOKEN_OK = re.compile(r"^[0-9a-f]{64,200}$")
 MU = threading.Lock()
 GONE = ("BadDeviceToken", "Unregistered", "DeviceTokenNotForTopic")
+READ_GAP = 10.0  # seconds: read-elsewhere pushes of one person, at most this often (Apple throttles silent pushes)
 
 
 def read_env(path: Path) -> dict:
@@ -57,7 +58,9 @@ def config(runtime: Path) -> dict | None:
     if not key or not env.get("APNS_KEY_ID") or not env.get("APNS_TEAM_ID") or not Path(key).is_file():
         return None
     return {"key_file": key, "key_id": env["APNS_KEY_ID"], "team_id": env["APNS_TEAM_ID"],
-            "topic": env.get("APNS_TOPIC") or "cn.tdharness.mobile"}
+            "topic": env.get("APNS_TOPIC") or "cn.tdharness.mobile",
+            # the signed provider token, reused for 50 minutes (apns-send.js; Apple refuses one more often than 20)
+            "token_cache": str(runtime / "apns-token.json")}
 
 
 # ---- the phones -------------------------------------------------------------------------------------------------
@@ -81,21 +84,31 @@ def _save_devices(runtime: Path, data: dict) -> None:
     os.replace(tmp, p)
 
 
-def register(runtime: Path, login: str, token: str, env: str, on: bool = True) -> dict:
-    """A phone of `login` (on: notify it; off: forget it). One token belongs to one person: a phone that changes
-    hands moves with its new person."""
+def register(runtime: Path, login: str, token: str, env: str, on: bool = True, device: str = "") -> dict:
+    """A phone of `login` (on: notify it; off: forget it). One token belongs to one person: the same phone (its app's
+    device id) signed in by someone else moves to them, but a token held for another phone is not taken over, and
+    turning off only ever forgets one's own."""
     token = str(token or "").strip().lower()
     if not TOKEN_OK.match(token):
         return {"ok": False, "error": "bad-token"}
     env = "production" if env == "production" else "sandbox"
+    device = re.sub(r"[^A-Za-z0-9._-]", "", str(device or ""))[:80]
     with MU:
         data = devices(runtime)
+        held = next((k for k in data if k != login and any(d.get("token") == token for d in data[k])), "")
+        if held:
+            their = next(d for d in data[held] if d.get("token") == token)
+            if not on:
+                return {"ok": True, "on": False}
+            if (their.get("device") or "") and their.get("device") != device:
+                return {"ok": False, "error": "token-taken"}
         for k in list(data):
-            data[k] = [d for d in data[k] if d.get("token") != token]
+            if on or k == login:
+                data[k] = [d for d in data[k] if d.get("token") != token]
             if not data[k]:
                 del data[k]
         if on:
-            data.setdefault(login, []).append({"token": token, "env": env, "at": int(time.time())})
+            data.setdefault(login, []).append({"token": token, "env": env, "device": device, "at": int(time.time())})
             data[login] = data[login][-5:]
         _save_devices(runtime, data)
     return {"ok": True, "on": bool(on)}
@@ -212,17 +225,21 @@ def their_topic(topic: str, sender_link: str) -> str:
 
 def chat_round(chat_cfg: dict, runtime: Path, apns: dict, people: dict, links: dict, bots, psql, fetch, max_id,
                login_of, state: dict, now: float | None = None) -> dict:
-    """One round: new messages since the last, then read changes. `state` keeps {"last", "badge", "read"}; the first
-    round only takes its place (no backlog of old messages)."""
+    """One round: new messages since the last, then read changes. `state` keeps {"last", "read", "pending", "read_at"};
+    the first round only takes its place (no backlog of old messages). The place moves on only once the round's
+    notifications are built, so a failure on the way (the database) leaves the messages for the next round."""
+    now = time.time() if now is None else now
     data = devices(runtime)
     if "last" not in state:
         state["last"] = max_id(chat_cfg, runtime)
         return {"started": state["last"]}
     rows = fetch(chat_cfg, runtime, state["last"], 200)
+    last = state["last"]
     items = []
     touched = set()
+    spoke = set()  # (sender, chat): their own read mark moves with what they send; that is no news to their phone
     for r in rows:
-        state["last"] = max(state["last"], int(r.get("id") or 0))
+        last = max(last, int(r.get("id") or 0))
         head = r.get("head")
         if isinstance(head, str):
             try:
@@ -237,6 +254,7 @@ def chat_round(chat_cfg: dict, runtime: Path, apns: dict, people: dict, links: d
             continue
         members = [login_of(t) for t in (r.get("member_tags") or [])]
         topic = str(r.get("topic") or "")
+        spoke.add((sender, topic))
         content = r.get("content")
         if isinstance(content, str) and content[:1] in "{\"":
             try:
@@ -265,33 +283,50 @@ def chat_round(chat_cfg: dict, runtime: Path, apns: dict, people: dict, links: d
             touched.add(m)
             items.append({"login": m, "kind": "chat", "topic": tt, "seq": int(r.get("seq") or 0),
                           "title": title, "body": body})
-    counts = unread_counts(chat_cfg, runtime, sorted(data), psql) if data else {}
+    try:
+        counts = unread_counts(chat_cfg, runtime, sorted(data), psql) if data else {}
+    except (ValueError, RuntimeError, OSError):
+        counts = None  # the messages still go, without a badge; read changes wait for a round that can count
     out = []
     for it in items:
-        badge = (counts.get(it["login"]) or {}).get("total", 0)
+        aps = {"alert": {"title": it["title"], "body": it["body"][:180]}, "sound": "default",
+               "thread-id": it["topic"], "mutable-content": 1}
+        if counts is not None:
+            aps["badge"] = (counts.get(it["login"]) or {}).get("total", 0)
         out.append({"login": it["login"], "kind": "chat", "collapse": None,
-                    "payload": {"aps": {"alert": {"title": it["title"], "body": it["body"][:180]}, "sound": "default",
-                                        "badge": badge, "thread-id": it["topic"], "mutable-content": 1},
-                                "k": "chat", "t": it["topic"], "seq": it["seq"]}})
-    # Read elsewhere: a chat's read mark moved for someone with a phone (and no new message of theirs said so).
+                    "payload": {"aps": aps, "k": "chat", "t": it["topic"], "seq": it["seq"]}})
+    # Read elsewhere: a chat's read mark moved for someone with a phone. The moves gather per person and go at most
+    # every READ_GAP seconds, and not in a round that already sends them a message (its badge says the count); they
+    # wait, they are not dropped. A silent push carries no "aps" badge (Apple's rule): the count is "b".
     old_read = state.setdefault("read", {})
-    old_badge = state.setdefault("badge", {})
-    for login, c in counts.items():
-        before = old_read.get(login) or {}
-        moved = {t: rd for t, rd in c["read"].items() if before and rd > int(before.get(t, 0))}
-        if moved and login not in touched:
-            names = []
-            for t in moved:
-                if t.startswith("grp"):
-                    names.append([t, moved[t]])
-                else:
-                    other = _p2p_other(chat_cfg, runtime, t, login, psql, login_of)
-                    if other and links.get(other):
-                        names.append(["usr" + links[other], moved[t]])
-            out.append({"login": login, "kind": "read", "type": "background",
-                        "payload": {"aps": {"content-available": 1, "badge": c["total"]}, "k": "read", "r": names[:40]}})
+    pending = state.setdefault("pending", {})
+    read_at = state.setdefault("read_at", {})
+    for login, c in (counts or {}).items():
+        if login in old_read:
+            before = old_read[login]
+            for t, rd in c["read"].items():
+                if rd > int(before.get(t, 0)) and (login, t) not in spoke:
+                    p = pending.setdefault(login, {})
+                    p[t] = max(rd, p.get(t, 0))
         old_read[login] = c["read"]
-        old_badge[login] = c["total"]
+        moved = pending.get(login)
+        if not moved or login in touched or now - read_at.get(login, 0) < READ_GAP:
+            continue
+        names = []
+        for t in moved:
+            if t.startswith("grp"):
+                names.append([t, moved[t]])
+            else:
+                other = _p2p_other(chat_cfg, runtime, t, login, psql, login_of)
+                if other and links.get(other):
+                    names.append(["usr" + links[other], moved[t]])
+        out.append({"login": login, "kind": "read", "type": "background",
+                    "payload": {"aps": {"content-available": 1}, "k": "read", "r": names[:40], "b": c["total"]}})
+        read_at[login] = now
+        del pending[login]
+    for login in [k for k in pending if k not in data]:
+        del pending[login]
+    state["last"] = last
     if out:
         send(runtime, apns, out)
     return {"messages": len(rows), "pushed": len(out)}

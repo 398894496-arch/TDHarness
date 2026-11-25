@@ -27,18 +27,30 @@ final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotification
         #endif
     }
 
-    /// A silent push: chats read elsewhere ("r": [[topic, seq]…]) and the new count.
+    /// A silent push: chats read elsewhere ("r": [[topic, seq]…]) and the new count ("b"; a silent push carries no
+    /// badge of Apple's). The app is told it is done only once the list and the badge are changed, since iOS may
+    /// suspend it right after.
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        let group = DispatchGroup()
         if let pairs = userInfo["r"] as? [[Any]] {
             for p in pairs where p.count == 2 {
-                if let topic = p[0] as? String, let seq = (p[1] as? NSNumber)?.intValue { ChatNotices.clear(topic: topic, upTo: seq) }
+                if let topic = p[0] as? String, let seq = (p[1] as? NSNumber)?.intValue {
+                    group.enter()
+                    ChatNotices.clear(topic: topic, upTo: seq) { group.leave() }
+                }
             }
         }
-        if let aps = userInfo["aps"] as? [String: Any], let badge = (aps["badge"] as? NSNumber)?.intValue {
-            UNUserNotificationCenter.current().setBadgeCount(badge) { _ in }
+        if let badge = (userInfo["b"] as? NSNumber)?.intValue {
+            group.enter()
+            UNUserNotificationCenter.current().setBadgeCount(max(0, badge)) { _ in group.leave() }
         }
-        completionHandler(.newData)
+        group.notify(queue: .main) {
+            #if DEBUG
+            print("DEBUG_PUSH silent read=\((userInfo["r"] as? [[Any]])?.count ?? 0) badge=\(String(describing: userInfo["b"]))")
+            #endif
+            completionHandler(.newData)
+        }
     }
 
     /// While the app is open its own banner has already said it.
@@ -70,14 +82,24 @@ final class PushCenter: ObservableObject {
     private var gwToken = ""
     private var sent = ""
 
-    /// Build kind → Apple's server: a build from Xcode talks to the sandbox, TestFlight and the App Store to production.
-    private var env: String {
+    /// Apple's server for this build's tokens: what its signing says (aps-environment in the embedded provisioning
+    /// profile: development → sandbox, production → production). A build without one (the App Store's) is
+    /// production; a debug build with none (the simulator) the sandbox.
+    private let env: String = {
+        if let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+           let data = try? Data(contentsOf: url),
+           let text = String(data: data, encoding: .isoLatin1),
+           let start = text.range(of: "<?xml"), let end = text.range(of: "</plist>", range: start.lowerBound..<text.endIndex),
+           let plist = try? PropertyListSerialization.propertyList(from: Data(text[start.lowerBound..<end.upperBound].utf8), format: nil) as? [String: Any],
+           let ent = plist["Entitlements"] as? [String: Any], let aps = ent["aps-environment"] as? String {
+            return aps == "production" ? "production" : "sandbox"
+        }
         #if DEBUG
         return "sandbox"
         #else
         return "production"
         #endif
-    }
+    }()
 
     /// After sign-in: ask (the first time), register, and hand the server the address once it is known.
     func start(gwToken: String) async {
@@ -101,7 +123,7 @@ final class PushCenter: ObservableObject {
 
     private func upload() async {
         guard !token.isEmpty, !gwToken.isEmpty, sent != token + gwToken else { return }
-        let r = try? await Net.postJSON("/company/ext/chat/push", ["token": token, "env": env, "on": true], token: gwToken, timeout: 20)
+        let r = try? await Net.postJSON("/company/ext/chat/push", ["token": token, "env": env, "on": true, "device_id": Keychain.deviceId], token: gwToken, timeout: 20)
         if (r?.1["ok"] as? Bool) == true { sent = token + gwToken }
         #if DEBUG
         print("DEBUG_PUSH registered \(String(describing: r?.1["ok"]))")
@@ -111,7 +133,7 @@ final class PushCenter: ObservableObject {
     /// At sign-out: this phone no longer gets that person's notifications.
     func stop() async {
         if !token.isEmpty && !gwToken.isEmpty {
-            _ = try? await Net.postJSON("/company/ext/chat/push", ["token": token, "env": env, "on": false], token: gwToken, timeout: 10)
+            _ = try? await Net.postJSON("/company/ext/chat/push", ["token": token, "env": env, "on": false, "device_id": Keychain.deviceId], token: gwToken, timeout: 10)
         }
         gwToken = ""
         sent = ""

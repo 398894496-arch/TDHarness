@@ -132,6 +132,8 @@ final class ChatStore: ObservableObject {
     func stop() {
         running = false
         connected = false
+        socket?.cancel(with: .goingAway, reason: nil)
+        socket = nil
         for (_, c) in waiting { c.resume(returning: nil) }
         waiting = [:]
     }
@@ -144,12 +146,18 @@ final class ChatStore: ObservableObject {
             if await connect() {
                 delay = 1
                 await reader?.value
+            } else {
+                // It could not connect: the next try looks for the server again (another network).
+                Net.forget()
             }
             at = ""
             connected = false
+            socket?.cancel(with: .goingAway, reason: nil)
+            socket = nil
             attached = []
             for (_, c) in waiting { c.resume(returning: nil) }
             waiting = [:]
+            for t in Array(loading.keys) { finishLoad(t) }
             if !running { break }
             try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
             delay = min(delay * 2, 20)
@@ -165,18 +173,41 @@ final class ChatStore: ObservableObject {
             }
             apiKey = String(s[r])
         }
-        let lp = "/v0/channels/lp?apikey=" + enc(apiKey)
-        guard let first = await rawGet(lp) else { problem = "聊天服务器没连上"; return false }
-        var sid = ""
-        for m in ChatRelay.lines(first) {
-            if let c = m["ctrl"] as? [String: Any], let p = c["params"] as? [String: Any], let s = p["sid"] as? String { sid = s }
+        // company-phone-chat-ws-v1 (the user, 2026-11-26: 「聊天窗口刚打开…就一直跳」「卡顿」): one connection that stays
+        // open (a WebSocket, as the desks' chat page uses). Over long polling the server gives one message per request:
+        // a chat's forty messages took forty round trips, 3.7 s measured. Long polling stays as the way when the
+        // socket cannot be opened (tried again at the next start of the app).
+        var onSocket = false
+        // A socket that could not be opened is tried again ten minutes later (it may have been the network of that moment).
+        if socketFailed, Date().timeIntervalSince(socketFailedAt) > 600 { socketFailed = false }
+        if !socketFailed, let task = await openSocket() {
+            socket = task
+            at = "ws:" + UUID().uuidString
+            let mine = at
+            reader = Task { await socketLoop(task, mine) }
+            onSocket = true
+        } else {
+            let lp = "/v0/channels/lp?apikey=" + enc(apiKey)
+            guard let first = await rawGet(lp) else { problem = "聊天服务器没连上"; return false }
+            var sid = ""
+            for m in ChatRelay.lines(first) {
+                if let c = m["ctrl"] as? [String: Any], let p = c["params"] as? [String: Any], let s = p["sid"] as? String { sid = s }
+            }
+            guard !sid.isEmpty else { problem = "聊天服务器没连上"; return false }
+            at = lp + "&sid=" + enc(sid)
+            // The reader has to run while the first requests wait for their answers.
+            let path = at
+            reader = Task { await readLoop(path) }
         }
-        guard !sid.isEmpty else { problem = "聊天服务器没连上"; return false }
-        at = lp + "&sid=" + enc(sid)
-        // The reader has to run while the first requests wait for their answers.
-        let path = at
-        reader = Task { await readLoop(path) }
-        guard let hi = await request(["hi": ["ver": "0.25", "ua": "TDH-iOS/1.0"]]), code(hi) < 300 else { return false }
+        guard let hi = await request(["hi": ["ver": "0.25", "ua": "TDH-iOS/1.0"]]), code(hi) < 300 else {
+            if onSocket {
+                Diag.say("chat", "socket: no answer to hi, long polling next")
+                socketFailed = true
+                socket?.cancel(with: .goingAway, reason: nil)
+                socket = nil
+            }
+            return false
+        }
         let secret = Data((login + ":" + gwToken).utf8).base64EncodedString()
         guard let lg = await request(["login": ["scheme": "basic", "secret": secret]]), code(lg) < 300 else {
             problem = "聊天登录没成功"
@@ -193,6 +224,85 @@ final class ChatStore: ObservableObject {
     }
 
     private var reader: Task<Void, Never>?
+    private var socket: URLSessionWebSocketTask?
+    private var socketFailed = false { didSet { if socketFailed { socketFailedAt = Date() } } }
+    private var socketFailedAt = Date.distantPast
+
+    /// The chat's WebSocket on the server found (its certificate checked as every request's), answering a ping
+    /// within 5 s; nil when it cannot be had.
+    private func openSocket() async -> URLSessionWebSocketTask? {
+        guard let u = try? await Net.url("/v0/channels?apikey=" + enc(apiKey)),
+              var parts = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return nil }
+        parts.scheme = "wss"
+        guard let url = parts.url else { return nil }
+        let task = Net.session.webSocketTask(with: url)
+        task.maximumMessageSize = 16 * 1024 * 1024
+        task.resume()
+        let ok: Bool = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+            let once = RelayOnce()
+            let done: (Bool) -> Void = { v in
+                DispatchQueue.main.async { if !once.done { once.done = true; c.resume(returning: v) } }
+            }
+            task.sendPing { err in done(err == nil) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { done(false) }
+        }
+        if !ok {
+            Diag.say("chat", "socket: did not open, long polling")
+            socketFailed = true
+            task.cancel(with: .goingAway, reason: nil)
+            return nil
+        }
+        return task
+    }
+
+    /// A ping that must be answered in time: a connection the network dropped without a word gives no error for
+    /// minutes, and nothing came in over it meanwhile (company-phone-stream-watch-v1). Ended, the connect loop opens
+    /// another within a second.
+    private static func ping(_ task: URLSessionWebSocketTask, within s: Double) {
+        let once = RelayOnce()
+        task.sendPing { err in
+            DispatchQueue.main.async {
+                if once.done { return }
+                once.done = true
+                if err != nil { task.cancel(with: .goingAway, reason: nil) }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + s) {
+            if once.done { return }
+            once.done = true
+            task.cancel(with: .goingAway, reason: nil)
+        }
+    }
+
+    /// The app is in front again: the connection is asked at once whether it still answers.
+    func check() {
+        if let s = socket { Self.ping(s, within: 4) }
+    }
+
+    /// The socket's reader: every message as it comes; a ping each 25 s, so a connection that died is noticed.
+    private func socketLoop(_ task: URLSessionWebSocketTask, _ mine: String) async {
+        let pinger = Task { [weak task] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 25_000_000_000)
+                guard let task, !Task.isCancelled else { return }
+                Self.ping(task, within: 8)
+            }
+        }
+        defer { pinger.cancel() }
+        while running && at == mine {
+            guard let m = try? await task.receive() else { break }
+            var text: Data?
+            switch m {
+            case .string(let s): text = Data(s.utf8)
+            case .data(let d): text = d
+            @unknown default: text = nil
+            }
+            guard let text else { continue }
+            for x in ChatRelay.lines(text) { take(x) }
+        }
+        task.cancel(with: .goingAway, reason: nil)
+        if socket === task { socket = nil }
+    }
 
     /// One reader per connection; it ends when the connection drops (or a newer one replaced it).
     private func readLoop(_ mine: String) async {
@@ -204,12 +314,20 @@ final class ChatStore: ObservableObject {
                 continue
             }
             misses = 0
-            for m in ChatRelay.lines(d) { take(m) }
+            let batch = ChatRelay.lines(d)
+            #if DEBUG
+            if batch.contains(where: { $0["data"] != nil }) { print("DEBUG_CHAT poll \(batch.count) msgs at \(String(format: "%.2f", Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 100)))") }
+            #endif
+            for m in batch { take(m) }
         }
     }
 
     private func send(_ msg: [String: Any]) async {
         guard let body = try? JSONSerialization.data(withJSONObject: msg) else { return }
+        if let s = socket {
+            do { try await s.send(.string(String(decoding: body, as: UTF8.self))) } catch { s.cancel(with: .goingAway, reason: nil) }
+            return
+        }
         if let d = await rawPost(at, body) { for m in ChatRelay.lines(d) { take(m) } }
     }
 
@@ -218,7 +336,9 @@ final class ChatStore: ObservableObject {
         nextId += 1
         let id = String(nextId)
         var m = msg
-        if let k = m.keys.first, var inner = m[k] as? [String: Any] { inner["id"] = id; m[k] = inner }
+        // The id on the message itself (pub, sub, get…), not on "extra" beside it (a dictionary has no order).
+        let kinds = ["pub", "sub", "get", "set", "del", "leave", "login", "hi", "note", "acc"]
+        if let k = kinds.first(where: { m[$0] != nil }) ?? m.keys.first, var inner = m[k] as? [String: Any] { inner["id"] = id; m[k] = inner }
         return await withCheckedContinuation { (c: CheckedContinuation<[String: Any]?, Never>) in
             waiting[id] = c
             Task {
@@ -238,8 +358,49 @@ final class ChatStore: ObservableObject {
 
     // MARK: what comes in
 
+    // MARK: a chat's messages, whole (company-phone-chat-load-v1)
+    //
+    // The user, 2026-11-26: 「聊天窗口刚打开的时候…就一直跳 然后缓存完了就好了」. Over long polling the server hands a
+    // chat's messages over a few at a time, and each one was put on screen as it came: the list was drawn forty times
+    // and moved each time. While a chat's messages are being fetched they are held here; when the server says that was
+    // all of them ({ctrl} params.what "data"), or after 4 s, they go in together — one drawing — and whoever opened
+    // the chat is told.
+    private var loading: [String: [[String: Any]]] = [:]
+    private var loadWait: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    private func beginLoad(_ topic: String) {
+        if loading[topic] == nil { loading[topic] = [] }
+        #if DEBUG
+        print("DEBUG_CHAT begin \(topic) at \(String(format: "%.2f", Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 100)))")
+        #endif
+    }
+
+    private func finishLoad(_ topic: String) {
+        guard let rows = loading.removeValue(forKey: topic) else { return }
+        for d in rows { takeData(d) }
+        #if DEBUG
+        print("DEBUG_CHAT loaded \(topic) \(rows.count) at \(String(format: "%.2f", Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 100)))")
+        #endif
+        for c in loadWait.removeValue(forKey: topic) ?? [] { c.resume() }
+    }
+
+    private func loaded(_ topic: String) async {
+        guard loading[topic] != nil else { return }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            loadWait[topic, default: []].append(c)
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                self.finishLoad(topic)
+            }
+        }
+    }
+
     private func take(_ m: [String: Any]) {
         if let c = m["ctrl"] as? [String: Any] {
+            // "That was all the messages asked for" (also when there were none).
+            if let p = c["params"] as? [String: Any], (p["what"] as? String) == "data", let topic = c["topic"] as? String {
+                finishLoad(topic)
+            }
             answer(c["id"] as? String, c)
         } else if let meta = m["meta"] as? [String: Any] {
             takeMeta(meta)
@@ -297,6 +458,7 @@ final class ChatStore: ObservableObject {
 
     private func takeData(_ d: [String: Any]) {
         guard let topic = d["topic"] as? String, let seq = d["seq"] as? Int else { return }
+        if loading[topic] != nil { loading[topic]?.append(d); return }
         var msg = Self.message(d)
         var list = messages[topic] ?? []
         if msg.replaces == nil, let later = callLater[topic]?.removeValue(forKey: seq) {
@@ -431,6 +593,8 @@ final class ChatStore: ObservableObject {
         if topics.isEmpty { _ = await request(["get": ["topic": "me", "what": "sub"]]) }
         // The latest message of each recent chat, for the list (and new ones as they come).
         for t in topics.prefix(24) { await attach(t.topic, limit: 1) }
+        // The chat on screen, after a connection that dropped: what was said meanwhile (more than its last message).
+        if !open.isEmpty { await attach(open, limit: 40) }
         loaded = true
         #if DEBUG
         // Debug builds only: one test message into a chat named on the command line (-tdhChatSendTo 名字 -tdhChatSendText 文字).
@@ -449,12 +613,19 @@ final class ChatStore: ObservableObject {
     private func refreshMe() async { _ = await request(["get": ["topic": "me", "what": "sub"]]) }
 
     private func attach(_ topic: String, limit: Int) async {
+        if limit > 1 { beginLoad(topic) }
         if attached.contains(topic) {
-            if limit > 1 { _ = await request(["get": ["topic": topic, "what": "data sub", "data": ["limit": limit], "sub": [:]]]) }
+            if limit > 1 {
+                let r = await request(["get": ["topic": topic, "what": "data sub", "data": ["limit": limit], "sub": [:]]])
+                if r == nil { finishLoad(topic) } else { await loaded(topic) }
+            }
             return
         }
         let r = await request(["sub": ["topic": topic, "get": ["what": limit > 1 ? "data sub" : "data", "data": ["limit": limit]]]])
         if let r, code(r) < 300 { attached.insert(topic) }
+        if limit > 1 {
+            if r == nil || code(r!) >= 300 { finishLoad(topic) } else { await loaded(topic) }
+        }
     }
 
     /// Opening a chat: its last messages and its people; then everything in it counts as read.
@@ -473,7 +644,9 @@ final class ChatStore: ObservableObject {
         if older[topic] == false { return false }
         guard let first = messages[topic]?.first(where: { !$0.pending })?.seq, first > 1 else { older[topic] = false; return false }
         let before = messages[topic]?.count ?? 0
+        beginLoad(topic)
         _ = await request(["get": ["topic": topic, "what": "data", "data": ["before": first, "limit": 30]]])
+        finishLoad(topic)
         let more = (messages[topic]?.count ?? 0) > before
         older[topic] = more
         return more
@@ -514,8 +687,10 @@ final class ChatStore: ObservableObject {
             if let small = Self.thumb(img) { ent["val"] = small.base64EncodedString() }
         }
         let content: [String: Any] = ["txt": " ", "fmt": [["at": -1, "len": 0, "key": 0]], "ent": [["tp": tp, "data": ent]]]
-        let r = await request(["pub": ["topic": topic, "noecho": false, "head": ["mime": "text/x-drafty"], "content": content,
-                                       "extra": ["attachments": [ref]]]])
+        // "extra" beside "pub" (Tinode's wire format): inside it the file was never linked to the message, and the chat's
+        // file sweep deleted it a minute later (pictures, files and voice messages that opened once, then never).
+        let r = await request(["pub": ["topic": topic, "noecho": false, "head": ["mime": "text/x-drafty"], "content": content],
+                               "extra": ["attachments": [ref]]])
         return r != nil && code(r!) < 300
     }
 
@@ -551,8 +726,10 @@ final class ChatStore: ObservableObject {
         await attach(topic, limit: 1)
         let ent: [String: Any] = ["mime": "audio/wav", "ref": ref, "size": wav.count, "duration": ms, "preview": preview, "name": "语音.wav"]
         let content: [String: Any] = ["txt": " ", "fmt": [["at": 0, "len": 1, "key": 0]], "ent": [["tp": "AU", "data": ent]]]
-        let r = await request(["pub": ["topic": topic, "noecho": false, "head": ["mime": "text/x-drafty"], "content": content,
-                                       "extra": ["attachments": [ref]]]])
+        // "extra" beside "pub" (Tinode's wire format): inside it the file was never linked to the message, and the chat's
+        // file sweep deleted it a minute later (pictures, files and voice messages that opened once, then never).
+        let r = await request(["pub": ["topic": topic, "noecho": false, "head": ["mime": "text/x-drafty"], "content": content],
+                               "extra": ["attachments": [ref]]])
         return r != nil && code(r!) < 300
     }
 

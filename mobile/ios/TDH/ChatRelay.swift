@@ -55,6 +55,49 @@ final class ChatRelay {
     }
 
     // Fixed ports first, so the page keeps its storage between starts; any free port when they are taken.
+    /// Whether iOS closed the listener while the app was away.
+    private(set) var dead = false
+
+    /// Whether the listener really takes a connection now (asked, not trusted: iOS takes a background app's listening
+    /// socket away without always saying so — the page then fails with 「Load failed」, 2026-11-26).
+    private func answers() async -> Bool {
+        guard port != 0 else { return false }
+        return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            let c = NWConnection(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+            let once = RelayOnce()
+            let finish: (Bool) -> Void = { ok in
+                guard !once.done else { return }
+                once.done = true
+                c.cancel()
+                cont.resume(returning: ok)
+            }
+            c.stateUpdateHandler = { st in
+                switch st {
+                case .ready: finish(true)
+                case .failed, .waiting: finish(false)
+                default: break
+                }
+            }
+            c.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 1.0) { finish(false) }
+        }
+    }
+
+    /// The listener on its own port again if it no longer answers. True when it had to be brought back (its page
+    /// must then load again).
+    @discardableResult
+    func revive() async -> Bool {
+        guard port != 0 else { return false }
+        if !dead, await answers() { return false }
+        listener?.cancel()
+        listener = nil
+        for _ in 0..<3 {
+            if let p = try? await listen(on: port), p == port { return true }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        return false
+    }
+
     private func listen() async throws -> UInt16 {
         for p: UInt16 in [17811, 17812, 17813, 17814, 0] {
             if let got = try? await listen(on: p) { return got }
@@ -71,11 +114,18 @@ final class ChatRelay {
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<UInt16, Error>) in
             let once = Once()
             l.stateUpdateHandler = { [weak self] st in
-                guard !once.done else { return }
+                // After it was up: iOS takes a background app's listening socket away; say so, so the app brings it
+                // back on the same port when it is in front again (revive) — the page's address stays the same.
+                if once.done {
+                    if case .failed = st { self?.dead = true }
+                    if case .cancelled = st, self?.listener === l { self?.dead = true }
+                    return
+                }
                 switch st {
                 case .ready:
                     once.done = true
                     self?.listener = l
+                    self?.dead = false
                     cont.resume(returning: l.port?.rawValue ?? p)
                 case .failed(let e):
                     once.done = true
@@ -380,6 +430,13 @@ final class ChatRelay {
         let data = (photo?["data"] as? String) ?? ""
         let ref = (photo?["ref"] as? String) ?? ""
         return data.count > 64 || (ref.count > 4 && ref != "\u{2421}") ? .has : .missing
+    }
+
+    /// The picture on the person's own chat card, when it is there inline.
+    func myPhoto(login: String, gwToken: String) async -> Data? {
+        guard let (_, pub) = await myCard(login: login, gwToken: gwToken),
+              let s = (pub["photo"] as? [String: Any])?["data"] as? String, s.count > 64 else { return nil }
+        return Data(base64Encoded: s)
     }
 
     /// Puts the picture on the person's chat card, the rest of the card kept as it is.

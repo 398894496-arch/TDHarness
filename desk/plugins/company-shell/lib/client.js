@@ -7825,6 +7825,25 @@ window.__ModuleLoader__.load({
 		function chatHeaders() {
 			return { "Accept": "application/json", "X-TDH-Chat": "1" };
 		}
+		// company-phone-push-v1: while this desk window (a computer's, not the phone's page) is visible and focused, the
+		// kernel is told every 30 s, so an AI answer finished meanwhile does not also ring the person's phone.
+		let deskSeenOn = false;
+		function startDeskSeen() {
+			if (deskSeenOn || PHONE) return;
+			deskSeenOn = true;
+			function ping() {
+				try {
+					if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+					fetch("/company/desk/seen", { method: "POST", credentials: "same-origin", headers: chatHeaders() }).catch(function () {});
+				} catch (err) {}
+			}
+			try {
+				ping();
+				setInterval(ping, 30000);
+				document.addEventListener("visibilitychange", ping);
+				window.addEventListener("focus", ping);
+			} catch (err) {}
+		}
 		let chatPolling = false;
 		function startChatPoll() {
 			if (chatPolling) return;
@@ -10135,6 +10154,7 @@ window.__ModuleLoader__.load({
 				}, ChatToast);
 			});
 			startChatPoll();
+			startDeskSeen();
 			ctx.slots.inject("sidebar.panellist", function () {
 				return ctx.slots.register({
 					name: "sidebar.panellist",

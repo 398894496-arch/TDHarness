@@ -233,15 +233,43 @@ async function pinWorkspace(port, personal) {
   log("WORKSPACE", "port=" + port, "status=" + r.status, id ? "pinned" : "no-id");
 }
 
-// Kernels a previous run of this hub started (it forgot them when it stopped): a second kernel for the same person
-// would write the same chats. Stopped before anything is served.
-function stopOrphans() {
+// Kernels a previous run of this hub started. company-desk-hub-adopt-v1 (the user's phone and Mac, 2026-11-26: every
+// restart of this hub stopped everyone's desk under their hands — 「我又无法在手机端新建对话了」): a kernel that still
+// answers is taken back as it is (its login from its folder, its port from its command line, its token from its
+// out.log); only one that cannot be taken back, or a second one for the same person, is stopped.
+function kernelAnswers(port) {
+  return new Promise((resolve) => {
+    const r = http.request({ hostname: "127.0.0.1", port, method: "GET", path: "/", headers: { host: "127.0.0.1:" + port }, timeout: 4000 }, (res) => { res.resume(); resolve(true); });
+    r.on("error", () => resolve(false));
+    r.on("timeout", () => { r.destroy(); resolve(false); });
+    r.end();
+  });
+}
+async function adoptOrphans() {
   if (process.platform !== "win32") return;
-  const ps = "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*\\desks\\*\\home\\profiles\\web\\overlay.yml*' } | ForEach-Object { $_.ProcessId }";
+  const ps = "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*\\desks\\*\\home\\profiles\\web\\overlay.yml*' } | ForEach-Object { [string]$_.ProcessId + '|' + $_.CommandLine }";
   const r = spawnSync("powershell.exe", ["-NoProfile", "-Command", ps], { encoding: "utf8", windowsHide: true, timeout: 30000 });
-  for (const pid of String(r.stdout || "").split(/\s+/).filter(Boolean)) {
-    spawnSync("taskkill.exe", ["/PID", pid, "/T", "/F"], { stdio: "ignore", windowsHide: true });
-    log("ORPHAN_STOPPED", pid);
+  for (const line of String(r.stdout || "").split(/\r?\n/).filter(Boolean)) {
+    const pid = Number(line.split("|")[0]);
+    const cmd = line.slice(line.indexOf("|") + 1);
+    const login = ((/[\\/]desks[\\/]([^\\/]+)[\\/]home[\\/]/i.exec(cmd) || [])[1] || "").toLowerCase();
+    const port = Number((/--port\s+(\d+)/.exec(cmd) || [])[1] || 0);
+    let token = "";
+    if (login && port) {
+      try {
+        const t = fs.readFileSync(path.join(CFG.desks, login, "out.log"), "utf8");
+        token = (new RegExp("dsh web: http://127\\.0\\.0\\.1:" + port + "/\\?token=([A-Za-z0-9_-]+)").exec(t) || [])[1] || "";
+      } catch {}
+    }
+    if (pid && login && port && token && !desks.has(login) && await kernelAnswers(port)) {
+      desks.set(login, { state: "up", port, token, pid, clients: 0, lastSeen: Date.now(), user: "" });
+      log("DESK_ADOPTED", login, "port=" + port, "pid=" + pid);
+      continue;
+    }
+    if (pid) {
+      spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+      log("ORPHAN_STOPPED", pid);
+    }
   }
 }
 
@@ -415,6 +443,43 @@ function upstreamHeaders(req, d) {
   if (h.referer) { try { const r = new URL(h.referer); h.referer = "http://127.0.0.1:" + d.port + r.pathname + r.search; } catch { delete h.referer; } }
   return h;
 }
+// company-desk-hub-chat-v1 (the user's Mac, 2026-11-26: 「电脑客户端的聊天界面我直接打不开了」): the chat column is a page
+// the kernel's own chat relay serves on ITS loopback (http://127.0.0.1:<port>/chat/?k=…). With the kernel here, that
+// address on the person's computer is nothing. So the hub tells the page a path instead (/chat/?k=…, beside the desk's
+// own) and passes /chat/, /v0/ and /tdh/ — requests and the chat's WebSocket — to that relay as if from its own page.
+const isChatPath = (p) => /^\/(chat|v0|tdh)(\/|$)/.test(p);
+function chatHeaders(req, port) {
+  const h = {};
+  for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k)) h[k] = v;
+  h.host = "127.0.0.1:" + port;
+  if (h.origin) h.origin = "http://127.0.0.1:" + port;
+  if (h.referer) { try { const r = new URL(h.referer); h.referer = "http://127.0.0.1:" + port + r.pathname + r.search; } catch { delete h.referer; } }
+  return h;
+}
+function kernelGet(d, pathName) {
+  return new Promise((resolve) => {
+    const r = http.request({ hostname: "127.0.0.1", port: d.port, method: "GET", path: withKernelToken(pathName, "", d, "GET"),
+      headers: { host: "127.0.0.1:" + d.port, accept: "application/json" }, timeout: 20000 }, (res) => {
+      const c = []; res.on("data", (x) => c.push(x)); res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(c) }));
+    });
+    r.on("error", () => resolve({ status: 0, body: Buffer.alloc(0) }));
+    r.on("timeout", () => { r.destroy(); resolve({ status: 0, body: Buffer.alloc(0) }); });
+    r.end();
+  });
+}
+async function chatWhere(d) {
+  const r = await kernelGet(d, "/company/chat/where");
+  let j = null;
+  try { j = JSON.parse(r.body.toString("utf8")); } catch {}
+  const m = j && j.ok && typeof j.url === "string" ? /^http:\/\/127\.0\.0\.1:(\d+)(\/.*)$/.exec(j.url) : null;
+  if (m) d.chatPort = Number(m[1]);
+  return { status: r.status || 502, json: m ? { ok: true, url: m[2] } : (j || { ok: false, error: "relay" }) };
+}
+async function chatPortOf(d) {
+  if (!d.chatPort) await chatWhere(d);
+  return d.chatPort || 0;
+}
+
 function innerPath(url) {
   const u = new URL(url, "http://x");
   let p = u.pathname;
@@ -473,7 +538,14 @@ async function onRequest(req, res) {
   }
   if (p === "/_hub/status") {
     const d = desks.get(a.w.login);
-    const body = Buffer.from(JSON.stringify({ ok: true, login: a.w.login, state: d ? d.state : "down", clients: d ? d.clients : 0 }));
+    // boot: which start of the kernel this is — a page loaded from an earlier one must load again (the phone asks).
+    // stream: whether the live connection the asker names (the phone's relay puts an id on its own, X-TDH-Stream) is
+    // still open here (company-phone-stream-watch-v1: a connection the network dropped without a word looked open to
+    // the phone, and the assistant's answers went nowhere — the user, 2026-11-26: 「对话没有响应了」).
+    const sid = new URLSearchParams(search || "").get("stream") || "";
+    const out = { ok: true, login: a.w.login, state: d ? d.state : "down", clients: d ? d.clients : 0, boot: d && d.state === "up" ? String(d.pid) : "" };
+    if (sid) out.stream = liveStreams.has(a.w.login + " " + sid);
+    const body = Buffer.from(JSON.stringify(out));
     res.writeHead(200, { "Content-Type": "application/json", "Content-Length": body.length, "Cache-Control": "no-store" }); res.end(body);
     return;
   }
@@ -491,8 +563,33 @@ async function onRequest(req, res) {
     return;
   }
   d.lastSeen = Date.now();
+  if (p === "/company/chat/where") {
+    const w = await chatWhere(d);
+    const body = Buffer.from(JSON.stringify(w.json));
+    res.writeHead(w.json.ok ? 200 : 503, { "Content-Type": "application/json; charset=utf-8", "Content-Length": body.length, "Cache-Control": "no-store" });
+    res.end(body);
+    return;
+  }
+  if (isChatPath(p)) {
+    const cport = await chatPortOf(d);
+    if (!cport) { fail(res, 503, "chat-relay", "聊天还没准备好，请稍后重试"); return; }
+    const cu = http.request({ hostname: "127.0.0.1", port: cport, method: req.method, path: p + search, headers: chatHeaders(req, cport) }, (ures) => {
+      res.writeHead(ures.statusCode || 502, ures.headers);
+      ures.pipe(res);
+    });
+    cu.on("error", () => { d.chatPort = 0; fail(res, 502, "chat-relay", "聊天没有响应，请稍后重试"); });
+    res.on("close", () => cu.destroy());
+    req.pipe(cu);
+    return;
+  }
   const up = http.request({ hostname: "127.0.0.1", port: d.port, method: req.method, path: withKernelToken(p, search, d, req.method), headers: upstreamHeaders(req, d) }, (ures) => {
     const h = Object.assign({}, ures.headers);
+    // company-desk-hub-cache-v1: the desk's own built files carry their content's hash in their names
+    // (/assets/index-DjTxlw_T.js) but came without a word on caching, so a phone fetched them anew at every start.
+    // The same word the plugin bundles already carry (their address has rev=<hash>).
+    if (ures.statusCode === 200 && !h["cache-control"] && /^\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.(js|css|woff2?|svg|png)$/.test(p)) {
+      h["cache-control"] = "public, max-age=31536000, immutable";
+    }
     if (h.location) { try { const l = new URL(h.location, "http://127.0.0.1:" + d.port); if (l.host === "127.0.0.1:" + d.port) h.location = l.pathname + l.search; } catch {} }
     res.writeHead(ures.statusCode || 502, h);
     ures.pipe(res);
@@ -502,30 +599,59 @@ async function onRequest(req, res) {
   req.pipe(up);
 }
 
+/// The live connections that carry an id (login + " " + id), while they are open.
+const liveStreams = new Set();
+
 async function onUpgrade(req, sock, head) {
   sock.on("error", () => {});
   const { p, search } = innerPath(req.url);
   const a = await admit(req);
-  const d = a.w ? desks.get(a.w.login) : null;
-  if (a.deny || !d || d.state !== "up") {
-    sock.end("HTTP/1.1 " + (a.deny ? DENY[a.deny][0] + " Denied" : "503 Desk Not Started") + "\r\nConnection: close\r\n\r\n");
-    return;
+  if (a.deny) { sock.end("HTTP/1.1 " + DENY[a.deny][0] + " Denied\r\nConnection: close\r\n\r\n"); return; }
+  let d = desks.get(a.w.login);
+  // A page's live connection coming back after the kernel stopped (the hub's restart, an idle stop) starts it again, as
+  // a request does (the user's phone, 2026-11-26: 「我又无法在手机端新建对话了」 — only the WebSocket kept knocking).
+  if (!d || d.state !== "up" || !alive(d.pid)) {
+    try {
+      const full = await who(bearer(req), { start: true });
+      d = full ? await ensureDesk(full) : null;
+    } catch { d = null; }
+    if (!d || d.state !== "up") { sock.end("HTTP/1.1 503 Desk Not Started\r\nConnection: close\r\n\r\n"); return; }
   }
-  const up = net.connect(d.port, "127.0.0.1");
-  up.on("error", () => sock.destroy());
+  const chat = isChatPath(p);
+  const cport = chat ? await chatPortOf(d) : 0;
+  if (chat && !cport) { sock.end("HTTP/1.1 503 Chat Not Ready\r\nConnection: close\r\n\r\n"); return; }
+  const up = net.connect(chat ? cport : d.port, "127.0.0.1");
+  up.on("error", () => { if (chat) d.chatPort = 0; sock.destroy(); });
   up.on("connect", () => {
-    const h = upstreamHeaders(req, d);
+    const h = chat ? chatHeaders(req, cport) : upstreamHeaders(req, d);
     h.connection = "Upgrade";
     h.upgrade = req.headers.upgrade || "websocket";
-    let head2 = req.method + " " + p + search + " HTTP/1.1\r\n";
+    let head2 = req.method + " " + (chat ? p + search : p + search) + " HTTP/1.1\r\n";
     for (const [k, v] of Object.entries(h)) for (const vv of [].concat(v)) head2 += k + ": " + vv + "\r\n";
     up.write(head2 + "\r\n");
     if (head && head.length) up.write(head);
     d.clients++;
     d.lastSeen = Date.now();
     let closed = false;
-    const done = () => { if (closed) return; closed = true; d.clients = Math.max(0, d.clients - 1); d.lastSeen = Date.now(); };
-    sock.on("close", done); up.on("close", done);
+    // company-desk-hub-wslog-v1: how a live connection ended (which side first, how long, how much each way), so a
+    // phone whose assistant cannot send can be read here; no content.
+    const t0 = Date.now(); let toKernel = 0, toClient = 0;
+    sock.on("data", (x) => { toKernel += x.length; }); up.on("data", (x) => { toClient += x.length; });
+    const done = (by) => () => {
+      if (closed) return; closed = true; d.clients = Math.max(0, d.clients - 1); d.lastSeen = Date.now();
+      log("WS_CLOSE", a.w.login, p, "by=" + by, "ms=" + (Date.now() - t0), "toKernel=" + toKernel, "toClient=" + toClient);
+    };
+    sock.on("close", done("client")); up.on("close", done("kernel"));
+    const sid = String(req.headers["x-tdh-stream"] || "").slice(0, 64);
+    if (sid) {
+      const key = a.w.login + " " + sid;
+      liveStreams.add(key);
+      const gone = () => liveStreams.delete(key);
+      sock.on("close", gone); up.on("close", gone);
+      // Either side gone ends the other too (a half-closed pair would keep the id alive).
+      sock.on("close", () => up.destroy()); up.on("close", () => sock.destroy());
+    }
+    log("WS_OPEN", a.w.login, p);
     up.pipe(sock); sock.pipe(up);
   });
 }
@@ -563,12 +689,14 @@ function warmTick() {
 }
 
 function serve() {
-  stopOrphans();
   setTimeout(warmTick, 5000).unref();
   setInterval(warmTick, 60 * 1000).unref();
   const srv = http.createServer((req, res) => { onRequest(req, res).catch((e) => fail(res, 500, "hub-error", String(e && e.message))); });
   srv.on("upgrade", (req, sock, head) => { onUpgrade(req, sock, head).catch(() => sock.destroy()); });
-  srv.listen(CFG.port, "127.0.0.1", () => log("DESK_HUB_LISTEN", "127.0.0.1:" + CFG.port));
+  // The kernels still running are taken back before anything is served (no second kernel for the same person).
+  adoptOrphans().catch((e) => log("ADOPT_FAIL", String(e && e.message))).then(() => {
+    srv.listen(CFG.port, "127.0.0.1", () => log("DESK_HUB_LISTEN", "127.0.0.1:" + CFG.port));
+  });
   setInterval(idleSweep, 5 * 60 * 1000).unref();
   return srv;
 }

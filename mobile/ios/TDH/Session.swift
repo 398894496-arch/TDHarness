@@ -8,7 +8,20 @@ struct Person {
     let login: String
     let role: String
     let dept: String
+    var deptName: String = ""
     let gwToken: String
+
+    /// What people read (company-phone-profile-v1, the user: 「我的个人信息就应该跟电脑一样 显示 公司 管理员」): the
+    /// department's name and the role in words, as the desk shows them.
+    var deptText: String { deptName.isEmpty ? dept : deptName }
+    var roleText: String {
+        switch role {
+        case "admin": return "管理员"
+        case "director": return "总监"
+        case "": return ""
+        default: return "员工"
+        }
+    }
 }
 
 @MainActor
@@ -111,17 +124,55 @@ final class Session: ObservableObject {
             if st != .unknown || person?.login != p.login { break }
         }
         if person?.login == p.login { needsAvatar = st != .has }
+        if st == .has { await backfillRosterAvatar(p) }
+    }
+
+    /// company-phone-profile-v1 (the user: 「我登录上传了头像 就应该自动同步到我的手机端和电脑端的个人信息里」): the desk
+    /// shows the roster's picture (the roster's avatar), the chats the chat card's. A picture set on this
+    /// phone goes to both; one set here before this build is copied to the roster once.
+    private func backfillRosterAvatar(_ p: Person) async {
+        let key = "tdhRosterAvatar." + p.login
+        guard !UserDefaults.standard.bool(forKey: key),
+              let jpeg = await ChatRelay.shared.myPhoto(login: p.login, gwToken: p.gwToken) else { return }
+        if await putRosterAvatar(jpeg, p) { UserDefaults.standard.set(true, forKey: key) }
+    }
+
+    @discardableResult
+    private func putRosterAvatar(_ jpeg: Data, _ p: Person) async -> Bool {
+        guard let small = Self.rosterJPEG(jpeg) else { return false }
+        // /company/ext/chat/avatar, not /company/people: the cloud entry passes only the chat's paths.
+        let r = try? await Net.postJSON("/company/ext/chat/avatar", ["avatar": "data:image/jpeg;base64," + small.base64EncodedString()],
+                                        token: p.gwToken, timeout: 20)
+        return (r?.1["ok"] as? Bool) == true
+    }
+
+    /// 128 × 128, as the desk makes it, well under the roster's limit (60 000 characters of data URL).
+    static func rosterJPEG(_ jpeg: Data) -> Data? {
+        guard let img = UIImage(data: jpeg) else { return nil }
+        let side: CGFloat = 128
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let out = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            img.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+        }
+        var q: CGFloat = 0.85
+        var data = out.jpegData(compressionQuality: q)
+        while let d = data, d.count > 40 * 1024, q > 0.3 { q -= 0.1; data = out.jpegData(compressionQuality: q) }
+        return data
     }
 
     func setAvatar(_ jpeg: Data) async -> Bool {
         guard let p = person else { return false }
-        return await ChatRelay.shared.setAvatar(jpeg, login: p.login, gwToken: p.gwToken)
+        guard await ChatRelay.shared.setAvatar(jpeg, login: p.login, gwToken: p.gwToken) else { return false }
+        if await putRosterAvatar(jpeg, p) { UserDefaults.standard.set(true, forKey: "tdhRosterAvatar." + p.login) }
+        return true
     }
 
     private func take(_ j: [String: Any]) -> Person? {
         guard (j["ok"] as? Bool) == true, let login = j["login"] as? String, let gw = j["gw_token"] as? String,
               !login.isEmpty, !gw.isEmpty else { return nil }
-        return Person(login: login, role: j["role"] as? String ?? "", dept: j["dept"] as? String ?? "", gwToken: gw)
+        return Person(login: login, role: j["role"] as? String ?? "", dept: j["dept"] as? String ?? "",
+                      deptName: j["dept_name"] as? String ?? "", gwToken: gw)
     }
 
     func signOut() async {

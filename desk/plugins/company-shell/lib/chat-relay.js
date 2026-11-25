@@ -711,7 +711,9 @@ export function startChatRelay(opts) {
 		for (const topic of topics) {
 			const sub = await s.send({ sub: { topic } }, none).catch(() => null);
 			if (!sub || sub.code >= 300) { failed.push(topic); continue; }
-			const pub = await s.send({ pub: { topic, noecho: false, head: { mime: "text/x-drafty" }, content, extra: { attachments: [ref] } } }, none).catch(() => null);
+			// "extra" beside "pub", not in it (Tinode's wire format): inside, the file was never linked to the message and
+			// the chat's file sweep (gc_period) deleted it a minute later — the forward opened once, then never again.
+			const pub = await s.send({ pub: { topic, noecho: false, head: { mime: "text/x-drafty" }, content }, extra: { attachments: [ref] } }, none).catch(() => null);
 			if (pub && pub.code < 300) sent.push(topic); else failed.push(topic);
 			await s.send({ leave: { topic } }, none).catch(() => null);
 		}

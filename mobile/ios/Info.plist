@@ -2,13 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- The chat page is served to the app's own web view from 127.0.0.1 (ChatRelay); the company server is reached
-	     over HTTPS whose certificate is checked against the company CA (Site.json), in code. -->
+	<!-- The chat and desk pages are served to the app's own web views from 127.0.0.1 (ChatRelay, DeskRelay); the company
+	     server is reached over HTTPS whose certificate is checked in code against the company CA and the entry CA only,
+	     for the name tdharness.local (Net.swift PinnedTrust, the relays' TLS), whatever address is dialled.
+	     ATS is off because it refuses that check for a public IP (the cloud entry 118.190.105.26: -1200 / -9802 before
+	     the app's own check runs), and its exception list takes names, not IP addresses. NSAllowsLocalNetworking must
+	     not be added back: with it present iOS ignores NSAllowsArbitraryLoads. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsLocalNetworking</key>
+		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!-- A call goes on with the screen off (audio); a silent push of what was read on the desk wakes the app
+	     (remote-notification, company-phone-push-v1). Here, not as INFOPLIST_KEY_UIBackgroundModes: Xcode does not
+	     generate that key from a build setting. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>remote-notification</string>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

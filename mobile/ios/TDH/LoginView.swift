@@ -52,6 +52,7 @@ struct LoginView: View {
                 }
                 .padding(.top, 30)
                 .modifier(Shake(amount: shake))
+                if step == .phone { agreement.padding(.top, 16) }
                 below.padding(.top, 14)
                 Spacer(minLength: 0)
             }
@@ -86,7 +87,10 @@ struct LoginView: View {
         .onChange(of: phone) { _, v in
             let d = Self.digits(v)
             if d != v { phone = d; return }
-            if d.count == 11 && step == .phone && !busy && sentTo != d { Task { await askCode() } }
+            // The code goes by itself at the eleventh digit only once the documents are agreed to.
+            if d.count == 11 && step == .phone && !busy && sentTo != d {
+                if agreed { Task { await askCode() } } else { askAgreement() }
+            }
         }
         .onChange(of: code) { _, v in
             let d = String(v.filter(\.isNumber).prefix(6))
@@ -204,17 +208,42 @@ struct LoginView: View {
         }
     }
 
+    /// The agreement, under the number (the user, 2026-11-25: 「我已阅读 放在 手机号下面 不要免责声明」, the reference's
+    /// look: a small ring, grey words, the two documents underlined). Not ticked for the person; the 免责声明 stays in
+    /// 设置 → 关于.
+    private var agreement: some View {
+        HStack(spacing: 4) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                agreed.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: agreed ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 15))
+                        .foregroundStyle(agreed ? Color.ink : Color.secondary)
+                        .contentTransition(.symbolEffect(.replace))
+                    Text("已阅读并同意")
+                }
+            }
+            .buttonStyle(.plain)
+            Button { reading = .terms } label: { Text("服务协议").underline() }.buttonStyle(.plain)
+            Text("和")
+            Button { reading = .privacy } label: { Text("隐私政策").underline() }.buttonStyle(.plain)
+        }
+        .font(.footnote)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .modifier(Shake(amount: nudge))
+        .onChange(of: agreed) { _, on in if on && message.hasPrefix("请先阅读") { message = "" } }
+        .sheet(item: $reading) { LegalSheet(doc: $0) }
+    }
+
     private var bottomBar: some View {
         VStack(spacing: 12) {
             if step != .code {
                 Button {
                     // The documents first: a shake of the line and a word, not the code.
-                    guard agreed else {
-                        message = "请先阅读并勾选同意服务协议、隐私政策和免责声明"
-                        withAnimation(.spring(response: 0.25, dampingFraction: 0.3)) { nudge += 1 }
-                        UINotificationFeedbackGenerator().notificationOccurred(.warning)
-                        return
-                    }
+                    guard agreed else { askAgreement(); return }
                     Task { step == .phone ? await askCode() : await signIn() }
                 } label: {
                     Text(step == .phone ? "发送验证码" : "登录")
@@ -226,28 +255,6 @@ struct LoginView: View {
                 .buttonBorderShape(.capsule)
                 .disabled(busy || !ready)
             }
-            // The agreement (the user, 2026-11-25: no 30 天内免登录, no 用账号密码登录 — the phone number only).
-            HStack(alignment: .top, spacing: 6) {
-                Toggle(isOn: $agreed) { EmptyView() }
-                    .toggleStyle(CheckToggle())
-                    .labelsHidden()
-                HStack(spacing: 0) {
-                    Text("我已阅读并同意").onTapGesture { agreed.toggle() }
-                    ForEach(LegalDoc.allCases) { d in
-                        Button("《" + d.title + "》") { reading = d }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(Color(red: 0.36, green: 0.52, blue: 0.92))
-                    }
-                }
-                .font(.footnote)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(.secondary)
-            .modifier(Shake(amount: nudge))
-            .onChange(of: agreed) { _, on in if on && message.hasPrefix("请先阅读") { message = "" } }
-            .sheet(item: $reading) { LegalSheet(doc: $0) }
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 8)
@@ -269,6 +276,13 @@ struct LoginView: View {
         code = ""
         step = .phone
         focus = .phone
+    }
+
+    /// The documents first: a shake of the line and a word, not the code.
+    private func askAgreement() {
+        message = "请先阅读并勾选同意服务协议和隐私政策"
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.3)) { nudge += 1 }
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
     }
 
     private func askCode(again: Bool = false) async {

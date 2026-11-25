@@ -248,7 +248,7 @@ struct PhoneSettings: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmOut = false
     @State private var avatar = false
-    @AppStorage(Appearance.key) private var appearance = Appearance.system
+    @AppStorage(Appearance.key) private var appearance = Appearance.dark
 
     var body: some View {
         NavigationStack {
@@ -258,18 +258,21 @@ struct PhoneSettings: View {
                         let me = chat.people[chat.me]
                         Avatar(name: me?.name ?? session.person?.login ?? "我", image: me?.photo, size: 76)
                         Text(me?.name ?? session.person?.login ?? "").font(.title3.weight(.semibold))
-                        Text([session.person?.dept ?? "", session.person?.login ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                        Text([session.person?.deptText ?? "", session.person?.roleText ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity).listRowBackground(Color.clear)
                 }
                 Section("账号") {
                     Button { avatar = true } label: { Label("更换头像", systemImage: "person.crop.circle") }.foregroundStyle(.primary)
-                    if let d = session.person?.dept, !d.isEmpty {
+                    if let d = session.person?.deptText, !d.isEmpty {
                         LabeledContent { Text(d) } label: { Label("部门", systemImage: "building.2") }
                     }
-                    if let r = session.person?.role, !r.isEmpty {
+                    if let r = session.person?.roleText, !r.isEmpty {
                         LabeledContent { Text(r) } label: { Label("角色", systemImage: "person.badge.key") }
+                    }
+                    if let l = session.person?.login, !l.isEmpty {
+                        LabeledContent { Text(l) } label: { Label("登录名", systemImage: "at") }
                     }
                 }
                 // company-phone-dark-v1 (the user, 2026-11-25: 「设置里增加一个黑夜模式」).

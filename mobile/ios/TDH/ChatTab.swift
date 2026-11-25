@@ -37,6 +37,21 @@ struct ChatWebView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKUIDelegate, WKNavigationDelegate {
+        /// A page that did not load (company-phone-diag-v1): why, for the page that owns this view.
+        var onFail: ((String) -> Void)?
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            onFail?("load: " + (error as NSError).description)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            onFail?("page: " + (error as NSError).description)
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            onFail?("web-process-ended")
+        }
+
         // Voice messages and calls: the microphone, for this page only (it is the relay's own address).
         func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
                      initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,

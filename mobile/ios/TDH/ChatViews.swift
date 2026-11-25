@@ -499,6 +499,12 @@ struct ChatRoom: View {
     @State private var olderBusy = false
     @State private var noMore = false
     @State private var entered = false
+    /// The first screen is laid out and at the bottom (the user's video, 2026-11-26: the chat opened blurred, jumped to
+    /// the middle and back): only then do earlier messages load at the top and new ones animate in.
+    @State private var settled = false
+    /// The list is shown once it is whole and at its bottom (the user, 2026-11-26: 「进聊天界面…明显感觉卡顿」): the
+    /// messages come from the server one by one, and showing each as it came drew the list forty times, jumping.
+    @State private var shown = false
 
     private var t: ChatTopic? { chat.topics.first { $0.topic == topic } }
     private var list: [ChatMessage] { chat.messages[topic] ?? [] }
@@ -506,30 +512,60 @@ struct ChatRoom: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 12) {
-                    if !list.isEmpty && !noMore {
-                        ProgressView().opacity(olderBusy ? 1 : 0).frame(height: 24)
-                            .onAppear { Task { await older(proxy) } }
+                VStack(spacing: 12) {
+                    // Earlier messages when asked for (the user, 2026-11-26: 「进聊天界面依然还会反复上下跳动」): loading them by
+                    // themselves whenever the top showed moved the whole list again and again.
+                    if settled && list.count >= 20 && !noMore {
+                        Button { Task { await older(proxy) } } label: {
+                            if olderBusy { ProgressView().controlSize(.small) } else { Text("查看更早的消息").font(.footnote) }
+                        }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .glass(Capsule())
+                        .frame(height: 32)
                     }
                     ForEach(Array(list.enumerated()), id: \.element.id) { i, m in
                         if i == 0 || m.at.timeIntervalSince(list[i - 1].at) > 300 {
                             Text(m.at.chatWhen == "刚刚" ? "刚刚" : stamp(m.at)).font(.caption).foregroundStyle(.tertiary).padding(.top, 4)
                         }
                         bubble(m).id(m.id)
-                            .transition(.rise)
+                            .transition(settled ? .rise : .identity)
                     }
                     Color.clear.frame(height: 1).id("end")
                 }
                 .padding(.horizontal, 14)
                 .padding(.top, 8)
-                .animation(.spring(response: 0.45, dampingFraction: 0.85), value: list.count)
+                .animation(settled ? .spring(response: 0.45, dampingFraction: 0.85) : nil, value: list.count)
             }
             .defaultScrollAnchor(.bottom)
+            .keepsBottomOnResize()
+            .opacity(shown ? 1 : 0)
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: list.last?.id) { _, _ in withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { proxy.scrollTo("end") } }
+            .onChange(of: list.last?.id) { _, _ in
+                if settled { withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { proxy.scrollTo("end") } } else { proxy.scrollTo("end") }
+            }
+            .task {
+                // A chat seen before in this run is there at once (its messages are kept); the fetch behind it changes
+                // nothing on screen unless something is new. One not seen yet waits for its messages, whole
+                // (ChatStore, company-phone-chat-load-v1).
+                if !list.isEmpty {
+                    proxy.scrollTo("end")
+                    shown = true
+                }
+                await chat.enter(topic)
+                entered = true
+                proxy.scrollTo("end")
+                try? await Task.sleep(nanoseconds: 60_000_000)
+                proxy.scrollTo("end")
+                if !shown { withAnimation(.easeOut(duration: 0.12)) { shown = true } }
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                settled = true
+            }
         }
         .overlay {
-            if list.isEmpty {
+            if !shown {
+                ProgressView()
+            } else if list.isEmpty {
                 if entered {
                     VStack(spacing: 10) {
                         Avatar(name: t?.name ?? "", image: t?.photo, size: 64)
@@ -570,10 +606,6 @@ struct ChatRoom: View {
             PlusSheet { p in Task { await send(p) } }.environmentObject(desk)
         }
         .sheet(item: $file) { f in ChatFileSheet(file: f).environmentObject(desk).environmentObject(session) }
-        .task {
-            await chat.enter(topic)
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { entered = true }
-        }
         .onDisappear { chat.leave(topic) }
     }
 
@@ -649,7 +681,7 @@ struct ChatRoom: View {
         case .image:
             Button { Task { await open(a, m) } } label: {
                 Group {
-                    if let d = a.inline, let img = UIImage(data: d) {
+                    if let d = a.inline, let img = ThumbCache.image(d, key: a.ref ?? "\(m.seq)-\(d.count)") {
                         Image(uiImage: img).resizable().scaledToFill()
                     } else {
                         Color.secondary.opacity(0.12).overlay(Image(systemName: "photo").foregroundStyle(.secondary))
@@ -719,7 +751,11 @@ struct ChatRoom: View {
         let anchor = list.first?.id
         let more = await chat.loadOlder(topic)
         olderBusy = false
-        if !more { noMore = true } else if let anchor { proxy.scrollTo(anchor, anchor: .top) }
+        if !more { noMore = true } else if let anchor {
+            // iOS 18 keeps the bottom where it was as messages come in above (keepsBottomOnResize): nothing to move.
+            // Before it, the first message seen stays at the top.
+            if #unavailable(iOS 18.0) { proxy.scrollTo(anchor, anchor: .top) }
+        }
     }
 
     private func stamp(_ d: Date) -> String {
@@ -983,5 +1019,31 @@ private struct MinutesFrame: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+
+extension View {
+    /// A chat's list keeps its bottom where it is when what is above it changes size (a picture loading), iOS 18 on.
+    @ViewBuilder func keepsBottomOnResize() -> some View {
+        if #available(iOS 18.0, *) { defaultScrollAnchor(.bottom, for: .sizeChanges) } else { self }
+    }
+}
+
+
+/// Pictures in a chat, decoded once (the user, 2026-11-26: 「进聊天界面以后 明显感觉卡顿」): the list is drawn whole, and
+/// decoding every picture again at each redraw (a new message, a read mark) made it stutter.
+enum ThumbCache {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 300
+        return c
+    }()
+
+    static func image(_ data: Data, key: String) -> UIImage? {
+        if let hit = cache.object(forKey: key as NSString) { return hit }
+        guard let img = UIImage(data: data)?.preparingForDisplay() ?? UIImage(data: data) else { return nil }
+        cache.setObject(img, forKey: key as NSString)
+        return img
     }
 }

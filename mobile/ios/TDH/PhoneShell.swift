@@ -129,6 +129,7 @@ struct ArtifactPager: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.capsule)
+                    .tint(Color(red: 0.27, green: 0.45, blue: 0.93)).foregroundStyle(.white)
                     .disabled(asking)
                 }
                 .font(.body.weight(.semibold))
@@ -156,7 +157,7 @@ struct ArtifactPager: View {
 
     private func ask() async {
         asking = true
-        let ok = await desk.askArtifact(item.path, title: item.title)
+        let ok = await desk.askArtifact(item.path, title: item.title, fresh: true)
         asking = false
         if ok {
             tab = 1
@@ -487,7 +488,8 @@ struct ChatFileSheet: View {
                     Button { Task { await ask() } } label: {
                         Label(asking ? "正在放进去…" : "交给 AI", systemImage: "sparkles").frame(maxWidth: .infinity).frame(height: 48)
                     }
-                    .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).disabled(asking)
+                    .buttonStyle(.borderedProminent).buttonBorderShape(.capsule)
+                    .tint(Color(red: 0.27, green: 0.45, blue: 0.93)).foregroundStyle(.white).disabled(asking)
                 }
                 .font(.body.weight(.semibold))
                 .padding(.horizontal, 20).padding(.vertical, 8)
@@ -504,7 +506,7 @@ struct ChatFileSheet: View {
 
     private func ask() async {
         asking = true
-        let ok = await desk.askFile(file)
+        let ok = await desk.askFile(file, fresh: true)
         asking = false
         if ok {
             dismiss()

@@ -168,6 +168,77 @@ extension Date {
 
 // MARK: holding to talk
 
+/// The microphone opens and closes off the main thread (company-phone-voice-fast-v1; the user, 2026-11-26: 「语音按钮
+/// 响应延迟」): opening it takes a few tenths of a second, and on the main thread that was time in which the press
+/// showed nothing — no panel, no tap. One queue, so an open and a close never cross.
+enum Mic {
+    static let queue = DispatchQueue(label: "tdh.mic", qos: .userInitiated)
+
+    /// The input's sample rate once the engine runs; nil when the microphone could not be opened.
+    static func open(_ engine: AVAudioEngine, mode: AVAudioSession.Mode, options: AVAudioSession.CategoryOptions,
+                     buffer: AVAudioFrameCount, tap: @escaping (AVAudioPCMBuffer) -> Void) async -> Double? {
+        await withCheckedContinuation { (cont: CheckedContinuation<Double?, Never>) in
+            queue.async {
+                do {
+                    let s = AVAudioSession.sharedInstance()
+                    // Nothing waits before the microphone (the user, 2026-11-26: 「它把前面给我截了」 — what is said in
+                    // the first tenths of a second after the press has to be heard).
+                    if s.category != .playAndRecord || s.mode != mode || s.categoryOptions != options {
+                        try s.setCategory(.playAndRecord, mode: mode, options: options)
+                    }
+                    // Taps stay allowed while it records (off by default then: 上滑取消 and the release had none).
+                    try? s.setAllowHapticsAndSystemSoundsDuringRecording(true)
+                    try s.setActive(true, options: .notifyOthersOnDeactivation)
+                    let input = engine.inputNode
+                    let fmt = input.outputFormat(forBus: 0)
+                    input.removeTap(onBus: 0)
+                    input.installTap(onBus: 0, bufferSize: buffer, format: fmt) { buf, _ in tap(buf) }
+                    engine.prepare()
+                    try engine.start()
+                    cont.resume(returning: fmt.sampleRate)
+                } catch {
+                    Diag.say("voice", "mic: \((error as NSError).domain) \((error as NSError).code)")
+                    cont.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    static func close(_ engine: AVAudioEngine) {
+        queue.async {
+            if engine.isRunning { engine.stop() }
+            engine.inputNode.removeTap(onBus: 0)
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+}
+
+/// What the microphone has heard in this hold, kept so that a recogniser that fails can be replaced by the other one
+/// (on the phone / Apple's servers) without the person saying it again.
+final class SpeechFeed: @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var kept: [AVAudioPCMBuffer] = []
+
+    func take(_ buf: AVAudioPCMBuffer) {
+        lock.lock(); defer { lock.unlock() }
+        if kept.count < 4000 { kept.append(buf) }
+        request?.append(buf)
+    }
+
+    func give(to req: SFSpeechAudioBufferRecognitionRequest) {
+        lock.lock(); defer { lock.unlock() }
+        request = req
+        for b in kept { req.append(b) }
+    }
+
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        request = nil
+        kept = []
+    }
+}
+
 /// Speech to text while a finger holds 按住说话 (on the phone where possible), with the voice's loudness for the wave.
 @MainActor
 final class Dictation: ObservableObject {
@@ -176,93 +247,163 @@ final class Dictation: ObservableObject {
     @Published var problem = ""
 
     private let engine = AVAudioEngine()
+    private let feed = SpeechFeed()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN"))
     private var finished: CheckedContinuation<String, Never>?
+    /// Still held (a release while the microphone was opening must not leave it open).
+    private var wanted = false
+    private var ended = false
+    private var fellBack = false
+    private var round = 0
+    /// How long the questions to the system took at the last press (for the phone's own report).
+    private(set) var preludeMs = 0
+
+    /// The microphone: no wait once it is allowed (or refused); the system asks only the first time.
+    static func micAllowed() async -> Bool {
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return true
+        case .denied: return false
+        default: return await AVAudioApplication.requestRecordPermission()
+        }
+    }
+
+    /// Whether the recogniser works on the phone itself; nil until the system has answered (ask).
+    private var onDeviceKnown: Bool?
+    /// The microphone is allowed (it cannot be taken back while the app runs: iOS ends the app when it is).
+    static var micGranted = false
+
+    private struct Answers: Sendable {
+        var speech: SFSpeechRecognizerAuthorizationStatus
+        var available: Bool
+        var onDevice: Bool
+        var mic: AVAudioApplication.recordPermission
+    }
+
+    private static func ask(_ rec: SFSpeechRecognizer?) async -> Answers {
+        await Task.detached(priority: .userInitiated) {
+            Answers(speech: SFSpeechRecognizer.authorizationStatus(), available: rec?.isAvailable ?? false,
+                    onDevice: rec?.supportsOnDeviceRecognition ?? false, mic: AVAudioApplication.shared.recordPermission)
+        }.value
+    }
+
+    /// Before the first press (the button is on screen): what is already allowed is learned now, nothing is asked of
+    /// the person here.
+    func warm() async {
+        guard onDeviceKnown == nil || !Self.micGranted else { return }
+        let pre = await Self.ask(recognizer)
+        if pre.mic == .granted { Self.micGranted = true }
+        if pre.speech == .authorized, pre.available, recognizer != nil { onDeviceKnown = pre.onDevice }
+    }
 
     func start() async -> Bool {
         problem = ""
         text = ""
-        let speech = await withCheckedContinuation { c in SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0) } }
-        guard speech == .authorized else { problem = "要在「设置 → TDH」里打开语音识别"; return false }
-        guard await AVAudioApplication.requestRecordPermission() else { problem = "要在「设置 → TDH」里打开麦克风"; return false }
-        guard let recognizer, recognizer.isAvailable else { problem = "语音识别现在用不了，请打字"; return false }
-        #if DEBUG
-        print("DICT start auth=\(speech.rawValue) onDevice=\(recognizer.supportsOnDeviceRecognition)")
-        #endif
-        do {
-            let s = AVAudioSession.sharedInstance()
-            try s.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
-            try s.setActive(true, options: .notifyOthersOnDeactivation)
-            let req = SFSpeechAudioBufferRecognitionRequest()
-            req.shouldReportPartialResults = true
-            if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = false }
-            request = req
-            let input = engine.inputNode
-            let fmt = input.outputFormat(forBus: 0)
-            #if DEBUG
-            print("DICT input format rate=\(fmt.sampleRate) ch=\(fmt.channelCount)")
-            #endif
-            input.removeTap(onBus: 0)
-            input.installTap(onBus: 0, bufferSize: 1024, format: fmt) { [weak self] buf, _ in
-                req.append(buf)
-                guard let ch = buf.floatChannelData?[0] else { return }
-                var sum: Float = 0
-                for i in 0..<Int(buf.frameLength) { sum += ch[i] * ch[i] }
-                let rms = sqrt(sum / Float(max(buf.frameLength, 1)))
-                let v = CGFloat(min(1, rms * 12))
-                #if DEBUG
-                if v > 0.05 { print("DICT level \(String(format: "%.2f", v))") }
-                #endif
-                Task { @MainActor in self?.level = v }
+        wanted = true
+        ended = false
+        fellBack = false
+        feed.reset()
+        // The system's answers (speech and the microphone allowed, the recogniser there, on the phone or not) are asked
+        // off the main thread and once: measured 2026-11-26, they took 0.44 s, and on the main thread right after the
+        // press that was the time the press showed nothing (the user: 「要按0.5秒以后才会震动才有效 我希望是实时的」).
+        // warm() has them before the first press; a press then goes straight to the microphone.
+        let t0 = ProcessInfo.processInfo.systemUptime
+        if onDeviceKnown == nil || !Self.micGranted {
+            let pre = await Self.ask(recognizer)
+            var speech = pre.speech
+            if speech == .notDetermined {
+                speech = await withCheckedContinuation { c in SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0) } }
             }
-            engine.prepare()
-            try engine.start()
-            task = recognizer.recognitionTask(with: req) { [weak self] r, err in
-                Task { @MainActor in
-                    guard let self else { return }
-                    if let r { self.text = r.bestTranscription.formattedString }
-                    #if DEBUG
-                    print("DICT result text=\(r?.bestTranscription.formattedString ?? "-") final=\(r?.isFinal ?? false) err=\(err.map { "\($0)" } ?? "-")")
-                    #endif
-                    if let err, self.text.isEmpty {
-                        // The recogniser itself failed (no words yet): say so, rather than 「没听清」.
+            guard speech == .authorized else { problem = "要在「设置 → TDH」里打开语音识别"; return false }
+            var mic = pre.mic == .granted
+            if pre.mic == .undetermined { mic = await AVAudioApplication.requestRecordPermission() }
+            guard mic else { problem = "要在「设置 → TDH」里打开麦克风"; return false }
+            guard recognizer != nil, pre.available else {
+                Diag.say("voice", "recognizer not available")
+                problem = "语音识别现在用不了，请打字"
+                return false
+            }
+            Self.micGranted = true
+            onDeviceKnown = pre.onDevice
+            // The permission sheets took the finger off the button: nothing to record for this press.
+            guard wanted else { return true }
+        }
+        preludeMs = Int((ProcessInfo.processInfo.systemUptime - t0) * 1000)
+        let onDevice = onDeviceKnown ?? false
+        let feed = self.feed
+        let rate = await Mic.open(engine, mode: .measurement, options: [.duckOthers, .defaultToSpeaker], buffer: 1024) { [weak self] buf in
+            feed.take(buf)
+            guard let ch = buf.floatChannelData?[0] else { return }
+            var sum: Float = 0
+            for i in 0..<Int(buf.frameLength) { sum += ch[i] * ch[i] }
+            let v = CGFloat(min(1, sqrt(sum / Float(max(buf.frameLength, 1))) * 12))
+            Task { @MainActor in self?.level = v }
+        }
+        guard rate != nil else { problem = "麦克风没打开"; stopAudio(); return false }
+        // Let go while the microphone was opening: closed again, nothing heard.
+        guard wanted else { stopAudio(); return true }
+        // On the phone itself when it can (the first words come sooner, and neither 5G nor Apple's daily limit for its
+        // servers' recogniser can break it); the other one takes over if this one fails (recognize).
+        recognize(onDevice: onDevice)
+        return true
+    }
+
+    private func recognize(onDevice: Bool) {
+        guard let recognizer else { return }
+        let req = SFSpeechAudioBufferRecognitionRequest()
+        req.shouldReportPartialResults = true
+        req.requiresOnDeviceRecognition = onDevice
+        req.addsPunctuation = true
+        request = req
+        feed.give(to: req)
+        if ended { req.endAudio() }
+        round += 1
+        let mine = round
+        task = recognizer.recognitionTask(with: req) { [weak self] r, err in
+            Task { @MainActor in
+                guard let self, self.round == mine else { return }
+                if let r { self.text = r.bestTranscription.formattedString }
+                if let err, self.text.isEmpty {
+                    let e = err as NSError
+                    // 1110: nothing was said (「没听清」 is the word for that, not a failure).
+                    let silence = e.domain == "kAFAssistantErrorDomain" && e.code == 1110
+                    if !silence {
+                        Diag.say("voice", "recognizer \(onDevice ? "device" : "server"): \(e.domain) \(e.code)")
+                        // The other recogniser, with what was already said (once).
+                        if !self.fellBack, onDevice {
+                            self.fellBack = true
+                            self.recognize(onDevice: !onDevice)
+                            return
+                        }
                         self.problem = "语音识别现在用不了，请打字"
-                        _ = err
                     }
-                    if err != nil || (r?.isFinal ?? false) { self.done() }
                 }
+                if err != nil || (r?.isFinal ?? false) { self.done() }
             }
-            return true
-        } catch {
-            #if DEBUG
-            print("DICT start failed \(error)")
-            #endif
-            problem = "麦克风没打开"
-            stopAudio()
-            return false
         }
     }
 
-    /// The words heard, once the recognizer has caught up (two seconds at most).
+    /// The words heard, once the recognizer has caught up (three seconds at most).
     func finish() async -> String {
-        #if DEBUG
-        print("DICT finish task=\(task != nil) text=\(text)")
-        #endif
+        wanted = false
+        ended = true
         stopAudio()
         request?.endAudio()
         if task == nil { return text }
         return await withCheckedContinuation { c in
             finished = c
             Task {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
                 done()
             }
         }
     }
 
     func cancel() {
+        wanted = false
+        ended = true
+        round += 1
         stopAudio()
         task?.cancel()
         task = nil
@@ -280,10 +421,8 @@ final class Dictation: ObservableObject {
     }
 
     private func stopAudio() {
-        if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)
         level = 0
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        Mic.close(engine)
     }
 }
 
@@ -308,44 +447,42 @@ final class VoiceRecorder: ObservableObject {
     private var tick: Timer?
     var onLimit: (() -> Void)?
 
+    /// Still held (a release while the microphone was opening must not leave it open).
+    private var wanted = false
+
     func start() async -> Bool {
         problem = ""
-        guard await AVAudioApplication.requestRecordPermission() else { problem = "要在「设置 → TDH」里打开麦克风"; return false }
-        do {
-            let s = AVAudioSession.sharedInstance()
-            try s.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP])
-            try s.setActive(true)
-            samples = []
-            peaks = []
-            peak = 0
-            count = 0
-            let input = engine.inputNode
-            let fmt = input.outputFormat(forBus: 0)
-            rate = fmt.sampleRate
-            input.removeTap(onBus: 0)
-            input.installTap(onBus: 0, bufferSize: 2048, format: fmt) { [weak self] buf, _ in
-                guard let ch = buf.floatChannelData?[0] else { return }
-                let n = Int(buf.frameLength)
-                let chunk = Array(UnsafeBufferPointer(start: ch, count: n))
-                Task { @MainActor in self?.take(chunk) }
-            }
-            engine.prepare()
-            try engine.start()
-            began = Date()
-            seconds = 0
-            tick = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.seconds = Int(Date().timeIntervalSince(self.began))
-                    if self.seconds >= Self.maxSeconds { self.onLimit?() }
-                }
-            }
-            return true
-        } catch {
-            problem = "麦克风没打开"
-            stopAudio()
-            return false
+        wanted = true
+        if !Dictation.micGranted {
+            let perm = await Task.detached(priority: .userInitiated) { AVAudioApplication.shared.recordPermission }.value
+            var mic = perm == .granted
+            if perm == .undetermined { mic = await AVAudioApplication.requestRecordPermission() }
+            guard mic else { problem = "要在「设置 → TDH」里打开麦克风"; return false }
+            Dictation.micGranted = true
+            guard wanted else { return true }
         }
+        samples = []
+        peaks = []
+        peak = 0
+        count = 0
+        let got = await Mic.open(engine, mode: .default, options: [.defaultToSpeaker, .allowBluetoothHFP], buffer: 2048) { [weak self] buf in
+            guard let ch = buf.floatChannelData?[0] else { return }
+            let chunk = Array(UnsafeBufferPointer(start: ch, count: Int(buf.frameLength)))
+            Task { @MainActor in self?.take(chunk) }
+        }
+        guard let got else { problem = "麦克风没打开"; stopAudio(); return false }
+        guard wanted else { stopAudio(); return true }
+        rate = got
+        began = Date()
+        seconds = 0
+        tick = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.seconds = Int(Date().timeIntervalSince(self.began))
+                if self.seconds >= Self.maxSeconds { self.onLimit?() }
+            }
+        }
+        return true
     }
 
     private func take(_ chunk: [Float]) {
@@ -362,21 +499,20 @@ final class VoiceRecorder: ObservableObject {
 
     /// The recording as WAV, its length in ms and its waveform; nil when it is under a second (too short to send).
     func finish() -> (wav: Data, ms: Int, preview: String)? {
+        wanted = false
         stopAudio()
         let ms = min(Self.maxSeconds * 1000, Int(Date().timeIntervalSince(began) * 1000))
         guard ms >= 1000, !samples.isEmpty else { problem = "说话时间太短"; return nil }
         return (Self.wav(samples, from: rate, to: 16000), ms, Self.preview(peaks))
     }
 
-    func cancel() { stopAudio(); samples = [] }
+    func cancel() { wanted = false; stopAudio(); samples = [] }
 
     private func stopAudio() {
         tick?.invalidate()
         tick = nil
-        if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)
         level = 0
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        Mic.close(engine)
     }
 
     /// Float samples at `from` Hz to 16-bit mono WAV at `to` Hz, each output sample the mean of its span (as encodeWav).
@@ -424,6 +560,8 @@ struct PhoneComposer: View {
     var placeholder = "有什么需要我做的？"
     /// What is attached and goes with the next message (names), shown above the field.
     var attached: [String] = []
+    /// Takes one out again (its ✕); nil where nothing can be attached.
+    var detach: ((String) -> Void)? = nil
     var busy = false
     var onSend: (String) -> Void
     var plus: () -> Void
@@ -434,11 +572,25 @@ struct PhoneComposer: View {
     @State private var typing = false
     @State private var text = ""
     @State private var holding = false
+    /// Ready before the press, so the tap is felt with the finger, not after it.
+    @State private var tap = UIImpactFeedbackGenerator(style: .medium)
     @State private var cancel = false
     @State private var note = ""
     @FocusState private var focus: Bool
 
     var body: some View {
+        composerBar
+            .overlay(alignment: .top) {
+                // Above the field, without taking room (the user: 「画面的4个选项一直跳动 闪烁重新排版」).
+                floating.alignmentGuide(.top) { $0[.bottom] + 8 }
+            }
+            .animation(.spring(response: 0.42, dampingFraction: 0.7), value: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .animation(.spring(response: 0.38, dampingFraction: 0.8), value: attached)
+            .animation(.spring(response: 0.2, dampingFraction: 0.86), value: holding)
+            .animation(.easeOut(duration: 0.2), value: note)
+    }
+
+    @ViewBuilder private var floating: some View {
         VStack(spacing: 8) {
             if holding {
                 HoldWave(cancel: cancel, level: onVoice == nil ? dictation.level : recorder.level,
@@ -451,6 +603,10 @@ struct PhoneComposer: View {
                     .glass(Capsule())
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+        }
+    }
+
+    private var composerBar: some View {
             GlassGroup(spacing: 16) {
                 HStack(alignment: .bottom, spacing: 8) {
                     VStack(alignment: .leading, spacing: 0) {
@@ -458,7 +614,16 @@ struct PhoneComposer: View {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 6) {
                                     ForEach(attached, id: \.self) { n in
-                                        Label(n, systemImage: "paperclip").font(.footnote.weight(.medium)).lineLimit(1)
+                                        HStack(spacing: 6) {
+                                            Label(n, systemImage: "paperclip").font(.footnote.weight(.medium)).lineLimit(1)
+                                            if let detach {
+                                                Button { detach(n) } label: {
+                                                    Image(systemName: "xmark.circle.fill").font(.footnote).foregroundStyle(.secondary)
+                                                }
+                                                .buttonStyle(.plain)
+                                                .accessibilityLabel("移除 " + n)
+                                            }
+                                        }
                                             .padding(.horizontal, 10).padding(.vertical, 6)
                                             .background(Color.ink.opacity(0.06), in: Capsule())
                                             .transition(.rise)
@@ -483,7 +648,23 @@ struct PhoneComposer: View {
                                         .font(.body.weight(.medium)).foregroundStyle(holding ? Color.secondary : Color.ink)
                                         .frame(maxWidth: .infinity, minHeight: 40)
                                         .contentShape(Rectangle())
-                                        .gesture(hold)
+                                        // The touch is taken by UIKit the moment it lands (PressSurface), not by a
+                                        // SwiftUI gesture: on the user's phone that gesture heard of the finger
+                                        // 0.78 s late (measured 2026-11-26; 0.01 s in the simulator).
+                                        .overlay {
+                                            PressSurface(down: { press($0) }, moved: { slid($0) },
+                                                         up: { gone in release(drop: gone || cancel) })
+                                        }
+                                        .accessibilityAddTraits(.isButton)
+                                        // The tap engine is kept awake while the button is there to be pressed (it
+                                        // sleeps again a second or two after each prepare): the press is felt at once.
+                                        .task {
+                                            await dictation.warm()
+                                            while !Task.isCancelled {
+                                                tap.prepare()
+                                                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                                            }
+                                        }
                                         .scaleEffect(holding ? 0.97 : 1)
                                         .transition(.blurReplace)
                                 }
@@ -502,7 +683,8 @@ struct PhoneComposer: View {
                         .padding(.horizontal, 6)
                         .frame(minHeight: 52)
                     }
-                    .glass(RoundedRectangle(cornerRadius: 26, style: .continuous), interactive: true)
+                    // Interactive glass only while typing: its own press would otherwise take the hold's touch first.
+                    .glass(RoundedRectangle(cornerRadius: 26, style: .continuous), interactive: typing)
                     if typing && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         // The send button comes out of the field like a drop pulling away (and melts back when emptied).
                         Button { submit() } label: {
@@ -515,34 +697,39 @@ struct PhoneComposer: View {
                     }
                 }
             }
-        }
-        .animation(.spring(response: 0.42, dampingFraction: 0.7), value: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        .animation(.spring(response: 0.38, dampingFraction: 0.8), value: attached)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: holding)
-        .animation(.easeOut(duration: 0.2), value: note)
     }
 
-    private var hold: some Gesture {
-        DragGesture(minimumDistance: 0)
-            .onChanged { v in
-                if !holding {
-                    holding = true
-                    cancel = false
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    Task {
-                        if onVoice != nil {
-                            recorder.onLimit = { release(drop: false) }
-                            if !(await recorder.start()) { holding = false; say(recorder.problem) }
-                        } else if !(await dictation.start()) {
-                            holding = false
-                            say(dictation.problem)
-                        }
-                    }
-                }
-                let c = v.translation.height < -60
-                if c != cancel { cancel = c; UISelectionFeedbackGenerator().selectionChanged() }
+    private static var presses = 0
+
+    /// The finger is down on 按住说话 (PressSurface): the tap and the panel first, the microphone after.
+    private func press(_ late: Int) {
+        guard !holding else { return }
+        tap.impactOccurred()
+        tap.prepare()
+        holding = true
+        cancel = false
+        let t0 = ProcessInfo.processInfo.systemUptime
+        Task {
+            if onVoice != nil {
+                recorder.onLimit = { release(drop: false) }
+                if !(await recorder.start()) { holding = false; say(recorder.problem) }
+            } else if !(await dictation.start()) {
+                holding = false
+                say(dictation.problem)
             }
-            .onEnded { _ in release(drop: cancel) }
+            // The phone's own numbers for this press (the first few of a run): how long the touch took to reach the
+            // app, the system's answers, the microphone open.
+            if Self.presses < 4 {
+                Self.presses += 1
+                Diag.say("voice", "press: touch→app \(late) ms, asking \(dictation.preludeMs) ms, mic open \(Int((ProcessInfo.processInfo.systemUptime - t0) * 1000)) ms")
+            }
+        }
+    }
+
+    private func slid(_ dy: CGFloat) {
+        guard holding else { return }
+        let c = dy < -60
+        if c != cancel { cancel = c; UISelectionFeedbackGenerator().selectionChanged() }
     }
 
     private func release(drop: Bool) {
@@ -909,6 +1096,12 @@ struct SwipeRow<Content: View>: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: 0) {
                         content.containerRelativeFrame(.horizontal).id(0)
+                            // VoiceOver: the row's actions as its own (swipe up/down on the row), not hidden tiles.
+                            .accessibilityActions {
+                                ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
+                                    Button(a.title) { a.act() }
+                                }
+                            }
                             .onGeometryChange(for: Bool.self) { $0.frame(in: .scrollView).minX < -full / 2 } action: { o in
                                 isOpen = o
                                 if o && open != id {
@@ -926,6 +1119,7 @@ struct SwipeRow<Content: View>: View {
                         .padding(.leading, gap)
                         .padding(.trailing, 10)
                         .frame(maxHeight: .infinity)
+                        .accessibilityHidden(true)
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .scrollTargetLayout()
@@ -996,4 +1190,87 @@ struct BetaBadge: View {
                 .overlay(Capsule().strokeBorder(Color.rim.opacity(0.8), lineWidth: 0.5))
         }
     }
+}
+
+
+/// 按住说话's touch, taken by UIKit the moment it lands (company-phone-voice-fast-v1; the user, 2026-11-26: 「微信就是
+/// 实时的 我们延迟真的有点高」). A recogniser's touchesBegan is called as the touch reaches the app, before any
+/// recogniser has decided anything and whatever others wait for: the press starts there, not when a gesture is
+/// recognised. `down` is given how long the touch took to reach the app (ms), for the phone's own report.
+struct PressSurface: UIViewRepresentable {
+    var down: (Int) -> Void
+    var moved: (CGFloat) -> Void
+    /// True when the system took the touch away (a call, a sheet): nothing is sent then.
+    var up: (Bool) -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView()
+        v.backgroundColor = .clear
+        let g = PressRecognizer(target: nil, action: nil)
+        g.cancelsTouchesInView = false
+        g.delaysTouchesBegan = false
+        g.delaysTouchesEnded = false
+        v.addGestureRecognizer(g)
+        wire(g)
+        return v
+    }
+
+    func updateUIView(_ v: UIView, context: Context) {
+        if let g = v.gestureRecognizers?.first(where: { $0 is PressRecognizer }) as? PressRecognizer { wire(g) }
+    }
+
+    private func wire(_ g: PressRecognizer) {
+        g.down = down
+        g.moved = moved
+        g.up = up
+    }
+}
+
+final class PressRecognizer: UIGestureRecognizer {
+    var down: ((Int) -> Void)?
+    var moved: ((CGFloat) -> Void)?
+    var up: ((Bool) -> Void)?
+    private var finger: UITouch?
+    private var startY: CGFloat = 0
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard finger == nil, let t = touches.first else { return }
+        finger = t
+        startY = t.location(in: nil).y
+        down?(Int((ProcessInfo.processInfo.systemUptime - t.timestamp) * 1000))
+        state = .began
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let t = finger, touches.contains(t) else { return }
+        moved?(t.location(in: nil).y - startY)
+        state = .changed
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let t = finger, touches.contains(t) else { return }
+        finish(gone: false)
+        state = .ended
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let t = finger, touches.contains(t) else { return }
+        finish(gone: true)
+        state = .cancelled
+    }
+
+    /// Ended by UIKit without a last touch event (another recogniser took over): the hold is let go all the same.
+    override func reset() {
+        super.reset()
+        finish(gone: true)
+    }
+
+    private func finish(gone: Bool) {
+        guard finger != nil else { return }
+        finger = nil
+        up?(gone)
+    }
+
+    /// Nothing else on the page takes this touch away from the button.
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
 }

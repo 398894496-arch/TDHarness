@@ -864,6 +864,8 @@ def login_payload(login: str) -> dict | None:
         "login": login,
         "role": row.get("role"),
         "dept": row.get("dept"),
+        # company-phone-profile-v1: the department's name as people read it (the desk shows 公司, not "company").
+        "dept_name": next((d["name"] for d in public_depts() if d["id"] == row.get("dept")), row.get("dept") or ""),
         "personal": row.get("personal"),
         "org": row.get("org"),
         "gw_token": mint_token(pid),
@@ -2271,7 +2273,57 @@ def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
     if what == "push":
         # company-phone-push-v1: a phone of this person, for notifications (on: false forgets it).
         return 200, push.register(TOKEN_STORE.parent, login, str(payload.get("token") or ""),
-                                  str(payload.get("env") or "sandbox"), payload.get("on", True) is not False)
+                                  str(payload.get("env") or "sandbox"), payload.get("on", True) is not False,
+                                  str(payload.get("device_id") or ""))
+    if what == "stash":
+        # company-phone-stash-v1 (the user, 2026-11-26: 「我已经选择了 交给AI…难道不应该文件和我的信息一起发给他吗」): a file the
+        # phone hands to the assistant, written into the person's own workspace (inbox/), so the question can say
+        # @inbox/<name> as a desk's drop does (a file card's content did not reach the model).
+        import base64, binascii
+        row = person(login) or {}
+        personal = str(row.get("personal") or "").strip()
+        if not personal or not Path(personal).is_dir():
+            return 404, {"ok": False, "error": "no-personal"}
+        try:
+            data = base64.b64decode(str(payload.get("data") or ""), validate=True)
+        except (binascii.Error, ValueError):
+            return 400, {"ok": False, "error": "bad-data"}
+        if not data or len(data) > 12 * 1024 * 1024:  # with base64 and JSON this stays under BODY_MAX and the entry's 20 MB
+            return 400, {"ok": False, "error": "size"}
+        raw = Path(str(payload.get("name") or "file")).name
+        safe = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", raw).strip(" .")[:120] or "file"
+        inbox = Path(personal) / "inbox"
+        inbox.mkdir(parents=True, exist_ok=True)
+        target = inbox / safe
+        if target.exists():
+            stem, dot, ext = safe.rpartition(".")
+            target = inbox / ((stem or safe) + time.strftime("-%H%M%S") + (dot + ext if stem else ""))
+        target.write_bytes(data)
+        return 200, {"ok": True, "rel": "inbox/" + target.name}
+    if what == "diag":
+        # company-phone-diag-v1: what went wrong on a phone (a page that did not open, a connection that did not), so a
+        # problem on someone's phone can be read here: who, where, the error; no message content is ever sent.
+        line = "%s %s %s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), login, re.sub(r"[^a-z-]", "", str(payload.get("where") or ""))[:20],
+                                    re.sub(r"[\r\n]+", " ", str(payload.get("what") or ""))[:400])
+        try:
+            with (TOKEN_STORE.parent.parent / "logs" / "phone-diag.log").open("a", encoding="utf-8") as fh:
+                fh.write(line)
+        except OSError:
+            pass
+        return 200, {"ok": True}
+    if what == "avatar":
+        # company-phone-profile-v1: the phone's picture for the roster (what the desks show), through the path the cloud
+        # entry lets through (/company/ext/chat/); the same check as 设置 → 头像 on a desk (action self).
+        pic = clean_avatar(payload.get("avatar"))
+        if pic is None:
+            return 400, {"ok": False, "error": "avatar-bad"}
+        data = load_roster()
+        row = next((r for r in data.get("people") or [] if isinstance(r, dict) and r.get("login") == login), None)
+        if row is None:
+            return 404, {"ok": False, "error": "no-such-person"}
+        row["avatar"] = pic
+        save_roster(data)
+        return 200, {"ok": True}
     if what == "ai-done":
         # company-phone-push-v1: the desk's kernel finished a turn of this person's conversation (company-shell).
         out = push.ai_done(TOKEN_STORE.parent, push.config(TOKEN_STORE.parent), login, str(payload.get("session") or ""),
@@ -2647,6 +2699,7 @@ def push_once() -> dict:
     runtime = TOKEN_STORE.parent
     apns = push.config(runtime)
     if apns is None or not push.devices(runtime):
+        PUSH_STATE.pop("last", None)  # no phone to tell: the first phone back starts from then, not from a backlog
         return {"skipped": "off"}
     names = dict(people_by_login())
     for k, v in CHAT_BOTS.items():

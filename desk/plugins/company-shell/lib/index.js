@@ -2701,8 +2701,12 @@ function addZhThinkSection(ctx) {
 // conversation ends here, the site is told (POST /company/ext/chat/ai-done) and notifies their phones (server/push.py).
 // The kernel keeps answering with no window open (the phone locked, the computer off), so this is where it is known.
 // Not for a subagent's own session, not for a turn the person stopped, and not for a quick one (under 15 s: they were
-// most likely watching it). The site gets the conversation's title and the answer's first words, nothing else.
+// most likely watching it), and not while a desk window on a computer is in front of the person (the page says so,
+// POST /company/desk/seen, every 30 s while it is visible and focused). The site gets the conversation's title and
+// the answer's first words, nothing else.
 const AI_PUSH_MIN_MS = 15000;
+const DESK_SEEN_MS = 60000;
+let deskSeenAt = 0;
 
 function textOfMessage(data) {
 	const seen = [];
@@ -2721,8 +2725,9 @@ function textOfMessage(data) {
 	return seen.join(" ").replace(/\s+/g, " ").slice(0, 160);
 }
 
-export function addAiDonePush(ctx, post) {
+export function addAiDonePush(ctx, post, seenAt) {
 	if (typeof ctx.on !== "function") return;
+	const lastSeen = seenAt || (() => deskSeenAt);
 	const send = post || ((body) => proxyCompany("/company/ext/chat/ai-done", "POST", Buffer.from(JSON.stringify(body))));
 	const started = new Map();
 	const said = new Map();
@@ -2742,6 +2747,7 @@ export function addAiDonePush(ctx, post) {
 			said.delete(id);
 			const kind = String((event.data && event.data.reason && event.data.reason.kind) || "");
 			if (kind === "aborted" || !t0 || Date.now() - t0 < AI_PUSH_MIN_MS) return;
+			if (Date.now() - lastSeen() < DESK_SEEN_MS) return;
 			const title = String(header.title || (session.metadata && session.metadata.title) || "");
 			Promise.resolve(send({ session: id, title: title.slice(0, 80), preview, reason: kind === "error" ? "error" : "done" })).catch(() => {});
 		} catch {
@@ -2839,6 +2845,20 @@ export function apply(ctx) {
 				}
 				res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
 				res.end(JSON.stringify({ ok: shown }));
+			},
+		}),
+	);
+	// company-phone-push-v1: a desk window on a computer is in front of the person (company-shell client, not the
+	// phone's page): the AI's answers are seen there, so their phones are not told. Desk page only (its header).
+	ctx.effect(() =>
+		web.register({
+			kind: "exact",
+			path: "/company/desk/seen",
+			handler: async (req, res) => {
+				const ok = req.headers["x-tdh-chat"] === "1" && String(req.method || "").toUpperCase() === "POST";
+				if (ok) deskSeenAt = Date.now();
+				res.writeHead(ok ? 200 : 403, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+				res.end(JSON.stringify({ ok }));
 			},
 		}),
 	);

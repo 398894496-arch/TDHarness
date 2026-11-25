@@ -3,7 +3,7 @@
 // APNs speaks HTTP/2 only and signs with ES256; this machine's Python has neither, its Node has both (node:http2,
 // node:crypto), so the sending is here and nothing is installed. One run: a JSON on stdin
 //   {"key_file", "key_id", "team_id", "topic", "items": [{"token", "env": "sandbox"|"production", "payload",
-//     "type": "alert"|"background", "collapse"?}]}
+//     "type": "alert"|"background", "collapse"?}], "token_cache"?: path}
 // and one JSON line on stdout: {"ok": true, "results": [{"token", "status", "reason"}]}. The key's contents never
 // leave this process; nothing about a notification is logged here.
 "use strict";
@@ -24,6 +24,32 @@ function providerToken(keyPem, keyId, teamId) {
 	const claims = b64url(JSON.stringify({ iss: teamId, iat: Math.floor(Date.now() / 1000) }));
 	const sig = crypto.sign("sha256", Buffer.from(head + "." + claims), { key: keyPem, dsaEncoding: "ieee-p1363" });
 	return head + "." + claims + "." + b64url(sig);
+}
+
+/**
+ * The token, reused: Apple refuses a new provider token more often than every 20 minutes
+ * (429 TooManyProviderTokenUpdates) and a run happens every few seconds, so one token is kept in job.token_cache
+ * and replaced after 50 minutes (under Apple's hour). It holds only the signed token, never the key.
+ */
+function cachedToken(keyPem, job) {
+	const now = Math.floor(Date.now() / 1000);
+	const file = job.token_cache;
+	if (file) {
+		try {
+			const c = JSON.parse(fs.readFileSync(file, "utf8"));
+			if (c && c.kid === job.key_id && c.team === job.team_id && typeof c.jwt === "string"
+				&& now - c.iat >= 0 && now - c.iat < 50 * 60) return c.jwt;
+		} catch {}
+	}
+	const jwt = providerToken(keyPem, job.key_id, job.team_id);
+	if (file) {
+		try {
+			const tmp = file + ".tmp";
+			fs.writeFileSync(tmp, JSON.stringify({ kid: job.key_id, team: job.team_id, iat: now, jwt }));
+			fs.renameSync(tmp, file);
+		} catch {}
+	}
+	return jwt;
 }
 
 function sendOne(session, jwt, topic, item) {
@@ -66,8 +92,10 @@ async function main() {
 	let raw = "";
 	for await (const chunk of process.stdin) raw += chunk;
 	const job = JSON.parse(raw || "{}");
+	if (!(job.items || []).length && !job.token_only) { process.stdout.write(JSON.stringify({ ok: true, results: [] }) + "\n"); return; }
 	const keyPem = fs.readFileSync(job.key_file, "utf8");
-	const jwt = providerToken(keyPem, job.key_id, job.team_id);
+	const jwt = cachedToken(keyPem, job);
+	if (job.token_only) { process.stdout.write(JSON.stringify({ ok: true, results: [], iat: JSON.parse(Buffer.from(jwt.split(".")[1], "base64url")).iat }) + "\n"); return; }
 	const results = [];
 	const byEnv = {};
 	for (const it of job.items || []) (byEnv[it.env === "production" ? "production" : "sandbox"] ||= []).push(it);

@@ -20,7 +20,7 @@ struct Banner: Identifiable, Equatable {
 
 /// The system's own notifications of a chat (company-phone-push-v1), cleared once it is read here or on the desk.
 enum ChatNotices {
-    static func clear(topic: String, upTo seq: Int) {
+    static func clear(topic: String, upTo seq: Int, done: (() -> Void)? = nil) {
         let c = UNUserNotificationCenter.current()
         c.getDeliveredNotifications { list in
             let ids = list.filter {
@@ -28,6 +28,7 @@ enum ChatNotices {
                     && (($0.request.content.userInfo["seq"] as? Int) ?? 0) <= seq
             }.map(\.request.identifier)
             if !ids.isEmpty { c.removeDeliveredNotifications(withIdentifiers: ids) }
+            done?()
         }
     }
 }

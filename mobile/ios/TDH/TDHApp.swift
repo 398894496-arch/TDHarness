@@ -4,7 +4,9 @@ import SwiftUI
 struct TDHApp: App {
     @UIApplicationDelegateAdaptor(PushAppDelegate.self) private var appDelegate
     @StateObject private var session = Session()
-    @AppStorage(Appearance.key) private var appearance = Appearance.system
+    @AppStorage(Appearance.key) private var appearance = Appearance.dark
+
+    init() { Net.watchNetwork() }
 
     var body: some Scene {
         WindowGroup {
@@ -92,6 +94,22 @@ struct MainView: View {
         Binding(get: { calls.call != nil }, set: { if !$0 && calls.call?.state != "ended" { calls.hangup() } })
     }
 
+    private func revive() {
+        Task { @MainActor in
+            desk.frontAt = Date()
+            await desk.heal(full: true)
+            // Once more a moment later: a live connection iOS ended while the app was away is only known as ended
+            // now, and the page gets a few seconds to open another before it is loaded again.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                await desk.heal(full: false)
+            }
+            chat.check()
+            let chatBack = await ChatRelay.shared.revive()
+            if chatBack && calls.web.url != nil { calls.web.reload() }
+        }
+    }
+
     var body: some View {
         tabs
             .background(CallHost(web: calls.web).frame(width: 2, height: 2).opacity(0.01).allowsHitTesting(false))
@@ -117,7 +135,12 @@ struct MainView: View {
                 PushCenter.shared.opened = nil
                 follow(b)
             }
-            .onChange(of: unread) { _, n in PushCenter.shared.badge(n) }
+            // The badge follows the chats once they are loaded (also at launch, when the count may not change).
+            .onChange(of: unread) { _, n in if chat.loaded { PushCenter.shared.badge(n) } }
+            .onChange(of: chat.loaded, initial: true) { _, ok in if ok { PushCenter.shared.badge(unread) } }
+            // Back from the background: iOS may have closed the app's two local relays; bring them back on their ports and
+            // let their pages connect again (the user, 2026-11-26: 「新建会话提示新建会话失败」 after coming back).
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in revive() }
             .onChange(of: scheme, initial: true) { _, s in desk.setDark(s == .dark) }
             .onChange(of: tab) { _, t in desk.aiVisible = t == 1 }
             .onAppear { desk.aiVisible = tab == 1 }
@@ -137,14 +160,17 @@ struct MainView: View {
             .environmentObject(chat)
             .environmentObject(calls)
             .sheet(isPresented: $showSettings) { PhoneSettings().environmentObject(chat) }
-            .fullScreenCover(isPresented: $session.needsAvatar) { AvatarSetupView().environmentObject(session) }
+            // The first picture: the chat card read before it was set is read again, so 设置 shows it at once.
+            .fullScreenCover(isPresented: $session.needsAvatar, onDismiss: { chat.refreshCard() }) { AvatarSetupView().environmentObject(session) }
             .onReceive(NotificationCenter.default.publisher(for: .tdhShowDesk)) { _ in tab = 1 }
             .task {
                 // The desk and the chat start at sign-in, whichever tab is in front, so each is ready when opened.
                 guard let p = session.person else { return }
                 Task { await PushCenter.shared.start(gwToken: p.gwToken) }
+                Diag.token = p.gwToken
                 chat.start(login: p.login, gwToken: p.gwToken)
                 async let callsUp: Void = calls.start(login: p.login, gwToken: p.gwToken)
+                desk.prime(login: p.login)
                 await desk.start(token: p.gwToken)
                 await callsUp
                 #if DEBUG
@@ -199,17 +225,18 @@ struct MainView: View {
     @ViewBuilder private var tabView: some View {
         if #available(iOS 18.0, *) {
             TabView(selection: $tab) {
+                // New answers wait in History, where their conversations are (the user, 2026-11-26).
                 Tab("History", systemImage: "clock.arrow.circlepath", value: 0) { HistoryPage(tab: $tab, showSettings: $showSettings) }
-                Tab("AI", systemImage: "sparkles", value: 1) { DeskTab(showSettings: $showSettings) }
                     .badge(desk.answered.count)
+                Tab("AI", systemImage: "sparkles", value: 1) { DeskTab(showSettings: $showSettings) }
                 Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: 2) { ChatListPage(showSettings: $showSettings) }
                     .badge(unread)
                 Tab("Docs", systemImage: "doc.text", value: 3) { DocsPage(tab: $tab, showSettings: $showSettings) }
             }
         } else {
             TabView(selection: $tab) {
-                HistoryPage(tab: $tab, showSettings: $showSettings).tabItem { Label("History", systemImage: "clock.arrow.circlepath") }.tag(0)
-                DeskTab(showSettings: $showSettings).tabItem { Label("AI", systemImage: "sparkles") }.tag(1).badge(desk.answered.count)
+                HistoryPage(tab: $tab, showSettings: $showSettings).tabItem { Label("History", systemImage: "clock.arrow.circlepath") }.tag(0).badge(desk.answered.count)
+                DeskTab(showSettings: $showSettings).tabItem { Label("AI", systemImage: "sparkles") }.tag(1)
                 ChatListPage(showSettings: $showSettings).tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }.tag(2).badge(unread)
                 DocsPage(tab: $tab, showSettings: $showSettings).tabItem { Label("Docs", systemImage: "doc.text") }.tag(3)
             }
