@@ -294,6 +294,85 @@ if [ -f "$ROOT/mac-tunnel.sh" ]; then
   boot_status share
   BOOT_STATUS="$BOOT_STATUS" bash "$ROOT/mac-tunnel.sh" "$ROOT" "$NODEBIN" "https://{{TDH_HOST}}:8443" || true
 fi
+# company-desk-server-mode-v1: a person switched to the desk on the company server (the sign-in said server_desk;
+# mac-company-login.js keeps it in server.desk) gets no memory disk, no seat and no kernel on this Mac. Only
+# desk-hub-relay.js listens on 17803: the window loads http://127.0.0.1:17803/ as always and the relay passes it on to
+# https://{{TDH_HOST}}:8443/desk-hub/ with the sign-in token. The relay is a node of this desk, so mac-resolve.js (in
+# NODE_OPTIONS) picks the address each time it dials (the office LAN, the tunnel, Tailscale): a laptop leaving the
+# office keeps its desk, which a fixed --connect would not. TDH_SERVER_DESK=0 keeps the local desk; =1 asks for the
+# server's desk whatever the sign-in said (a test against a people service not updated yet; the hub still checks).
+SERVER_DESK=0
+if [ "${TDH_SERVER_DESK:-}" != 0 ] && [ -f "$ROOT/desk-hub-relay.js" ]; then
+  if [ "${TDH_SERVER_DESK:-}" = 1 ] || [ "$( { tr -d '\r\n' < "$HOME/.dsh-company-rc8/server.desk"; } 2>/dev/null || true)" = 1 ]; then
+    SERVER_DESK=1
+  fi
+fi
+if [ "$SERVER_DESK" = 1 ]; then
+  echo "SERVER_DESK=1"
+  # The share stays for Finder; the desk on the server does not need it here, so it does not stop the start.
+  boot_status share
+  if [ -x "$ROOT/mac-mount-company.sh" ]; then bash "$ROOT/mac-mount-company.sh" || echo "MOUNT_FAIL=server-desk"; fi
+  boot_status agent
+  PORT="${TDH_DESK_PORT:-17803}"
+  for pid in $(/usr/sbin/lsof -nP -t -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true); do kill "$pid" 2>/dev/null || true; done
+  for _ in $(seq 1 8); do /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break; sleep 0.25; done
+  # The window opens the last "dsh web:" line of web-runtime.out; a local desk's old line must not be it.
+  if [[ -s "$DSH_HOME/web-runtime.out" ]]; then mv -f "$DSH_HOME/web-runtime.out" "$DSH_HOME/web-runtime.out.prev" || true; fi
+  : > "$DSH_HOME/web-runtime.out"
+  RELAY_CA=()
+  [ -f "$ROOT/company-ca.crt" ] && RELAY_CA=(--ca "$ROOT/company-ca.crt")
+  HUB_SITE="https://{{TDH_HOST}}:8443"
+  [ -n "${TDH_DESK_HUB_SITE:-}" ] && HUB_SITE="$TDH_DESK_HUB_SITE"
+  nohup "$NODEBIN" "$ROOT/desk-hub-relay.js" --site "$HUB_SITE" --port "$PORT" \
+    --token-file "$TOKFILE" "${RELAY_CA[@]+"${RELAY_CA[@]}"}" >> "$DSH_HOME/desk-hub-relay.log" 2>&1 &
+  RELAY_PID=$!
+  echo "$RELAY_PID" > "$HOME/.dsh-company-rc8/desk-hub-relay.pid"
+  echo "RELAY_PID=$RELAY_PID"
+  for _ in $(seq 1 60); do
+    /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && break
+    kill -0 "$RELAY_PID" 2>/dev/null || break
+    sleep 0.25
+  done
+  # The hub's own answer first (not switched, signed out, the server not reached), then the first page, which starts
+  # the person's kernel on the server when it is not running (up to 3 minutes there); the window waits meanwhile.
+  hub_get() {
+    NODE_OPTIONS= "$NODEBIN" -e '
+const http = require("http");
+const [p, port, ms] = process.argv.slice(1);
+const out = (c, h) => process.stdout.write(c + "\t" + String(h || "").replace(/[\r\n\t"\\]/g, " ").slice(0, 160) + "\n");
+const r = http.get({ host: "127.0.0.1", port: Number(port), path: p, timeout: Number(ms) }, (res) => {
+  let b = "";
+  res.setEncoding("utf8");
+  res.on("data", (d) => { if (b.length < 8192) b += d; });
+  res.on("end", () => { let h = ""; try { h = JSON.parse(b).hint || ""; } catch { h = res.statusCode === 502 ? b : ""; } out(res.statusCode, h); });
+});
+r.on("timeout", () => r.destroy(new Error("timeout")));
+r.on("error", () => out(0, ""));
+' "$1" "$PORT" "$2" 2>/dev/null || printf '0\t\n'
+  }
+  hub_fail() {
+    printf '%s\n' "Error: $1" > "$DSH_HOME/web-runtime.err"
+    kill "$RELAY_PID" 2>/dev/null || true
+    boot_status fail
+    echo "BLOCKED=server-desk" >&2
+    exit 2
+  }
+  hub_check() {
+    local code="${1%%$'\t'*}" hint="${1#*$'\t'}"
+    echo "SERVER_DESK_HUB=$2 $code"
+    case "$code" in
+      2??|3??) return 0 ;;
+      0) hub_fail "本机中转没有响应（desk-hub-relay），请重新打开 TDHarness。" ;;
+      502) hub_fail "${hint:-连不上公司服务器}" ;;
+      *) hub_fail "${hint:-服务器上的工作台没有正常回应}（$code）" ;;
+    esac
+  }
+  /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || hub_fail "本机中转没有启动（desk-hub-relay），请重新打开 TDHarness。"
+  hub_check "$(hub_get /_hub/status 20000)" status
+  hub_check "$(hub_get / 240000)" warm
+  boot_status ready
+  exit 0
+fi
 boot_status share
 if [ -x "$ROOT/mac-mount-company.sh" ]; then
   if ! bash "$ROOT/mac-mount-company.sh"; then
