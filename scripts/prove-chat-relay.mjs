@@ -12,6 +12,9 @@
 //   - company-chat-notify-v1: the relay watches the person's chats ("me", with the chat token): the unread count
 //     from the contact list, a new message from someone else counts and is named (a new chat's name is fetched),
 //     one's own message does not count, reading elsewhere takes it off.
+//   - company-chat-forward-v1: 转发 uploads the file once as the person (the chat token) and posts it into each chat
+//     asked for (subscribed first, left after), a chat that refuses is reported, not fatal; the chats come newest
+//     first with their names; a file of the chat is fetched as the person, and only a /v0/file/s/ path is.
 //   - company-chat-shot-v1: 截图 runs the system's own screenshot here and hands the picture to the page once (the
 //     page is told it can, with the page's key only); a cancelled selection hands nothing.
 // Prints CHAT_RELAY_PROVE_OK=1.
@@ -41,6 +44,8 @@ function push(sid, m) {
 	sessions.get(sid).push(m);
 }
 const voiceAsked = [];
+const uploads = [];
+const pubs = [];
 const callAsked = [];
 const site = http.createServer((req, res) => {
 	const u = new URL(req.url, "http://x");
@@ -64,6 +69,17 @@ const site = http.createServer((req, res) => {
 			callAsked.push({ method: req.method, auth: req.headers.authorization, body });
 			res.writeHead(200, { "content-type": "application/json" });
 			res.end(JSON.stringify(body.op === "on" ? { ok: true, on: true } : { ok: true }));
+		});
+		return;
+	}
+	if (u.pathname === "/v0/file/u/" && req.method === "POST") {
+		const chunks = [];
+		req.on("data", (c) => chunks.push(c));
+		req.on("end", () => {
+			const body = Buffer.concat(chunks);
+			uploads.push({ auth: req.headers["x-tinode-auth"], key: req.headers["x-tinode-apikey"], type: String(req.headers["content-type"] || ""), body: body.toString("utf8") });
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ ctrl: { code: 200, params: { url: "/v0/file/s/up" + uploads.length + ".html" } } }));
 		});
 		return;
 	}
@@ -111,6 +127,11 @@ const site = http.createServer((req, res) => {
 				push(sid, { meta: { topic: "me", sub: meSubs } });
 				out([]);
 				return;
+			} else if (kind === "sub" && body.topic === "grpNOPE") {
+				ctrl = { id: body.id, code: 403 };
+			} else if (kind === "pub") {
+				pubs.push(body);
+				ctrl = { id: body.id, code: 202 };
 			} else if (kind === "get" && body.topic === "me") {
 				push(sid, { meta: { topic: "me", sub: meSubs } });
 			} else if (kind === "login") {
@@ -367,6 +388,35 @@ await until("a message in a chat the watcher did not know: named after a refresh
 const seq = w.unread(0).seq;
 assert.deepEqual(w.unread(seq).events, [], "nothing new after the last one seen");
 assert.equal(w.unread(seq - 1).events.length, 1);
+
+// --- 转发 (company-chat-forward-v1) -------------------------------------------------------------------------------
+const tl = w.topics();
+assert.equal(tl.ok, true);
+assert.deepEqual(tl.topics.map((t) => t.topic).slice(0, 1), ["grpNEW"], "the chat that moved last comes first");
+assert.deepEqual(tl.topics.find((t) => t.topic === "grpABC"), Object.assign({}, tl.topics.find((t) => t.topic === "grpABC"), { name: "报价群", group: true }));
+const html = "<!doctype html><title>月报</title><p>产量</p>";
+let fw = await w.forward({ topics: ["usrTDH", "grpABC", "grpNOPE", "../etc"], name: "月报.html", mime: "text/html", title: "月报", note: "请看一下", data: Buffer.from(html) });
+assert.deepEqual([fw.ok, fw.sent, fw.failed], [true, ["usrTDH", "grpABC"], ["grpNOPE"]], "sent where allowed, a refusal reported, a bad name never tried");
+assert.equal(uploads.length, 1, "uploaded once for every chat");
+assert.equal(uploads[0].auth, "Token chat-token-of-lfh", "as the person");
+assert.equal(uploads[0].key, KEY);
+assert.match(uploads[0].type, /^multipart\/form-data; boundary=/);
+assert.ok(uploads[0].body.includes(html) && uploads[0].body.includes('name="file"'), "the file's bytes in the form");
+assert.equal(pubs.length, 2);
+assert.deepEqual(pubs[0].content.ent[0], { tp: "EX", data: { mime: "text/html", name: "月报.html", ref: "/v0/file/s/up1.html", size: Buffer.byteLength(html) } });
+assert.equal(pubs[0].content.txt, "请看一下\n📎 月报");
+assert.deepEqual(pubs[0].extra, { attachments: ["/v0/file/s/up1.html"] });
+assert.deepEqual(pubs.map((p) => p.topic), ["usrTDH", "grpABC"]);
+fw = await w.forward({ topics: ["usrTDH"], name: "x.html", data: Buffer.alloc(0) });
+assert.equal(fw.ok, false, "nothing to send: refused");
+assert.equal(uploads.length, 1);
+let ff = await w.fetchFile("/v0/file/s/a.txt");
+assert.equal(ff.ok, true);
+assert.equal(ff.body.toString(), "file body Token chat-token-of-lfh", "a chat file, fetched as the person");
+ff = await w.fetchFile("/v0/channels/lp");
+assert.equal(ff.ok, false, "only the chat's files");
+ff = await w.fetchFile("/v0/file/s/../../x");
+assert.equal(ff.ok, false);
 await w.close();
 
 // --- 截图 (company-chat-shot-v1) ---------------------------------------------------------------------------------
@@ -387,6 +437,7 @@ const spage = (await sreq("GET", "/chat/?k=" + sk)).body.toString();
 assert.ok(spage.includes("window.TDH_SHOT=1"), "the page is told it can take screenshots");
 assert.ok(!spage.includes("/tdh/save"), "and the file bridge stays off when it is off");
 assert.ok(!page.body.includes("TDH_SHOT"), "a relay without screenshots does not say it has them");
+assert.ok(page.body.includes("tdh-chat-drag") && page.body.includes("tdh-art-drag"), "the chat page carries the drag bridge");
 assert.equal((await sreq("POST", "/tdh/shot")).status, 403, "no key: refused");
 let sj = JSON.parse((await sreq("POST", "/tdh/shot?k=" + sk)).body.toString());
 assert.equal(sj.ok, true);

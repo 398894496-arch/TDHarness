@@ -581,6 +581,46 @@ window.__ModuleLoader__.load({
 			// company-art-full-v1 (the user, 2026-11-24: 「工件页面能不能拖拽拉开…或者刷新旁边加一个全屏按钮」): the reader over the
 			// whole window, on the column's gradient; Esc or the same button brings it back.
 			".cs-art-bar .cs-art-refresh { margin-left: 0; }",
+			// company-chat-forward-v1: 转发 — the chats to send an artifact to, newest first, several at once, a word with it.
+			".cs-fwd-mask { position: fixed; inset: 0; z-index: 1800; display: grid; place-items: center; background: rgba(20,28,48,.18); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);",
+			"  animation: cs-fwd-fade .25s ease-out both; font-family: " + FONT + "; }",
+			"@keyframes cs-fwd-fade { from { opacity: 0; } to { opacity: 1; } }",
+			".cs-fwd { width: min(420px, calc(100vw - 32px)); max-height: min(620px, calc(100vh - 48px)); display: flex; flex-direction: column; border-radius: 26px; overflow: hidden;",
+			"  background: var(--look-card, #fff); border: 1px solid var(--look-glass-line); box-shadow: 0 30px 80px rgba(20,30,60,.28); color: var(--look-ink);",
+			"  animation: cs-fwd-in .5s " + LOOK_SPRING + " both; }",
+			"@keyframes cs-fwd-in { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: none; } }",
+			".cs-fwd-head { display: flex; align-items: center; gap: 10px; padding: 16px 16px 8px 20px; }",
+			".cs-fwd-head b { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-fwd-x { flex: none; width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--look-soft); color: var(--look-ink2); cursor: pointer; display: grid; place-items: center; }",
+			".cs-fwd-search { margin: 4px 16px 6px; height: 38px; border-radius: 19px; border: 1px solid var(--look-glass-line); background: var(--look-soft, rgba(0,0,0,.04)); padding: 0 16px; font: inherit; font-size: 13.5px; color: var(--look-ink); outline: none; }",
+			".cs-fwd-search:focus { border-color: var(--look-accent); }",
+			".cs-fwd-picked { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px 2px; }",
+			".cs-fwd-chip { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border-radius: 13px; border: 0; background: var(--look-soft); color: var(--look-accent); font: inherit; font-size: 12.5px; cursor: pointer;",
+			"  animation: cs-fwd-in .4s " + LOOK_SPRING + " both; }",
+			".cs-fwd-sec { margin: 10px 20px 4px; font-size: 12px; color: var(--look-ink2); }",
+			".cs-fwd-list { flex: 1; min-height: 120px; overflow-y: auto; padding: 0 8px 8px; }",
+			".cs-fwd-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 12px; border: 0; border-radius: 14px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;",
+			"  transition: background .15s, transform .35s " + LOOK_SPRING + "; }",
+			".cs-fwd-row:hover { background: var(--look-soft); } .cs-fwd-row:active { transform: scale(.98); }",
+			".cs-fwd-av { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 14px; font-weight: 600; }",
+			".cs-fwd-av.is-grp { border-radius: 11px; }",
+			".cs-fwd-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-fwd-tag { flex: none; font-size: 11px; color: var(--look-ink2); padding: 1px 6px; border-radius: 6px; background: var(--look-soft); }",
+			".cs-fwd-tick { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--look-ink3, rgba(0,0,0,.25)); display: grid; place-items: center; transition: all .3s " + LOOK_SPRING + "; }",
+			".cs-fwd-row.is-on .cs-fwd-tick { background: var(--look-accent); border-color: var(--look-accent); transform: scale(1.08); }",
+			".cs-fwd-foot { display: flex; gap: 8px; padding: 10px 16px 16px; border-top: 1px solid var(--look-glass-line); }",
+			".cs-fwd-note { flex: 1; min-width: 0; height: 40px; border-radius: 20px; border: 1px solid var(--look-glass-line); background: var(--look-soft, rgba(0,0,0,.04)); padding: 0 16px; font: inherit; font-size: 13.5px; color: var(--look-ink); outline: none; }",
+			".cs-fwd-send { flex: none; height: 40px; padding: 0 18px; border-radius: 20px; border: 0; background: var(--look-accent); color: #fff; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .35s " + LOOK_SPRING + ", opacity .2s; }",
+			".cs-fwd-send:disabled { opacity: .45; cursor: default; } .cs-fwd-send:not(:disabled):hover { transform: scale(1.04); }",
+			".cs-fwd-empty { padding: 30px 20px; text-align: center; font-size: 13px; color: var(--look-ink2); }",
+			".cs-fwd-err { padding: 0 20px 6px; font-size: 12.5px; color: #d9363e; }",
+			".cs-toast { position: fixed; left: 50%; bottom: 36px; z-index: 1900; transform: translateX(-50%); max-width: min(480px, calc(100vw - 32px)); padding: 10px 18px; border-radius: 22px;",
+			"  background: rgba(30,36,52,.88); color: #fff; font-family: " + FONT + "; font-size: 13.5px; box-shadow: 0 12px 36px rgba(0,0,0,.22); animation: cs-toast-in .5s " + LOOK_SPRING + " both; }",
+			".cs-toast.is-out { animation: cs-toast-out .3s ease-in both; }",
+			"@keyframes cs-toast-in { from { opacity: 0; transform: translate(-50%, 14px) scale(.94); } to { opacity: 1; transform: translate(-50%, 0); } }",
+			"@keyframes cs-toast-out { to { opacity: 0; transform: translate(-50%, 8px) scale(.97); } }",
+			".cs-art-card[draggable='true'] { -webkit-user-drag: element; } .cs-art-card.is-dragging { opacity: .5; transform: scale(.97); }",
+			"html.cs-art-dragging [data-company-chat] { outline: 2px dashed var(--look-accent); outline-offset: -6px; border-radius: 18px; }",
 			".cs-art-full { position: fixed; inset: 12px; z-index: 1700; border-radius: 26px; overflow: hidden; border: 1px solid var(--look-glass-line);",
 			"  background: linear-gradient(180deg, var(--look-sky) 0%, var(--look-mist) 40%, var(--look-peach) 100%); box-shadow: 0 30px 80px rgba(20,30,60,.28);",
 			"  animation: cs-art-full-in .55s cubic-bezier(.22,1,.36,1) both; }",
@@ -7305,7 +7345,7 @@ window.__ModuleLoader__.load({
 			const types = dt.types ? Array.prototype.slice.call(dt.types) : [];
 			for (let i = 0; i < types.length; i++) {
 				const t = String(types[i] || "").toLowerCase();
-				if (t === "files" || t.indexOf("file") >= 0 || t === "text/uri-list") return true;
+				if (t === "files" || t.indexOf("file") >= 0 || t === "text/uri-list" || t === "application/x-tdh-artifact") return true;
 			}
 			if (dt.items && dt.items.length) {
 				for (let i = 0; i < dt.items.length; i++) {
@@ -7559,6 +7599,14 @@ window.__ModuleLoader__.load({
 		}
 
 		function deskLandFromDrop(dt) {
+			// An artifact card from 工件, or a file / picture from 聊天 (company-chat-forward-v1): no file in the drop itself.
+			let art = null;
+			try { const raw = dt && dt.getData ? dt.getData("application/x-tdh-artifact") : ""; if (raw) art = JSON.parse(raw); } catch (err) { art = null; }
+			if (art && art.path) {
+				if (artDrag) artDrag.done = true;
+				return giveArtifactToAssistant(art);
+			}
+			if (!(dt && dt.files && dt.files.length) && chatDrag && !chatDrag.done && Date.now() - chatDrag.at < 120000) return landChatDrag();
 			const entries = [];
 			if (dt && dt.items) {
 				for (let i = 0; i < dt.items.length; i++) {
@@ -8247,12 +8295,242 @@ window.__ModuleLoader__.load({
 			if (k < 0) k = at(/^\s*<!doctype[^>]*>/i);
 			return k < 0 ? shim + text : text.slice(0, k) + shim + text.slice(k);
 		}
+		// company-chat-forward-v1 (the user, 2026-11-25: 「电脑客户端也还没有工件的转发功能」「把刷新按钮改成转发按钮…转发
+		// 列表看看怎么样能更便捷有效转发给有效的人」「工件列表可以直接拖拽到对话窗口 聊天界面也可以直接拖拽工件和文件」「从聊天窗口能
+		// 直接拖拽文件或者工件到助手对话框 然后可以直接要求比如说把这个工件做成PDF」): an artifact goes into chats as this person
+		// (the desk's host uploads it and posts it, chat-relay.js forwardFile), or into the assistant's composer as a file.
+		const CHAT_H = { "x-tdh-chat": "1" };
+		function chatTopicsGet() {
+			return fetch("/company/chat/topics", { headers: CHAT_H, credentials: "same-origin", cache: "no-store" })
+				.then(function (r) { return r.json(); })
+				.then(function (j) { return { live: !!(j && j.live), topics: (j && j.ok && Array.isArray(j.topics)) ? j.topics : [] }; })
+				.catch(function () { return { live: false, topics: [] }; });
+		}
+		function artBodyFor(a) {
+			return artPeek(a.path).then(function (kept) {
+				if (kept && artFresh(kept, a.modified)) return kept;
+				return artRemote(a.path, a.modified).catch(function (err) { if (kept) return kept; throw err; });
+			});
+		}
+		function artFileName(a, body) {
+			let n = String(a.name || "").trim() || String((body && body.title) || a.title || "工件").trim();
+			n = n.replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").trim().slice(0, 120) || "工件";
+			if (!/\.html?$/i.test(n)) n += ".html";
+			return n;
+		}
+		function forwardArtifact(a, topics, note) {
+			return artBodyFor(a).then(function (body) {
+				return fetch("/company/chat/forward", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: Object.assign({ "content-type": "application/json" }, CHAT_H),
+					body: JSON.stringify({ topics: topics, name: artFileName(a, body), mime: "text/html", title: (body && body.title) || a.title || a.name, note: note || "", content: body.content })
+				}).then(function (r) { return r.json().catch(function () { return { ok: false, error: "bad-json" }; }); });
+			});
+		}
+		function artifactAsFile(a) {
+			return artBodyFor(a).then(function (body) { return new File([body.content], artFileName(a, body), { type: "text/html" }); });
+		}
+		// Into the conversation as a file card (the same intake as a file dropped there): then 「做成 PDF」「这里怎么改」.
+		function giveArtifactToAssistant(a) {
+			return artifactAsFile(a).then(function (f) { return landDeskFiles([f]); }).then(function (n) {
+				if (n) csToast("已放进助手对话框，说说要怎么处理它，比如「做成 PDF」");
+				return n;
+			}, function () { csToast("工件没读出来，稍后再试"); return 0; });
+		}
+		function csToast(text) {
+			try {
+				const el = document.createElement("div");
+				el.className = "cs-toast";
+				el.setAttribute("role", "status");
+				el.textContent = text;
+				document.body.appendChild(el);
+				setTimeout(function () { el.classList.add("is-out"); setTimeout(function () { el.remove(); }, 320); }, 2600);
+			} catch (err) {}
+		}
+		function fwdColor(name) {
+			const hues = [212, 262, 330, 18, 150, 190, 40, 280];
+			let h = 0;
+			for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+			return "hsl(" + hues[h % hues.length] + " 62% 58%)";
+		}
+		function fwdInitial(name) {
+			const t = String(name || "").trim();
+			if (!t) return "?";
+			const cjk = t.match(/[一-鿿]/g);
+			return cjk ? cjk[cjk.length >= 2 ? cjk.length - 2 : 0] + (cjk.length >= 2 ? cjk[cjk.length - 1] : "") : t.slice(0, 1).toUpperCase();
+		}
+		function fwdNames(list, ids) {
+			const names = ids.map(function (id) { const t = list.find(function (x) { return x.topic === id; }); return t ? t.name : ""; }).filter(Boolean);
+			return names.length > 3 ? names.slice(0, 3).join("、") + " 等 " + names.length + " 个" : names.join("、");
+		}
+		function ForwardSheet(props) {
+			const a = props.item;
+			const [data, setData] = React.useState(null);
+			const [q, setQ] = React.useState("");
+			const [picked, setPicked] = React.useState([]);
+			const [note, setNote] = React.useState("");
+			const [busy, setBusy] = React.useState(false);
+			const [err, setErr] = React.useState("");
+			const search = React.useRef(null);
+			React.useEffect(function () {
+				let live = true;
+				chatTopicsGet().then(function (d) { if (live) setData(d); });
+				try { setTimeout(function () { if (search.current) search.current.focus(); }, 60); } catch (e) {}
+				const onKey = function (e) { if (e.key === "Escape") props.onClose(); };
+				window.addEventListener("keydown", onKey);
+				return function () { live = false; window.removeEventListener("keydown", onKey); };
+			}, []);
+			const all = (data && data.topics) || [];
+			const term = q.trim().toLowerCase();
+			const rows = term ? all.filter(function (t) { return t.name.toLowerCase().indexOf(term) >= 0; }) : all;
+			const toggle = function (id) {
+				setErr("");
+				setPicked(function (cur) { return cur.indexOf(id) >= 0 ? cur.filter(function (x) { return x !== id; }) : cur.concat([id]); });
+			};
+			const send = function () {
+				if (!picked.length || busy) return;
+				setBusy(true);
+				setErr("");
+				forwardArtifact(a, picked, note).then(function (j) {
+					setBusy(false);
+					if (j && j.ok) {
+						const miss = (j.failed || []).length;
+						csToast("已转发给 " + fwdNames(all, j.sent || picked) + (miss ? "（" + miss + " 个没发出去）" : ""));
+						props.onClose();
+					} else {
+						setErr("转发没成功：" + ((j && j.error) || "请稍后再试"));
+					}
+				}, function () { setBusy(false); setErr("工件没读出来，稍后再试"); });
+			};
+			const el = React.createElement;
+			const row = function (t) {
+				const on = picked.indexOf(t.topic) >= 0;
+				return el("button", { key: t.topic, type: "button", className: "cs-fwd-row" + (on ? " is-on" : ""), onClick: function () { toggle(t.topic); } },
+					el("span", { className: "cs-fwd-av" + (t.group ? " is-grp" : ""), style: { background: fwdColor(t.name) } }, fwdInitial(t.name)),
+					el("span", { className: "cs-fwd-name" }, t.name),
+					t.group ? el("span", { className: "cs-fwd-tag" }, "群") : null,
+					el("span", { className: "cs-fwd-tick" }, on ? el("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "#fff", strokeWidth: 3.2, strokeLinecap: "round", strokeLinejoin: "round" }, el("path", { d: "M5 12l5 5 9-10" })) : null));
+			};
+			const recent = term ? [] : all.slice(0, 5);
+			const rest = term ? rows : all.slice(5);
+			const sheet = el("div", { className: "cs-fwd-mask", onMouseDown: function (e) { if (e.target === e.currentTarget) props.onClose(); } },
+				el("div", { className: "cs-fwd", role: "dialog", "aria-label": "转发工件" },
+					el("div", { className: "cs-fwd-head" },
+						el("b", null, "转发「" + (a.title || a.name) + "」"),
+						el("button", { type: "button", className: "cs-fwd-x", "aria-label": "关闭", onClick: props.onClose },
+							el("svg", { width: 13, height: 13, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.4, strokeLinecap: "round" }, el("path", { d: "M6 6l12 12M18 6L6 18" })))),
+					el("input", { ref: search, className: "cs-fwd-search", placeholder: "搜索同事或群", value: q,
+						onChange: function (e) { setQ(e.target.value); },
+						onKeyDown: function (e) { if (e.key === "Enter" && rows.length === 1) { toggle(rows[0].topic); setQ(""); } } }),
+					picked.length ? el("div", { className: "cs-fwd-picked" }, picked.map(function (id) {
+						const t = all.find(function (x) { return x.topic === id; });
+						return el("button", { key: id, type: "button", className: "cs-fwd-chip", title: "取消", onClick: function () { toggle(id); } }, (t ? t.name : id) + " ×");
+					})) : null,
+					el("div", { className: "cs-fwd-list" },
+						!data ? el("div", { className: "cs-fwd-empty" }, "正在取聊天列表…") :
+						!all.length ? el("div", { className: "cs-fwd-empty" }, data.live ? "还没有聊天，先在「聊天」里找同事说句话。" : "聊天还没连上，稍后再试。") :
+						el(React.Fragment, null,
+							recent.length ? el("div", { className: "cs-fwd-sec" }, "最近聊天") : null,
+							recent.map(row),
+							rest.length ? el("div", { className: "cs-fwd-sec" }, term ? "搜索结果" : "全部") : null,
+							rest.map(row),
+							term && !rows.length ? el("div", { className: "cs-fwd-empty" }, "没找到「" + q.trim() + "」") : null)),
+					err ? el("div", { className: "cs-fwd-err" }, err) : null,
+					el("div", { className: "cs-fwd-foot" },
+						el("input", { className: "cs-fwd-note", placeholder: "留言（可不填）", value: note, maxLength: 500,
+							onChange: function (e) { setNote(e.target.value); }, onKeyDown: function (e) { if (e.key === "Enter") send(); } }),
+						el("button", { type: "button", className: "cs-fwd-send", disabled: !picked.length || busy, onClick: send },
+							busy ? "发送中…" : picked.length > 1 ? "发送（" + picked.length + "）" : "发送"))));
+			return document.body ? ReactDOM.createPortal(sheet, document.body) : sheet;
+		}
+		// Dragging an artifact card: into the conversation it lands as a file; onto 聊天 it goes to the chat that is open
+		// there. A drop on the chat (another origin's frame) may never reach this page, so where the drag ended decides.
+		let artDrag = null;
+		let chatTopicNow = "";
+		function chatFrameEl() { try { return document.querySelector("[data-company-chat] iframe"); } catch (err) { return null; } }
+		function inRect(el, x, y) {
+			if (!el) return false;
+			const r = el.getBoundingClientRect();
+			return r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+		}
+		function artDragStart(e, a) {
+			artDrag = { a: a, at: Date.now(), done: false };
+			try {
+				e.dataTransfer.effectAllowed = "copy";
+				e.dataTransfer.setData("application/x-tdh-artifact", JSON.stringify({ path: a.path, title: a.title, name: a.name, modified: a.modified }));
+				e.dataTransfer.setData("text/plain", a.title || a.name || "工件");
+			} catch (err) {}
+			try { e.currentTarget.classList.add("is-dragging"); document.documentElement.classList.add("cs-art-dragging"); } catch (err) {}
+			try { const f = chatFrameEl(); if (f && f.contentWindow) f.contentWindow.postMessage({ type: "tdh-art-drag", on: true }, "*"); } catch (err) {}
+		}
+		function artDragEnd(e) {
+			try { e.currentTarget.classList.remove("is-dragging"); document.documentElement.classList.remove("cs-art-dragging"); } catch (err) {}
+			try { const f = chatFrameEl(); if (f && f.contentWindow) f.contentWindow.postMessage({ type: "tdh-art-drag", on: false }, "*"); } catch (err) {}
+			const d = artDrag;
+			if (!d || d.done) return;
+			const x = e.clientX, y = e.clientY;
+			if (inRect(chatFrameEl(), x, y)) { d.done = true; artToOpenChat(d.a); return; }
+			// The conversation (the center column) took it only if this page's drop handler ran; otherwise land it now.
+			if (inRect(document.querySelector("[data-dsh-center-col]"), x, y)) { d.done = true; giveArtifactToAssistant(d.a); }
+		}
+		function artToOpenChat(a) {
+			if (!chatTopicNow) { csToast("先在聊天里打开一个对话，再把工件拖进去"); return; }
+			forwardArtifact(a, [chatTopicNow], "").then(function (j) {
+				csToast(j && j.ok ? "已发到当前聊天" : "没发出去：" + ((j && j.error) || "请稍后再试"));
+			}, function () { csToast("工件没读出来，稍后再试"); });
+		}
+		// What the chat page says (chat-relay.js chatDnd): the chat open there, a drag starting from it (a file or a
+		// picture, its bytes when only that page can read them), where that drag ended, a drop onto it.
+		let chatDrag = null;
+		if (typeof window !== "undefined" && window.addEventListener) {
+			window.addEventListener("message", function (e) {
+				const f = chatFrameEl();
+				if (!f || e.source !== f.contentWindow) return;
+				const m = e.data || {};
+				if (m.type === "tdh-chat-topic") chatTopicNow = /^(usr|grp|p2p)[A-Za-z0-9_-]{2,60}$/.test(String(m.topic || "")) ? String(m.topic) : "";
+				else if (m.type === "tdh-chat-drag") chatDrag = { id: m.id, href: String(m.href || ""), name: String(m.name || "文件"), mime: String(m.mime || ""), bytes: null, at: Date.now(), done: false };
+				else if (m.type === "tdh-chat-drag-bytes" && chatDrag && chatDrag.id === m.id && m.buf) chatDrag.bytes = m.buf;
+				else if (m.type === "tdh-chat-dragend" && chatDrag && chatDrag.id === m.id && !chatDrag.done) {
+					const r = f.getBoundingClientRect();
+					const x = r.left + Number(m.x || 0), y = r.top + Number(m.y || 0);
+					if (!inRect(f, x, y) && inRect(document.querySelector("[data-dsh-center-col]"), x, y)) landChatDrag();
+				} else if (m.type === "tdh-chat-drop" && artDrag && !artDrag.done && Date.now() - artDrag.at < 60000) {
+					artDrag.done = true;
+					if (m.topic) chatTopicNow = String(m.topic);
+					artToOpenChat(artDrag.a);
+				}
+			});
+		}
+		function chatDragFile() {
+			const d = chatDrag;
+			if (!d) return Promise.reject(new Error("none"));
+			let pathName = "";
+			try { pathName = new URL(d.href, "http://x").pathname; } catch (err) {}
+			if (/^\/v0\/file\/s\//.test(pathName)) {
+				return fetch("/company/chat/file?path=" + encodeURIComponent(pathName), { headers: CHAT_H, credentials: "same-origin", cache: "no-store" }).then(function (r) {
+					if (!r.ok) throw new Error("status " + r.status);
+					return r.blob();
+				}).then(function (b) { return new File([b], d.name, { type: b.type || d.mime || "application/octet-stream" }); });
+			}
+			if (d.bytes) return Promise.resolve(new File([d.bytes], d.name, { type: d.mime || "application/octet-stream" }));
+			return Promise.reject(new Error("no-bytes"));
+		}
+		function landChatDrag() {
+			if (!chatDrag || chatDrag.done || Date.now() - chatDrag.at > 120000) return Promise.resolve(0);
+			chatDrag.done = true;
+			return chatDragFile().then(function (f) { return landDeskFiles([f]); }).then(function (n) {
+				if (n) csToast("已放进助手对话框，说说要怎么处理它");
+				return n;
+			}, function () { csToast("没拿到这个文件，在聊天里先下载一次再拖"); return 0; });
+		}
 		function ArtView(props) {
 			const a = props.item;
 			const stHook = React.useState(artBodies.get(a.path) || null);
 			const failHook = React.useState("");
 			const fullHook = React.useState(false);
 			const full = fullHook[0];
+			const fwdHook = React.useState(false);
 			const dark = React.useSyncExternalStore(subscribeBodyDark, bodyDark);
 			// The theme the frame was written with; later flips go in as a message, so the page is not reloaded.
 			const darkAtLoad = React.useRef(dark);
@@ -8294,22 +8572,25 @@ window.__ModuleLoader__.load({
 						onClick: full ? function () { flowSwap(function () { fullHook[1](false); }); } : props.onBack },
 						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M15 18l-6-6 6-6" }))),
 					React.createElement("span", { className: "cs-art-bar-title", title: a.title }, (body && body.title) || a.title),
-					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "重新读取", title: "重新读取", onClick: function () { load(true); } },
-						icon(["M20 11a8 8 0 1 0-2.3 5.7", "M20 4v7h-7"])),
+					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "交给助手", title: "交给助手（放进对话框，再说要怎么改）", onClick: function () { giveArtifactToAssistant(a); } },
+						icon(["M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z", "M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"])),
+					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "转发", title: "转发到聊天", onClick: function () { fwdHook[1](true); } },
+						icon(["M14 5l7 7-7 7", "M21 12H9a6 6 0 0 0-6 6v1"])),
 					React.createElement("button", { type: "button", className: "cs-art-refresh cs-art-full-btn", "aria-label": full ? "退出全屏" : "全屏", title: full ? "退出全屏（Esc）" : "全屏",
 						onClick: function () { flowSwap(function () { fullHook[1](!full); }); } },
 						full ? icon(["M9 4v5H4", "M15 4v5h5", "M9 20v-5H4", "M15 20v-5h5"]) : icon(["M4 9V4h5", "M20 9V4h-5", "M4 15v5h5", "M20 15v5h-5"]))),
 				React.createElement("div", { className: "cs-art-sheet" },
 					body ? React.createElement("iframe", { key: a.path + (full ? ":full" : ""), ref: frame, title: a.title, sandbox: "allow-scripts allow-popups allow-forms allow-modals", srcDoc: srcDoc, referrerPolicy: "no-referrer",
 						onLoad: function () { if (darkAtLoad.current !== bodyDark()) { try { frame.current.contentWindow.postMessage({ type: "tdh-theme", theme: bodyDark() ? "dark" : "light" }, "*"); } catch (err) {} } } }) :
-					failHook[0] ? React.createElement("div", { className: "cs-art-empty" }, React.createElement("b", null, "这个工件没有读出来"), React.createElement("span", null, "公司盘可能还没连上，稍后点右上角重新读取。")) :
+					failHook[0] ? React.createElement("div", { className: "cs-art-empty" }, React.createElement("b", null, "这个工件没有读出来"), React.createElement("span", null, "公司盘可能还没连上，稍后返回再打开一次。")) :
 					React.createElement("div", { className: "cs-art-loading", "data-chat-running": "" },
 						React.createElement("span", { className: "cs-art-lava", ref: function (el) { if (el && !el.firstChild) el.appendChild(lavaNode()); } }),
 						React.createElement("span", null, "正在打开…"))));
-			if (!full || !document.body) return view;
+			const fwd = fwdHook[0] ? React.createElement(ForwardSheet, { item: a, onClose: function () { fwdHook[1](false); } }) : null;
+			if (!full || !document.body) return fwd ? React.createElement(React.Fragment, null, view, fwd) : view;
 			return React.createElement(React.Fragment, null,
 				React.createElement("div", { className: "cs-art-empty" }, React.createElement("b", null, "正在全屏查看"), React.createElement("span", null, "按 Esc 或右上角按钮退出全屏。")),
-				ReactDOM.createPortal(React.createElement("div", { className: "cs-art-full", role: "dialog", "aria-label": a.title }, view), document.body));
+				ReactDOM.createPortal(React.createElement("div", { className: "cs-art-full", role: "dialog", "aria-label": a.title }, view), document.body), fwd);
 		}
 		function artWhen(ms) {
 			if (!ms) return "";
@@ -8366,7 +8647,9 @@ window.__ModuleLoader__.load({
 						return React.createElement(React.Fragment, { key: g.name },
 							React.createElement("div", { className: "cs-art-group" }, g.name),
 							g.items.map(function (a) {
-								return React.createElement("button", { key: a.path, type: "button", className: "cs-art-card", title: a.title, onClick: function () { flowSwap(function () { openHook[1](a); }); } },
+								return React.createElement("button", { key: a.path, type: "button", className: "cs-art-card", title: a.title + "（可拖进对话框或聊天）", draggable: true,
+									onDragStart: function (e) { artDragStart(e, a); }, onDragEnd: artDragEnd,
+									onClick: function () { flowSwap(function () { openHook[1](a); }); } },
 									React.createElement("span", { className: "cs-art-icon", "aria-hidden": "true" },
 										React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" },
 											React.createElement("path", { d: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" }), React.createElement("path", { d: "M14 3v5h5M9 13h6M9 17h4" }))),
@@ -9305,7 +9588,18 @@ window.__ModuleLoader__.load({
 					"html.cs-phone body { -webkit-text-size-adjust: 100%; overscroll-behavior: none; }",
 					// The app lays the page under its glass bars and passes their heights; the conversation scrolls beneath them.
 					"html.cs-phone [data-conversation-scroll] { padding-top: var(--tdh-top, 0px) !important; scroll-padding-top: var(--tdh-top, 0px); }",
-					"html.cs-phone [data-composer-seat] { padding-bottom: calc(var(--tdh-bottom, 0px) + 8px) !important; }"
+					"html.cs-phone [data-composer-seat] { padding-bottom: calc(var(--tdh-bottom, 0px) + 8px) !important; }",
+					// company-phone-answers-v1 (the user, 2026-11-25: 「不显示工具调用这些进程 直接出结果和答案 但是流式输出」): on the
+					// phone the work behind an answer is not shown (the turn's process row, tool and command steps, the turn's
+					// tail, the task list); while it works there is only a typing bubble, then the answer streams in.
+					"html.cs-phone [data-turn-process], html.cs-phone [data-chat-flow] > [data-chat-group-key]:has([data-process-activity]),",
+					"html.cs-phone [data-turn-tail], html.cs-phone [data-testid='todo-panel'], html.cs-phone [data-chat-running] { display: none !important; }",
+					".cs-typing { display: flex; gap: 5px; align-items: center; width: fit-content; margin: 6px 0 14px; padding: 12px 16px; border-radius: 18px;",
+					"  background: rgba(255,255,255,.82); box-shadow: 0 4px 16px rgba(30,50,90,.08); animation: cs-typing-in .45s cubic-bezier(.22,1.2,.36,1) both; }",
+					".cs-typing i { width: 7px; height: 7px; border-radius: 50%; background: #8a93a6; animation: cs-typing-dot 1.2s ease-in-out infinite; }",
+					".cs-typing i:nth-child(2) { animation-delay: .16s; } .cs-typing i:nth-child(3) { animation-delay: .32s; }",
+					"@keyframes cs-typing-dot { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }",
+					"@keyframes cs-typing-in { from { opacity: 0; transform: translateY(8px) scale(.9); } to { opacity: 1; transform: none; } }"
 				].join("\n");
 				document.head.appendChild(st);
 			} catch (err) {}
@@ -9339,6 +9633,12 @@ window.__ModuleLoader__.load({
 			};
 			const ui = typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
 			const current = function () {
+				// The chat the conversation shows (the kernel marks its root), else the selection the kernel keeps.
+				try {
+					const el = document.querySelector("[data-conversation-session]");
+					const id = el ? String(el.getAttribute("data-conversation-session") || "") : "";
+					if (id) return id;
+				} catch (err) {}
 				try {
 					const sel = ui && ui.selection && ui.selection.getSnapshot();
 					if (sel && sel.sessionId) return String(sel.sessionId);
@@ -9353,8 +9653,52 @@ window.__ModuleLoader__.load({
 				if (timer) return;
 				timer = setTimeout(function () { timer = null; post(state()); }, 250);
 			};
+			// The typing bubble: while the open chat works and its answer has not begun (the flow ends on the person's
+			// message or on hidden steps, not on the assistant's text).
+			let typingRaf = 0;
+			const typing = function () {
+				if (typingRaf) return;
+				typingRaf = requestAnimationFrame(function () {
+					typingRaf = 0;
+					try {
+						const flow = document.querySelector("[data-conversation-scroll] [data-chat-flow]");
+						const old = document.querySelector(".cs-typing");
+						const snap = sessionListFn() || {};
+						const row = (snap.byId || {})[current()] || {};
+						let answering = false;
+						if (flow) {
+							const items = flow.querySelectorAll(":scope > [data-chat-anchor-key]");
+							const last = items.length ? items[items.length - 1] : null;
+							answering = !!(last && /assistant-step/.test(String(last.getAttribute("data-chat-anchor-key") || "")) && !last.querySelector("[data-turn-process]"));
+						}
+						const busy = !!row.running || !!document.querySelector("[data-conversation-scroll] [data-chat-running='true']");
+						const want = !!(flow && busy && !answering);
+						if (want && !old) {
+							const b = document.createElement("div");
+							b.className = "cs-typing";
+							b.setAttribute("aria-label", "正在回答");
+							b.innerHTML = "<i></i><i></i><i></i>";
+							flow.appendChild(b);
+						} else if (want && old && old.parentNode === flow && old !== flow.lastElementChild) {
+							flow.appendChild(old);
+						} else if (!want && old) {
+							old.remove();
+						}
+					} catch (err) {}
+				});
+			};
 			watchers.add(tell);
+			watchers.add(typing);
+			try {
+				new MutationObserver(function (list) {
+					for (let i = 0; i < list.length; i++) { const n = list[i].target; if (n && n.classList && n.classList.contains("cs-typing")) return; }
+					typing();
+				}).observe(document.body, { subtree: true, childList: true });
+			} catch (err) {}
 			try { if (ui && ui.selection && typeof ui.selection.subscribe === "function") ui.selection.subscribe(tell); } catch (err) {}
+			try {
+				new MutationObserver(tell).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-conversation-session"] });
+			} catch (err) {}
 			window.tdhPhone = {
 				state: state,
 				open: function (id) {
@@ -9371,19 +9715,27 @@ window.__ModuleLoader__.load({
 					startSessionFn(personalWorkspaceId() || undefined);
 				},
 				artifacts: function () {
-					if (typeof listArtifactsFn !== "function") return Promise.resolve([]);
-					return listArtifactsFn({}).then(function (reply) {
-						return flattenArtifacts(reply).map(function (a) {
-							return {
-								id: String(a.id || a.artifactId || a.path || ""),
-								title: artifactBase(a),
-								kind: String(a.kind || a.type || a.mime || ""),
-								path: String(a.path || ""),
-								session: String(a.sessionId || a.session || ""),
-								updated: a.updatedAt || a.createdAt || a.mtime || 0
-							};
-						});
-					}).catch(function () { return []; });
+					return artFetch().then(function (list) {
+						artStore.list = list;
+						artCacheWrite(list);
+						return list.map(function (a) { return { id: a.path, title: a.title || a.name, kind: "html", path: a.path, name: a.name, updated: a.modified }; });
+					}).catch(function () {
+						return (artStore.list || []).map(function (a) { return { id: a.path, title: a.title || a.name, kind: "html", path: a.path, name: a.name, updated: a.modified }; });
+					});
+				},
+				readArtifact: function (path) {
+					const a = (artStore.list || []).find(function (x) { return x.path === path; }) || { path: path, modified: 0 };
+					return artBodyFor(a).then(function (b) { return { ok: true, title: b.title || a.title || "", content: b.content }; }, function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
+				chats: function () { return chatTopicsGet(); },
+				forwardArtifact: function (path, topics, note) {
+					const a = (artStore.list || []).find(function (x) { return x.path === path; }) || { path: path, modified: 0 };
+					return forwardArtifact(a, topics || [], note || "").catch(function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
+				askArtifact: function (path) {
+					const a = (artStore.list || []).find(function (x) { return x.path === path; }) || { path: path, modified: 0 };
+					document.documentElement.classList.remove("cs-phone-art");
+					return artifactAsFile(a).then(function (f) { return landDeskFiles([f]); }).then(function (n) { return { ok: n > 0 }; }, function () { return { ok: false }; });
 				},
 				showArtifacts: function () {
 					document.documentElement.classList.add("cs-phone-art");

@@ -2788,6 +2788,52 @@ export function apply(ctx) {
 			},
 		}),
 	);
+	// company-chat-forward-v1: 转发 (an artifact or file into chats, as this person), the chats to offer for it, and a
+	// file from the chat for the assistant (a drag from 聊天 into the conversation). Desk page only (its header).
+	const chatJson = (res, status, obj) => {
+		res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+		res.end(JSON.stringify(obj));
+	};
+	ctx.effect(() =>
+		web.register({
+			kind: "exact",
+			path: "/company/chat/topics",
+			handler: async (req, res) => {
+				if (req.headers["x-tdh-chat"] !== "1") return chatJson(res, 403, { ok: false, error: "header" });
+				chatJson(res, 200, chat ? chat.topics() : { ok: false, error: "relay" });
+			},
+		}),
+	);
+	ctx.effect(() =>
+		web.register({
+			kind: "exact",
+			path: "/company/chat/forward",
+			handler: async (req, res) => {
+				if (req.headers["x-tdh-chat"] !== "1" || String(req.method || "").toUpperCase() !== "POST") return chatJson(res, 403, { ok: false, error: "header" });
+				if (!chat) return chatJson(res, 503, { ok: false, error: "relay" });
+				let j = {};
+				try { j = JSON.parse((await collect(req)).toString("utf8") || "{}"); } catch { return chatJson(res, 400, { ok: false, error: "bad-json" }); }
+				const data = typeof j.base64 === "string" ? Buffer.from(j.base64, "base64") : Buffer.from(String(j.content || ""), "utf8");
+				const out = await chat.forward({ topics: j.topics, name: j.name, mime: j.mime, title: j.title, note: j.note, data }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
+				chatJson(res, out.ok ? 200 : 502, out);
+			},
+		}),
+	);
+	ctx.effect(() =>
+		web.register({
+			kind: "exact",
+			path: "/company/chat/file",
+			handler: async (req, res) => {
+				if (req.headers["x-tdh-chat"] !== "1") return chatJson(res, 403, { ok: false, error: "header" });
+				if (!chat) return chatJson(res, 503, { ok: false, error: "relay" });
+				const p = new URL(req.url || "/", "http://x").searchParams.get("path") || "";
+				const out = await chat.fetchFile(p).catch(() => ({ ok: false, error: "fetch" }));
+				if (!out.ok) return chatJson(res, 502, out);
+				res.writeHead(200, { "content-type": out.type, "content-length": String(out.body.length), "cache-control": "no-store" });
+				res.end(out.body);
+			},
+		}),
+	);
 	// company-erp-desk-v2: ERPNext in the desk's frame (its relay started when first asked for), and in the browser.
 	let erpRelay = null;
 	ctx.effect(() => () => {

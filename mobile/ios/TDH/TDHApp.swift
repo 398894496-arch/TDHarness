@@ -55,6 +55,19 @@ struct MainView: View {
 
     var body: some View {
         tabs
+            .overlay(alignment: .bottom) {
+                if let t = desk.toast {
+                    Text(t)
+                        .font(.subheadline.weight(.medium))
+                        .padding(.horizontal, 18).padding(.vertical, 11)
+                        .background(.regularMaterial, in: Capsule())
+                        .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 104)
+                        .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.9)))
+                        .allowsHitTesting(false)
+                }
+            }
             .environmentObject(desk)
             .sheet(isPresented: $showSettings) { SettingsSheet() }
             .onChange(of: tab) { _, now in

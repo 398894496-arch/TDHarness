@@ -15,12 +15,21 @@ struct DeskSession: Identifiable, Equatable {
     let busy: Bool
 }
 
-struct DeskArtifact: Identifiable, Equatable {
+struct DeskArtifact: Identifiable, Equatable, Hashable {
     let id: String
     let title: String
     let kind: String
     let path: String
     let updated: Date?
+}
+
+/// A chat this person is in (company-chat-forward-v1), newest first.
+struct DeskChat: Identifiable, Equatable {
+    var id: String { topic }
+    let topic: String
+    let name: String
+    let group: Bool
+    let at: Date?
 }
 
 @MainActor
@@ -31,11 +40,15 @@ final class DeskModel: ObservableObject {
     @Published var loaded = false
     @Published var failed = ""
     @Published var note = "正在打开你的工作台…"
+    /// A short word over everything (已转发、已放进助手…), gone by itself.
+    @Published var toast: String?
 
     private var opening = false
     private let coordinator = ChatWebView.Coordinator()
     private lazy var messages = DeskMessages { [weak self] body in self?.take(body) }
     lazy var web: WKWebView = makeWeb()
+
+    var currentBusy: Bool { sessions.first(where: { $0.id == current })?.busy ?? false }
 
     var currentTitle: String {
         if let s = sessions.first(where: { $0.id == current }) { return s.title }
@@ -133,6 +146,53 @@ final class DeskModel: ObservableObject {
         call("if (window.tdhPhone && tdhPhone.insets) tdhPhone.insets(t, b)", ["t": Double(top), "b": Double(bottom)])
     }
 
+    func say(_ text: String) {
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) { toast = text }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_600_000_000)
+            if toast == text { withAnimation(.spring(response: 0.4, dampingFraction: 0.9)) { toast = nil } }
+        }
+    }
+
+    private func js(_ body: String, _ args: [String: Any] = [:]) async -> [String: Any] {
+        guard ready else { return [:] }
+        let got = try? await web.callAsyncJavaScript(body, arguments: args, in: nil, contentWorld: .page)
+        return got as? [String: Any] ?? [:]
+    }
+
+    /// The artifact's page (HTML) and its title, through the desk (dsh-artifact readArtifact, kept in the page).
+    func readArtifact(_ path: String) async -> (title: String, html: String)? {
+        let r = await js("return window.tdhPhone ? await tdhPhone.readArtifact(p) : {ok:false}", ["p": path])
+        guard (r["ok"] as? Bool) == true, let html = r["content"] as? String else { return nil }
+        return (r["title"] as? String ?? "", html)
+    }
+
+    func chats() async -> (live: Bool, list: [DeskChat]) {
+        let r = await js("return window.tdhPhone ? await tdhPhone.chats() : {live:false, topics:[]}")
+        let rows = r["topics"] as? [[String: Any]] ?? []
+        let list = rows.compactMap { t -> DeskChat? in
+            guard let topic = t["topic"] as? String, let name = t["name"] as? String else { return nil }
+            let ms = (t["at"] as? NSNumber)?.doubleValue ?? 0
+            return DeskChat(topic: topic, name: name, group: t["group"] as? Bool ?? false, at: ms > 0 ? Date(timeIntervalSince1970: ms / 1000) : nil)
+        }
+        return (r["live"] as? Bool ?? false, list)
+    }
+
+    /// Sends the artifact into the chats as this person. nil when it went; otherwise what to tell.
+    func forward(_ path: String, to topics: [String], note: String) async -> (sent: [String], error: String?) {
+        let r = await js("return window.tdhPhone ? await tdhPhone.forwardArtifact(p, t, n) : {ok:false, error:'not-ready'}",
+                         ["p": path, "t": topics, "n": note])
+        let sent = r["sent"] as? [String] ?? []
+        if (r["ok"] as? Bool) == true { return (sent, nil) }
+        return (sent, r["error"] as? String ?? "没发出去")
+    }
+
+    /// Into the assistant's composer as a file card (then: 「做成 PDF」「这里怎么改」).
+    func askArtifact(_ path: String) async -> Bool {
+        let r = await js("return window.tdhPhone ? await tdhPhone.askArtifact(p) : {ok:false}", ["p": path])
+        return (r["ok"] as? Bool) == true
+    }
+
     func artifacts() async -> [DeskArtifact] {
         guard ready else { return [] }
         let got = try? await web.callAsyncJavaScript("return window.tdhPhone ? await tdhPhone.artifacts() : []",
@@ -209,10 +269,22 @@ struct DeskTab: View {
                 }
                 ToolbarItem(placement: .principal) {
                     Button { showList = true } label: {
-                        HStack(spacing: 4) {
-                            Text(desk.currentTitle).font(.headline).lineLimit(1)
-                            Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                        VStack(spacing: 1) {
+                            HStack(spacing: 4) {
+                                Text(desk.currentTitle).font(.headline).lineLimit(1)
+                                Image(systemName: "chevron.down").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            }
+                            // While the assistant works in this chat (on the phone or the computer): a small live word.
+                            if desk.currentBusy {
+                                HStack(spacing: 4) {
+                                    Circle().fill(.blue).frame(width: 6, height: 6)
+                                        .phaseAnimator([0.35, 1]) { c, o in c.opacity(o) } animation: { _ in .easeInOut(duration: 0.8) }
+                                    Text("进行中").font(.caption2).foregroundStyle(.secondary)
+                                }
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
                         }
+                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: desk.currentBusy)
                         .frame(maxWidth: 220)
                     }
                     .foregroundStyle(.primary)

@@ -408,9 +408,68 @@ function bootScript(login, tok, files, shot) {
 		"c.serverAddress=location.host;c.secureConnection=false;s.setItem('settings',JSON.stringify(c))" +
 		"}catch(e){}})();" +
 		(shot ? "window.TDH_SHOT=1;" : "") +
-		(files ? "try{(" + BRIDGE + ")()}catch(e){}" : "");
+		(files ? "try{(" + BRIDGE + ")()}catch(e){}" : "") +
+		"try{(" + DND + ")()}catch(e){}";
 	return "<script>" + js + "</script>";
 }
+
+// company-chat-forward-v1: in the chat page, for the desk around it (client.js): which chat is open (for an artifact
+// dropped onto 聊天), a drag starting here (a file link or a picture; a picture's bytes when only this page can read
+// them) and where it ended (into the assistant's conversation, outside this frame), and a drop of an artifact card
+// while the desk says one is being dragged. Messages go to the desk page only (the parent), which checks their source.
+function chatDnd() {
+	var seq = 0, cur = 0, inner = false, deskArt = false, last = null;
+	function say(m, t) { try { parent.postMessage(m, "*", t || []); } catch (e) {} }
+	function topic() { var m = /#\/((?:usr|grp|p2p)[A-Za-z0-9_-]{2,60})/.exec(location.hash || ""); return m ? m[1] : ""; }
+	function tell() { var t = topic(); if (t !== last) { last = t; say({ type: "tdh-chat-topic", topic: t }); } }
+	addEventListener("hashchange", tell);
+	setInterval(tell, 1500);
+	tell();
+	addEventListener("message", function (e) {
+		if (e.source !== parent || !e.data || e.data.type !== "tdh-art-drag") return;
+		deskArt = !!e.data.on;
+		if (deskArt) last = null, tell();
+	});
+	document.addEventListener("dragstart", function (e) {
+		inner = true;
+		var el = e.target && e.target.closest ? e.target.closest("a[href], img[src]") : null;
+		if (!el) { cur = 0; return; }
+		var img = el.tagName === "IMG";
+		var href = img ? (el.currentSrc || el.src) : el.href;
+		if (!href) { cur = 0; return; }
+		var name = img ? "" : (el.getAttribute("download") || (el.textContent || "").trim());
+		if (!name) { try { name = decodeURIComponent(new URL(href, location.href).pathname.split("/").pop() || ""); } catch (x) { name = ""; } }
+		if (img && (!name || /^[0-9a-f-]{16,}$/i.test(name) || /^blob/i.test(href))) name = (el.alt && el.alt.length < 80 ? el.alt : "图片") + ".png";
+		cur = ++seq;
+		var id = cur;
+		say({ type: "tdh-chat-drag", id: id, href: href, name: String(name).slice(0, 120) || "文件" });
+		if (/^(blob|data):/i.test(href)) {
+			var mime = "";
+			fetch(href).then(function (r) { mime = r.headers.get("content-type") || ""; return r.arrayBuffer(); })
+				.then(function (buf) { say({ type: "tdh-chat-drag-bytes", id: id, buf: buf, mime: mime }, [buf]); })
+				.catch(function () {});
+		}
+	}, true);
+	document.addEventListener("dragend", function (e) {
+		inner = false;
+		if (cur) say({ type: "tdh-chat-dragend", id: cur, x: e.clientX, y: e.clientY });
+		cur = 0;
+	}, true);
+	function fromDesk() { return deskArt && !inner; }
+	document.addEventListener("dragover", function (e) {
+		if (!fromDesk()) return;
+		e.preventDefault(); e.stopPropagation();
+		try { e.dataTransfer.dropEffect = "copy"; } catch (x) {}
+	}, true);
+	document.addEventListener("drop", function (e) {
+		if (!fromDesk()) return;
+		e.preventDefault(); e.stopPropagation();
+		deskArt = false;
+		say({ type: "tdh-chat-drop", topic: topic() });
+	}, true);
+}
+const DND = chatDnd.toString();
+if (/<\/script/i.test(DND)) throw new Error("chat-relay: the drag bridge closes its script element");
 
 // The bridge's own source, checked once: it must not close the script element it is put in.
 const BRIDGE = macFileBridge.toString();
@@ -468,6 +527,8 @@ export function startChatRelay(opts) {
 					name: (s.public && s.public.fn) || old.name || "",
 					seq: Math.max(s.seq || 0, old.seq || 0),
 					read: Math.max(s.read || 0, old.read || 0),
+					// When the chat last moved (for 转发: the people one talks with come first).
+					at: Math.max(Date.parse(s.touched || "") || 0, old.at || 0),
 				});
 			}
 			recount();
@@ -483,6 +544,7 @@ export function startChatRelay(opts) {
 				st.refresh = true;
 			}
 			tp.seq = Math.max(tp.seq, p.seq || 0);
+			tp.at = Date.now();
 			// One's own message (no sender named): Tinode marks it read for the sender without saying so.
 			if (!p.act) tp.read = Math.max(tp.read, p.seq || 0);
 			if (p.act) {
@@ -566,6 +628,67 @@ export function startChatRelay(opts) {
 		const tok = await chatLogin(site(), login, dt).catch(() => null);
 		if (tok) cache = { who, tok };
 		return { login, tok };
+	}
+
+	// company-chat-forward-v1 (the user, 2026-11-25: 「工件……可以打开并转发到聊天里」, the desk and the phone): a file
+	// sent into one or more chats as this person — uploaded once to the chat's file store, then one message per chat
+	// (its name as text, the file attached), over a long-polling session of its own. Returns { ok, sent, failed }.
+	async function forwardFile(job) {
+		const topics = Array.isArray(job && job.topics) ? job.topics.filter((t) => /^(usr|grp|p2p)[A-Za-z0-9_-]{2,60}$/.test(String(t))) : [];
+		const data = job && job.data;
+		if (!topics.length || !Buffer.isBuffer(data) || !data.length) return { ok: false, error: "bad-request" };
+		if (data.length > 32 * 1024 * 1024) return { ok: false, error: "too-big" };
+		const t = await tokenFor();
+		if (!t.tok) return { ok: false, error: "no-chat-login" };
+		const key = await apiKey(site());
+		if (!key) return { ok: false, error: "no-api-key" };
+		const name = safeName(String(job.name || "工件.html")) || "file";
+		const mime = String(job.mime || "application/octet-stream").slice(0, 100);
+		const auth = { "X-Tinode-APIKey": key, "X-Tinode-Auth": "Token " + t.tok.token };
+		const bound = "----tdh" + randomBytes(12).toString("hex");
+		const body = Buffer.concat([
+			Buffer.from("--" + bound + "\r\nContent-Disposition: form-data; name=\"file\"; filename=\"" + encodeURIComponent(name) + "\"\r\nContent-Type: " + mime + "\r\n\r\n", "utf8"),
+			data,
+			Buffer.from("\r\n--" + bound + "--\r\n", "utf8"),
+		]);
+		const up = await fetchSite(site(), "/v0/file/u/", "POST", body, Object.assign({ "Content-Type": "multipart/form-data; boundary=" + bound }, auth), 120000);
+		let ref = "";
+		try { const j = JSON.parse(up.body.toString("utf8")); ref = (j.ctrl && j.ctrl.params && j.ctrl.params.url) || ""; } catch { ref = ""; }
+		if (up.status >= 300 || !ref) { log("forward: upload " + up.status); return { ok: false, error: "upload-failed" }; }
+		const s = lpSession(site(), key);
+		if (!(await s.open())) return { ok: false, error: "no-session" };
+		const none = () => {};
+		const hi = await s.send({ hi: { ver: "0.25", ua: "TDH-desk-forward/1.0" } }, none);
+		if (!hi || hi.code >= 300) return { ok: false, error: "hi" };
+		const lg = await s.send({ login: { scheme: "token", secret: t.tok.token } }, none);
+		if (!lg || lg.code >= 300) return { ok: false, error: "login" };
+		const note = String(job.note || "").trim().slice(0, 500);
+		const title = String(job.title || name).slice(0, 200);
+		const txt = (note ? note + "\n" : "") + "📎 " + title;
+		// Drafty: the text, then the file as an attachment after it (at -1).
+		const content = { txt, fmt: [{ at: -1, len: 0, key: 0 }], ent: [{ tp: "EX", data: { mime, name, ref, size: data.length } }] };
+		const sent = [];
+		const failed = [];
+		for (const topic of topics) {
+			const sub = await s.send({ sub: { topic } }, none).catch(() => null);
+			if (!sub || sub.code >= 300) { failed.push(topic); continue; }
+			const pub = await s.send({ pub: { topic, noecho: false, head: { mime: "text/x-drafty" }, content, extra: { attachments: [ref] } } }, none).catch(() => null);
+			if (pub && pub.code < 300) sent.push(topic); else failed.push(topic);
+			await s.send({ leave: { topic } }, none).catch(() => null);
+		}
+		log("forward: " + name + " to " + sent.length + "/" + topics.length);
+		return { ok: sent.length > 0, sent, failed };
+	}
+	// A file the chat holds (/v0/file/s/…), fetched as this person: what a drag from the chat into the assistant lands.
+	async function fetchChatFile(p) {
+		const pathName = String(p || "");
+		if (!/^\/v0\/file\/s\/[A-Za-z0-9_.-]{1,120}$/.test(pathName)) return { ok: false, error: "bad-path" };
+		const t = await tokenFor();
+		if (!t.tok) return { ok: false, error: "no-chat-login" };
+		const key = await apiKey(site());
+		const r = await fetchSite(site(), pathName, "GET", null, { "X-Tinode-APIKey": key, "X-Tinode-Auth": "Token " + t.tok.token }, 120000);
+		if (r.status !== 200) return { ok: false, error: "status " + r.status };
+		return { ok: true, body: r.body, type: String(r.headers["content-type"] || "application/octet-stream") };
 	}
 
 	function hostOk(req) {
@@ -793,7 +916,7 @@ export function startChatRelay(opts) {
 			const num = (k) => (/^\d{1,15}$/.test(q(k)) ? Number(q(k)) : null);
 			const out = { op };
 			if (op === "piece" || op === "end") {
-				if (!/^usr[A-Za-z0-9_-]{4,40}$/.test(q("peer")) || num("seq") == null) { json(res, 400, { ok: false, error: "bad-request" }); return; }
+				if (!/^usr[A-Za-z0-9_-]{2,60}$/.test(q("peer")) || num("seq") == null) { json(res, 400, { ok: false, error: "bad-request" }); return; }
 				out.peer = q("peer");
 				out.seq = num("seq");
 				if (op === "piece") {
@@ -933,6 +1056,18 @@ export function startChatRelay(opts) {
 			const s = Number(since) || 0;
 			return { ok: true, live: unread.live, count: unread.count, seq: unread.seq, events: unread.events.filter((e) => e.id > s) };
 		},
+		// company-chat-forward-v1: the chats this person is in, newest first (for 转发 and the phone).
+		topics() {
+			const out = [];
+			for (const [topic, tp] of unread.topics) {
+				if (!tp || !tp.name) continue;
+				out.push({ topic, name: tp.name, group: topic.indexOf("grp") === 0, at: tp.at || 0, unread: Math.max(0, (tp.seq || 0) - (tp.read || 0)) });
+			}
+			out.sort((a, b) => b.at - a.at || a.name.localeCompare(b.name, "zh"));
+			return { ok: true, live: unread.live, topics: out };
+		},
+		forward: (job) => forwardFile(job),
+		fetchFile: (p) => fetchChatFile(p),
 		close() {
 			stopped = true;
 			if (watchTimer) clearTimeout(watchTimer);
