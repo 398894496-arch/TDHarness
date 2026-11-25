@@ -25,36 +25,68 @@ struct RootView: View {
     @EnvironmentObject var session: Session
 
     var body: some View {
-        switch session.phase {
-        case .starting:
-            VStack(spacing: 16) {
-                LavaDots()
-                Text(session.note).font(.footnote).foregroundStyle(.secondary)
+        ZStack {
+            switch session.phase {
+            case .starting:
+                VStack(spacing: 16) {
+                    LavaDots()
+                    Text(session.note).font(.footnote).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(DeskBackground())
+                .transition(.opacity)
+            case .signedOut:
+                LoginView().transition(.opacity)
+            case .signedIn:
+                MainView().transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
-        case .signedOut:
-            LoginView()
-        case .signedIn:
-            MainView()
         }
+        .animation(.spring(response: 0.55, dampingFraction: 0.86), value: session.phase)
     }
 }
 
+/// 聊天 / 助手 / 工件, and a round 新对话 button set apart on the right (the search-role slot of the iOS 26 tab bar).
+/// Settings is a sheet from the gear in 助手 and 工件.
 struct MainView: View {
     @EnvironmentObject var session: Session
-    @State private var tab = 0
+    @StateObject private var desk = DeskModel()
+    @State private var tab = 1
+    @State private var showSettings = false
 
     var body: some View {
-        TabView(selection: $tab) {
-            ChatTab()
-                .tabItem { Label("聊天", systemImage: "bubble.left.and.bubble.right") }.tag(0)
-            DeskTab()
-                .tabItem { Label("助手", systemImage: "sparkles") }.tag(1)
-            MeView()
-                .tabItem { Label("我", systemImage: "person.crop.circle") }.tag(2)
+        tabs
+            .environmentObject(desk)
+            .sheet(isPresented: $showSettings) { SettingsSheet() }
+            .onChange(of: tab) { _, now in
+                guard now == 3 else { return }
+                tab = 1
+                desk.newChat()
+            }
+            .task {
+                // The desk loads at sign-in, whichever tab is in front, so 助手 is ready when it is opened.
+                if let p = session.person { await desk.start(token: p.gwToken) }
+            }
+            #if DEBUG
+            .onAppear { if UserDefaults.standard.object(forKey: "tdhTab") != nil { tab = UserDefaults.standard.integer(forKey: "tdhTab") } }
+            #endif
+    }
+
+    @ViewBuilder private var tabs: some View {
+        if #available(iOS 18.0, *) {
+            TabView(selection: $tab) {
+                Tab("聊天", systemImage: "bubble.left.and.bubble.right", value: 0) { ChatTab() }
+                Tab("助手", systemImage: "sparkles", value: 1) { DeskTab(showSettings: $showSettings) }
+                Tab("工件", systemImage: "doc.on.doc", value: 2) { ArtifactsTab(tab: $tab, showSettings: $showSettings) }
+                Tab("新对话", systemImage: "square.and.pencil", value: 3, role: .search) { Color.clear }
+            }
+        } else {
+            TabView(selection: $tab) {
+                ChatTab().tabItem { Label("聊天", systemImage: "bubble.left.and.bubble.right") }.tag(0)
+                DeskTab(showSettings: $showSettings).tabItem { Label("助手", systemImage: "sparkles") }.tag(1)
+                ArtifactsTab(tab: $tab, showSettings: $showSettings).tabItem { Label("工件", systemImage: "doc.on.doc") }.tag(2)
+                Color.clear.tabItem { Label("新对话", systemImage: "square.and.pencil") }.tag(3)
+            }
         }
-        #if DEBUG
-        .onAppear { tab = UserDefaults.standard.integer(forKey: "tdhTab") }
-        #endif
     }
 }
 
@@ -85,6 +117,8 @@ enum DebugDrive {
             }
         }
         if d.bool(forKey: "tdhSignOut") { await s.signOut(); print("DEBUG_DRIVE signout") }
+        // The sign-in screens without forgetting this phone's remembered sign-in (screenshots of the login flow).
+        if d.bool(forKey: "tdhShowLogin") { s.phase = .signedOut }
         // The chat relay against the real server with no one signed in: the page and Tinode's long polling only.
         if d.bool(forKey: "tdhChatProbe"), let u = try? await ChatRelay.shared.start(login: "", gwToken: "") {
             print("DEBUG_DRIVE relay=" + u.absoluteString)
@@ -94,21 +128,40 @@ enum DebugDrive {
 }
 #endif
 
-/// The desk's "thinking" lava lamp, small: three drops drifting at their own speeds.
+/// The desk's lava lamp, small: three drops drifting on their own slow sine paths (never a straight, even move) that
+/// stick together and pull apart like wax (blurred, then cut at half alpha), coloured by one sky-to-sand gradient.
 struct LavaDots: View {
-    @State private var t = false
-    private let colors: [Color] = [Color(red: 0.25, green: 0.45, blue: 0.95), Color(red: 0.45, green: 0.75, blue: 0.98),
-                                   Color(red: 0.98, green: 0.72, blue: 0.5)]
+    var width: CGFloat = 70
+    var height: CGFloat = 36
 
     var body: some View {
-        ZStack {
-            ForEach(0..<3, id: \.self) { i in
-                Circle().fill(colors[i]).frame(width: 18, height: 18)
-                    .offset(x: t ? CGFloat([18, -14, 6][i]) : CGFloat([-16, 12, -6][i]), y: t ? CGFloat([-4, 6, 3][i]) : CGFloat([5, -3, -6][i]))
-                    .animation(.easeInOut(duration: [1.6, 2.1, 1.3][i]).repeatForever(autoreverses: true), value: t)
-            }
+        TimelineView(.animation) { tl in
+            let t = tl.date.timeIntervalSinceReferenceDate
+            LinearGradient(colors: [Color(red: 0.25, green: 0.45, blue: 0.95), Color(red: 0.45, green: 0.75, blue: 0.98),
+                                    Color(red: 0.98, green: 0.72, blue: 0.5)],
+                           startPoint: .leading, endPoint: .trailing)
+                .mask {
+                    Canvas { ctx, size in
+                        ctx.addFilter(.alphaThreshold(min: 0.5, color: .black))
+                        ctx.addFilter(.blur(radius: size.height * 0.16))
+                        ctx.drawLayer { layer in
+                            for i in 0..<3 {
+                                let p = Self.spot(i, t, size)
+                                let r = size.height * [0.30, 0.25, 0.22][i]
+                                layer.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)), with: .color(.black))
+                            }
+                        }
+                    }
+                }
         }
-        .frame(width: 70, height: 36)
-        .onAppear { t = true }
+        .frame(width: width, height: height)
+        .accessibilityHidden(true)
+    }
+
+    private static func spot(_ i: Int, _ t: Double, _ s: CGSize) -> CGPoint {
+        let speed = [0.85, 1.25, 0.65][i], phase = [0.0, 2.1, 4.2][i]
+        let x = s.width / 2 + s.width * 0.27 * sin(t * speed + phase)
+        let y = s.height / 2 + s.height * 0.12 * cos(t * speed * 1.4 + phase)
+        return CGPoint(x: x, y: y)
     }
 }

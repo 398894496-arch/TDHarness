@@ -187,28 +187,3 @@ struct AssistantView: View {
         }
     }
 }
-
-struct MeView: View {
-    @EnvironmentObject var session: Session
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    LabeledContent("账号", value: session.person?.login ?? "")
-                    if let d = session.person?.dept, !d.isEmpty { LabeledContent("部门", value: d) }
-                    LabeledContent("服务器", value: session.server.isEmpty ? "未连接" : session.server)
-                }
-                Section {
-                    Button("退出登录", role: .destructive) { Task { await session.signOut() } }
-                } footer: {
-                    Text("退出后这台手机不再免登录，下次要重新输验证码或密码。")
-                }
-                Section {
-                    LabeledContent("版本", value: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "")
-                }
-            }
-            .navigationTitle("我")
-        }
-    }
-}

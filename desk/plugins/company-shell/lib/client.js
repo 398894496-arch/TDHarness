@@ -9283,6 +9283,127 @@ window.__ModuleLoader__.load({
 			return React.createElement(ChatFrame);
 		}
 
+		// company-phone-layout-v1: the person's server desk inside the phone app (mobile/ios, user agent TDH-iOS). The app
+		// draws the tab bar, the session list, settings and the artifact list itself; this page is only the conversation,
+		// full width, and answers the app through window.tdhPhone (posting "state" to the app whenever the list moves).
+		const PHONE = (function () {
+			try { return /TDH-iOS/.test(String(navigator.userAgent || "")); } catch (err) { return false; }
+		})();
+		function installPhone(ctx) {
+			if (!PHONE || window.tdhPhone) return;
+			try {
+				document.documentElement.classList.add("cs-phone");
+				const st = document.createElement("style");
+				st.id = "company-phone-layout-v1";
+				st.textContent = [
+					"html.cs-phone [class*='_sidebarCol'], html.cs-phone .cs-mid-switch, html.cs-phone .cs-me-menu,",
+					"html.cs-phone .cs-theme-btn, html.cs-phone .cs-chat-dock, html.cs-phone header[data-window-drag] { display: none !important; }",
+					"html.cs-phone [data-dsh-center-col] { grid-column: 1 / -1 !important; width: 100vw !important; max-width: 100vw !important; left: 0 !important; }",
+					"html.cs-phone [class*='_frame'][data-sidebar-collapsed] { grid-template-columns: 0 1fr 0 !important; }",
+					"html.cs-phone:not(.cs-phone-art) [data-sidebar-right-panel] { display: none !important; }",
+					"html.cs-phone.cs-phone-art [data-sidebar-right-panel] { position: fixed !important; inset: 0 !important; width: 100vw !important; z-index: 1400 !important; }",
+					"html.cs-phone body { -webkit-text-size-adjust: 100%; overscroll-behavior: none; }",
+					// The app lays the page under its glass bars and passes their heights; the conversation scrolls beneath them.
+					"html.cs-phone [data-conversation-scroll] { padding-top: var(--tdh-top, 0px) !important; scroll-padding-top: var(--tdh-top, 0px); }",
+					"html.cs-phone [data-composer-seat] { padding-bottom: calc(var(--tdh-bottom, 0px) + 8px) !important; }"
+				].join("\n");
+				document.head.appendChild(st);
+			} catch (err) {}
+			const post = function (msg) {
+				try {
+					const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.tdh;
+					if (h) h.postMessage(msg);
+				} catch (err) {}
+			};
+			const sessions = function () {
+				const snap = sessionListFn() || {};
+				const byId = snap.byId || {};
+				const ws = workspaceListFn() || {};
+				const archived = {};
+				(ws.archivedSessionIds || []).forEach(function (id) { archived[id] = true; });
+				const cur = current();
+				const ids = Array.isArray(snap.ids) ? snap.ids : Object.keys(byId);
+				// A blank session (nothing asked in it yet) is left out unless it is the open one.
+				return ids.filter(function (id) {
+					const r = byId[id] || {};
+					return !archived[id] && (!r.blank || id === cur);
+				}).map(function (id) {
+					const r = byId[id] || {};
+					return {
+						id: id,
+						title: r.blank ? "新会话" : String(r.displayTitle || r.title || "未命名会话"),
+						updated: Number(r.updatedAt || 0),
+						busy: !!r.running
+					};
+				}).sort(function (a, b) { return b.updated - a.updated; });
+			};
+			const ui = typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
+			const current = function () {
+				try {
+					const sel = ui && ui.selection && ui.selection.getSnapshot();
+					if (sel && sel.sessionId) return String(sel.sessionId);
+				} catch (err) {}
+				return String((sessionListFn() || {}).current || "");
+			};
+			const state = function () {
+				return { type: "state", current: current(), sessions: sessions() };
+			};
+			let timer = null;
+			const tell = function () {
+				if (timer) return;
+				timer = setTimeout(function () { timer = null; post(state()); }, 250);
+			};
+			watchers.add(tell);
+			try { if (ui && ui.selection && typeof ui.selection.subscribe === "function") ui.selection.subscribe(tell); } catch (err) {}
+			window.tdhPhone = {
+				state: state,
+				open: function (id) {
+					document.documentElement.classList.remove("cs-phone-art");
+					if (!id) return;
+					openSessionFn(id);
+					// On a phone, opening a chat must not bring the keyboard up (the kernel focuses its composer).
+					const calm = function () { try { const a = document.activeElement; if (a && a !== document.body && a.blur) a.blur(); } catch (err) {} };
+					setTimeout(calm, 60); setTimeout(calm, 400); setTimeout(calm, 1200);
+					tell();
+				},
+				newChat: function () {
+					document.documentElement.classList.remove("cs-phone-art");
+					startSessionFn(personalWorkspaceId() || undefined);
+				},
+				artifacts: function () {
+					if (typeof listArtifactsFn !== "function") return Promise.resolve([]);
+					return listArtifactsFn({}).then(function (reply) {
+						return flattenArtifacts(reply).map(function (a) {
+							return {
+								id: String(a.id || a.artifactId || a.path || ""),
+								title: artifactBase(a),
+								kind: String(a.kind || a.type || a.mime || ""),
+								path: String(a.path || ""),
+								session: String(a.sessionId || a.session || ""),
+								updated: a.updatedAt || a.createdAt || a.mtime || 0
+							};
+						});
+					}).catch(function () { return []; });
+				},
+				showArtifacts: function () {
+					document.documentElement.classList.add("cs-phone-art");
+					rightbarOpenArtifacts();
+				},
+				closeArtifacts: function () {
+					document.documentElement.classList.remove("cs-phone-art");
+					rightbarToggle(false);
+				},
+				ask: function (text) { return insertDeskTextFn(String(text || ""), undefined, true); },
+				insets: function (top, bottom) {
+					const st = document.documentElement.style;
+					st.setProperty("--tdh-top", Math.max(0, Number(top) || 0) + "px");
+					st.setProperty("--tdh-bottom", Math.max(0, Number(bottom) || 0) + "px");
+				}
+			};
+			post({ type: "ready" });
+			tell();
+		}
+
 		function apply(ctx) {
 			shellRole = readDeskRole();
 			fetchLoginRole();
@@ -9294,11 +9415,17 @@ window.__ModuleLoader__.load({
 			startSessionFn = function (workspaceId) {
 				deskStartSession(ctx, workspaceId);
 			};
+			// The kernel moved opening and clearing to its uiWorkspace service (ctx.sessions.open / .clear are gone).
 			openSessionFn = function (sessionId) {
-				if (sessionId) ctx.sessions.open(sessionId);
+				if (!sessionId) return;
+				const ui = typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
+				if (ui && typeof ui.openSession === "function") ui.openSession(sessionId);
+				else if (typeof ctx.sessions.open === "function") ctx.sessions.open(sessionId);
 			};
 			clearSessionFn = function () {
-				ctx.sessions.clear();
+				const ui = typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
+				if (ui && typeof ui.clearMain === "function") ui.clearMain();
+				else if (typeof ctx.sessions.clear === "function") ctx.sessions.clear();
 			};
 			sessionListFn = function () {
 				return ctx.sessions.list.getSnapshot();
@@ -9362,6 +9489,7 @@ window.__ModuleLoader__.load({
 				}
 			} catch (err) {}
 			pullHungArtifacts();
+			installPhone(ctx);
 			if (ctx.sessions.list && typeof ctx.sessions.list.subscribe === "function") {
 				ctx.sessions.list.subscribe(function () {
 					claimAwaitingSession();
