@@ -154,6 +154,22 @@ def _recent(book: dict, key: str, span: float, now: float) -> list:
     return got
 
 
+def review_login(runtime: Path, now: float) -> dict | None:
+    """company-review-login-v1: the one number a store reviewer signs in with (Apple's beta review needs an account it
+    can use; no text can reach it) — runtime/review-login.json {"phone": "1…", "code": "6 digits", "until": seconds
+    since 1970}. No text is sent to that number and its code is the file's; everything else is as for any number (a
+    person in the roster with it, five wrong tries, the address's limits). Nothing after `until`, nothing without the
+    file."""
+    try:
+        d = json.loads((runtime / "review-login.json").read_text(encoding="utf-8"))
+        phone, code, until = norm_phone(d.get("phone")), str(d.get("code") or ""), float(d.get("until") or 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    if not phone or not re.fullmatch(r"\d{6}", code) or now > until:
+        return None
+    return {"phone": phone, "code": code}
+
+
 def request_code(runtime: Path, phone_text, addr: str, find_login, sender=None, now: float | None = None) -> tuple:
     """(status, body) for 获取验证码. find_login(phone) -> the active person's login with that number, or "".
     sender(phone, code) -> sent or not (Alibaba Cloud by default)."""
@@ -161,13 +177,17 @@ def request_code(runtime: Path, phone_text, addr: str, find_login, sender=None, 
     phone = norm_phone(phone_text)
     if not phone:
         return 400, {"ok": False, "error": "bad-phone", "hint": "请填 11 位手机号。"}
-    conf = sms_config(runtime) if sender is None else {}
+    review = review_login(runtime, now)
+    fixed = bool(review and review["phone"] == phone)
+    conf = sms_config(runtime) if sender is None and not fixed else {}
     if conf is None:
         return 503, {"ok": False, "error": "sms-off", "hint": "公司还没开通短信验证码，请用账号和密码登录。"}
     with _MU:
         if len(_recent(_ADDR, addr, 3600, now)) >= ADDR_HOUR_MAX:
             return 429, {"ok": False, "error": "too-many", "hint": "获取验证码太频繁，请过一会儿再试。"}
         sent = _recent(_SENT, phone, 86400, now)
+        if fixed:
+            sent = []
         if sent and now - sent[-1] < GAP_S:
             return 429, {"ok": False, "error": "wait", "wait": int(GAP_S - (now - sent[-1])) + 1, "hint": "验证码已发送，请稍后再获取。"}
         if len(sent) >= DAY_MAX:
@@ -179,9 +199,9 @@ def request_code(runtime: Path, phone_text, addr: str, find_login, sender=None, 
             return 404, {"ok": False, "error": "not-registered",
                          "hint": "这个手机号没有登记在公司花名册里（或账号已停用），不能用验证码登录。请找管理员登记，或用账号和密码登录。"}
         sent.append(now)
-        code = "%06d" % secrets.randbelow(1000000)
+        code = review["code"] if fixed else "%06d" % secrets.randbelow(1000000)
         _CODES[phone] = {"hash": _hash(phone + ":" + code), "exp": now + CODE_S, "tries": 0, "login": login}
-    ok = (sender or (lambda p, c: send_aliyun(conf, p, c)))(phone, code)
+    ok = True if fixed else (sender or (lambda p, c: send_aliyun(conf, p, c)))(phone, code)
     if not ok:
         with _MU:
             _CODES.pop(phone, None)
