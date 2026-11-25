@@ -18,10 +18,12 @@
 `TDH/Site.json` 每个站点单独生成，**不进仓库**：
 
 ```bash
-./make-site.sh TDH tdharness.local 8443 company-ca.crt tdharness.local 10.66.0.2
+./make-site.sh TDH tdharness.local 8443 company-ca.crt,entry-ca.crt tdharness.local 10.66.0.2 118.190.105.26
 ```
 
-参数：显示名、证书里的主机名、端口、公司根证书（服务器 `D:\dsh\runtime\company-ca.crt`），后面是按顺序尝试的地址（同时探测，先应答的用）。地址也可以写完整 URL（`http://127.0.0.1:4199`，本机测试用）。
+参数：显示名、证书里的主机名、端口、根证书（第一个是公司根证书 `D:\dsh\runtime\company-ca.crt`；逗号后面是公网入口的根证书，青岛入口的是 `D:\dsh\runtime\entry-ca\entry-ca.crt`，写进 `more_ca`），后面是要尝试的地址（同时探测，先应答的用）。地址也可以写完整 URL（`http://127.0.0.1:4199`，本机测试用）。
+
+公网入口（`server/cloud/`，company-mobile-entry-v1）：青岛 `118.190.105.26:8443`，只放行登录、每人服务器工作台（`/desk-hub/`）、聊天（`/chat/`、`/v0/`、`/company/ext/chat/`）和助手（`/gw/v1/company-models`、`/gw/v1/chat/completions`），其余 404。它的证书由入口自己的 CA 签发（名字约束只允许 `tdharness.local`，私钥在公司服务器），只有这个 App 信任，电脑端不信任。
 
 ## 编译和在模拟器里跑
 
@@ -35,8 +37,7 @@ xcrun simctl launch booted cn.tdharness.mobile
 
 ## 还没有的（下一步）
 
-- **在外面用**：手机不装隧道，出了公司网要青岛服务器开一个只放行登录、聊天、助手的公网入口（IP + 公司根证书，不备案），再把地址加进 `Site.json`。
-- **通话穿透**：服务器现在只给 STUN（`iceServers`），手机走 4G 和公司电脑之间可能打不通，要在青岛加 TURN。
+- **通话穿透**：已有青岛 TURN（coturn，`server/cloud/turnserver.conf`）；Tinode 下发的 `iceServers` 里带 30 天凭证，公司服务器每天 04:20 检查、剩不到 7 天且没人通话时换新并重启 Tinode。手机 4G 对公司电脑的真实通话还没测。
 - **推送**：App 不在前台时收不到新消息和来电提醒（要 APNs + 服务器端发推送）。
 - **TestFlight**：要在 Xcode 里登录开发者账号（`PRODUCT_BUNDLE_IDENTIFIER = cn.tdharness.mobile`，可改）后归档上传。
 - 截图、聊天里下载文件到手机（`/tdh/shot`、`/tdh/save`）暂不支持。

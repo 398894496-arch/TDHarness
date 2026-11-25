@@ -14,7 +14,17 @@ match the sample exactly once (a newer release that moved one stops here instead
   - uploads under --uploads, files up to 200 MB;
   - voice calls (company-chat-call-v1): webrtc on, its ICE servers from runtime/chat-ice.json (a JSON list as
     tinode.conf has it) or one public STUN server reachable in China (stun.miwifi.com). The desks of the office and of
-    Tailscale reach each other directly; STUN only helps two desks behind different home routers. No TURN server.
+    the tunnel reach each other directly; STUN only helps two desks behind different home routers.
+  - company-turn-v1: when runtime/chat-turn.json is there ({"urls": ["turn:<ip>:3478?transport=udp", ...],
+    "days": 30}), a TURN server is added (coturn on the cloud entry, server/cloud/turnserver.conf, use-auth-secret):
+    a phone on 4G and a desk behind a company router cannot reach each other without one. Its credential is coturn's
+    time-limited kind (user "<expiry>:tdh", HMAC-SHA1 of it under runtime/chat-turn.secret), lasting "days".
+    Tinode reads its ICE servers once, at start, and hands the same ones to every client: so
+      tinode-setup.py --turn-refresh --tinode D:/dsh/tinode --runtime D:/dsh/runtime
+    (the task TDH-Tinode-TURN, daily 04:20, install-chat.ps1) writes a new credential into tinode.conf's webrtc block
+    and restarts Tinode (Autostart-Tinode) when fewer than 7 days are left, the TURN urls changed, or --force; never
+    while a call may be going on (a one-to-one call message of the last 3 hours that no later message ended): then it
+    waits for the next run. Prints TURN_REFRESH=0|1|wait.
 The web page's React, fonts and icons come from CDNs (jsDelivr, Google Fonts), which desks in China often cannot
 reach: index.html loads them from static/vendor instead.
 The page's script loads its language and view chunks from "/umd/" (webpack's public path, written for a page at the
@@ -32,11 +42,16 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
+import hmac
 import json
 import os
 import re
 import secrets
 import shutil
+import socket
+import subprocess
+import time
 from pathlib import Path
 
 
@@ -75,15 +90,119 @@ def webrtc(t: str, ice: list) -> str:
     return head + mark + block + rest
 
 
-def ice_servers(runtime: Path) -> list:
+def ice_servers(runtime: Path, now: float | None = None) -> list:
     f = Path(runtime) / "chat-ice.json"
+    got = ICE_DEFAULT
+    if f.is_file():
+        got = json.loads(f.read_text(encoding="utf-8-sig"))
+        if not (isinstance(got, list) and got and all(isinstance(x, dict) and isinstance(x.get("urls"), list) and x["urls"]
+                                                     and all(re.match(r"^(stun|turns?):[^\s\"]+$", str(u)) for u in x["urls"]) for x in got)):
+            raise SystemExit("TINODE_SETUP_FAIL chat-ice")
+    turn = turn_server(runtime, now)
+    return list(got) + ([turn] if turn else [])
+
+
+TURN_DAYS = 30
+TURN_RENEW_S = 7 * 86400
+TURN_USER = re.compile(r'"username":\s*"(\d+):tdh"')
+CALL_ENDS = ("finished", "missed", "declined", "disconnected")
+
+
+def turn_server(runtime: Path, now: float | None = None) -> dict | None:
+    """company-turn-v1: the TURN server of runtime/chat-turn.json with a credential coturn's use-auth-secret takes."""
+    f = Path(runtime) / "chat-turn.json"
     if not f.is_file():
-        return ICE_DEFAULT
-    got = json.loads(f.read_text(encoding="utf-8-sig"))
-    if not (isinstance(got, list) and got and all(isinstance(x, dict) and isinstance(x.get("urls"), list) and x["urls"]
-                                                 and all(re.match(r"^(stun|turns?):[^\s\"]+$", str(u)) for u in x["urls"]) for x in got)):
-        raise SystemExit("TINODE_SETUP_FAIL chat-ice")
-    return got
+        return None
+    cfg = json.loads(f.read_text(encoding="utf-8-sig"))
+    urls = cfg.get("urls") if isinstance(cfg, dict) else None
+    if not (isinstance(urls, list) and urls and all(re.match(r"^turns?:[^\s\"]+$", str(u)) for u in urls)):
+        raise SystemExit("TINODE_SETUP_FAIL chat-turn")
+    secret = (Path(runtime) / "chat-turn.secret").read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[A-Za-z0-9]{32,}", secret):
+        raise SystemExit("TINODE_SETUP_FAIL chat-turn-secret")
+    days = int(cfg.get("days") or TURN_DAYS)
+    if not 1 <= days <= 90:
+        raise SystemExit("TINODE_SETUP_FAIL chat-turn-days")
+    user = "%d:tdh" % int((time.time() if now is None else now) + days * 86400)
+    cred = base64.b64encode(hmac.new(secret.encode(), user.encode(), hashlib.sha1).digest()).decode()
+    return {"urls": [str(u) for u in urls], "username": user, "credential": cred}
+
+
+def webrtc_block(t: str) -> str:
+    _, mark, tail = t.partition('"webrtc": {')
+    end = tail.find("\n\t}")
+    if not mark or end < 0:
+        raise SystemExit("TINODE_SETUP_FAIL anchor-webrtc")
+    return tail[:end]
+
+
+def turn_due(conf_text: str, want: dict | None, now: float) -> bool:
+    """Whether tinode.conf's TURN entry has to be written again: fewer than 7 days left, other urls, or added/removed."""
+    block = webrtc_block(conf_text)
+    m = TURN_USER.search(block)
+    if want is None:
+        return m is not None
+    if m is None or int(m.group(1)) - now < TURN_RENEW_S:
+        return True
+    return not all(json.dumps(u) in block for u in want["urls"])
+
+
+def calls_open(runtime: Path, psql: str) -> int | None:
+    """One-to-one call messages of the last 3 hours that no later message ended (Tinode keeps the state in the head of
+    the messages that replace the call's own); None when the database cannot be asked."""
+    ends = ",".join("'%s'" % s for s in CALL_ENDS)
+    sql = ("select count(*) from messages m where m.topic like 'p2p%%' and m.deletedat is null "
+           "and m.head->>'webrtc' is not null and m.head->>'replace' is null and m.head->>'webrtc' not in (%s) "
+           "and m.createdat > (now() at time zone 'utc') - interval '3 hours' "
+           "and not exists (select 1 from messages r where r.topic = m.topic and r.seqid > m.seqid "
+           "and r.head->>'replace' = ':' || m.seqid and r.head->>'webrtc' in (%s))") % (ends, ends)
+    try:
+        pw = (Path(runtime) / "tinode-db.secret").read_text(encoding="utf-8").strip()
+        r = subprocess.run([psql, "-h", "127.0.0.1", "-U", "tinode", "-d", "tdhchat", "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
+                           env=dict(os.environ, PGPASSWORD=pw), capture_output=True, timeout=30)
+        return int(r.stdout.decode().strip()) if r.returncode == 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def restart_tinode() -> bool:
+    subprocess.run(["powershell", "-NoProfile", "-Command",
+                    "Stop-ScheduledTask -TaskName Autostart-Tinode; Start-Sleep 2; Start-ScheduledTask -TaskName Autostart-Tinode"],
+                   capture_output=True, timeout=60)
+    for _ in range(40):
+        time.sleep(1)
+        try:
+            socket.create_connection(("127.0.0.1", 6060), timeout=2).close()
+            return True
+        except OSError:
+            pass
+    return False
+
+
+def turn_refresh(tin: Path, rt: Path, psql: str, force: bool) -> int:
+    now = time.time()
+    conf_path = tin / "tinode.conf"
+    cur = conf_path.read_text(encoding="utf-8")
+    want = turn_server(rt, now)
+    if not force and not turn_due(cur, want, now):
+        return report(rt, "TURN_REFRESH=0")
+    n = calls_open(rt, psql)
+    if n != 0:
+        return report(rt, "TURN_REFRESH=wait calls=%s" % ("unknown" if n is None else n))
+    tmp = tin / "tinode.conf.tmp"
+    tmp.write_text(webrtc(cur, ice_servers(rt, now)), encoding="utf-8")
+    os.replace(tmp, conf_path)
+    up = restart_tinode()
+    return report(rt, "TURN_REFRESH=1 turn=%s tinode=%s" % ("on" if want else "off", "up" if up else "DOWN"), 0 if up else 1)
+
+
+def report(rt: Path, line: str, code: int = 0) -> int:
+    print(line)
+    logs = Path(rt).parent / "logs"
+    if logs.is_dir():
+        with open(logs / "tinode-turn.log", "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line + "\n")
+    return code
 
 
 def conf(sample: str, sec: dict, db_pw: str, uploads: str, ice: list | None = None) -> str:
@@ -239,11 +358,18 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tinode", required=True)
     ap.add_argument("--runtime", required=True)
-    ap.add_argument("--uploads", required=True)
-    ap.add_argument("--vendor", required=True)
+    ap.add_argument("--uploads")
+    ap.add_argument("--vendor")
     ap.add_argument("--home", choices=("tdh", "tinode"), default=None)
+    ap.add_argument("--turn-refresh", action="store_true")
+    ap.add_argument("--force", action="store_true")
+    ap.add_argument("--psql", default=r"D:\dsh\pgsql\bin\psql.exe")
     a = ap.parse_args()
     tin, rt = Path(a.tinode), Path(a.runtime)
+    if a.turn_refresh:
+        return turn_refresh(tin, rt, a.psql, a.force)
+    if not (a.uploads and a.vendor):
+        ap.error("--uploads and --vendor are needed")
     sample = tin / "tinode.conf.sample"
     if not sample.is_file():
         shutil.copyfile(tin / "tinode.conf", sample)

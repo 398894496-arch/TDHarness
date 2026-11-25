@@ -126,6 +126,12 @@ for ($i = 0; $i -lt 30; $i++) {
 }
 if (-not (Get-NetTCPConnection -LocalPort 6060 -State Listen -ErrorAction SilentlyContinue)) { throw 'tinode-not-listening' }
 Write-Output 'TINODE=listening 127.0.0.1:6060'
+# company-turn-v1: the TURN credential tinode-setup.py writes into tinode.conf lasts 30 days (runtime\chat-turn.json);
+# this renews it, restarting Tinode, once fewer than 7 are left and no call is going on.
+$ta = New-ScheduledTaskAction -Execute $Python -Argument ('"' + (Join-Path $Chat 'tinode-setup.py') + '" --turn-refresh --tinode "' + $Tin + '" --runtime "' + $Rt + '"') -WorkingDirectory $Tin
+$tt = New-ScheduledTaskTrigger -Daily -At '04:20'
+$ts = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName 'TDH-Tinode-TURN' -Action $ta -Trigger $tt -Principal $pr -Settings $ts -Force | Out-Null
 
 # ---- 3. The agent's skill for a person's own chats (company-chat-read-v1); desks take it when TDH starts ----
 $skills = Join-Path $Root 'company\_skills'

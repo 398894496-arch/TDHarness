@@ -79,6 +79,16 @@ def emit_cs(site: dict[str, str]) -> str:
     )
 
 
+def entry_proxy(site: dict[str, str]) -> str:
+    """company-mobile-entry-v1: the cloud entry's address in the company tunnel (site.yml entry_proxy, e.g. 10.66.0.1).
+    Caddy takes X-Forwarded-For from it only, so the people service's sign-in throttle counts each phone's address
+    instead of the entry's; the entry sets that header itself (server/cloud/tdh-entry.nginx.conf)."""
+    ip = site.get("entry_proxy", "")
+    if ip and not re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", ip):
+        raise SystemExit("site entry_proxy: not an IPv4 address")
+    return "\t\ttrusted_proxies static %s/32\n" % ip if ip else ""
+
+
 def emit_caddy(site: dict[str, str]) -> str:
     host = site["host"]
     lp = site["login_port"]
@@ -94,7 +104,7 @@ def emit_caddy(site: dict[str, str]) -> str:
 			http_redirect
 			tls
 		}
-	}
+%s	}
 }
 
 https://%s:%s, https://:%s {
@@ -186,7 +196,7 @@ https://%s:%s, https://:%s {
 		file_server
 	}
 }
-""" % (host, lp, host, lp, lp)
+""" % (host, lp, entry_proxy(site), host, lp, lp)
 
 
 def extract_zip(src: Path, dst: Path, names: list[str]) -> int:

@@ -5,6 +5,9 @@
 // entry when the site has one), and the company's own root certificate. Every HTTPS request goes through `Net.session`,
 // whose delegate accepts only a chain that ends at that root and names that host: the server's certificate is not one
 // the phone trusts by itself, and nothing else may answer in its place.
+// company-mobile-entry-v1: "more_ca" adds the roots of the site's public entries (the cloud entry for phones has its
+// own CA, constrained to the site's host, that only this app trusts: server/cloud/entry-ca.ps1); the name checked is
+// the same.
 import Foundation
 import Security
 
@@ -14,6 +17,7 @@ struct SiteConfig: Decodable {
     let port: Int
     let addresses: [String]
     let ca: String
+    let more_ca: [String]?
 }
 
 enum Site {
@@ -23,17 +27,28 @@ enum Site {
            let c = try? JSONDecoder().decode(SiteConfig.self, from: data) {
             return c
         }
-        return SiteConfig(name: "TDH", host: "tdharness.local", port: 8443, addresses: ["tdharness.local"], ca: "")
+        return SiteConfig(name: "TDH", host: "tdharness.local", port: 8443, addresses: ["tdharness.local"], ca: "", more_ca: nil)
     }()
 
-    static let caCert: SecCertificate? = {
-        let body = config.ca
+    /// The roots a server certificate may chain to: the company's, then any public entry's.
+    static let anchors: [SecCertificate] = ([config.ca] + (config.more_ca ?? [])).compactMap { pem in
+        let body = pem
             .replacingOccurrences(of: "-----BEGIN CERTIFICATE-----", with: "")
             .replacingOccurrences(of: "-----END CERTIFICATE-----", with: "")
             .components(separatedBy: .whitespacesAndNewlines).joined()
-        guard let der = Data(base64Encoded: body) else { return nil }
+        guard !body.isEmpty, let der = Data(base64Encoded: body) else { return nil }
         return SecCertificateCreateWithData(nil, der as CFData)
-    }()
+    }
+
+    /// Whether `trust` ends at one of `anchors` and names the site's host, whatever address was dialled.
+    static func trusted(_ trust: SecTrust) -> Bool {
+        guard !anchors.isEmpty else { return false }
+        SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, config.host as CFString))
+        SecTrustSetAnchorCertificates(trust, anchors as CFArray)
+        SecTrustSetAnchorCertificatesOnly(trust, true)
+        var err: CFError?
+        return SecTrustEvaluateWithError(trust, &err)
+    }
 }
 
 final class PinnedTrust: NSObject, URLSessionDelegate {
@@ -44,16 +59,8 @@ final class PinnedTrust: NSObject, URLSessionDelegate {
             completionHandler(.performDefaultHandling, nil)
             return
         }
-        guard let ca = Site.caCert else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
         // The certificate's name, whatever address we dialled (an IP through the tunnel has no name of its own).
-        SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, Site.config.host as CFString))
-        SecTrustSetAnchorCertificates(trust, [ca] as CFArray)
-        SecTrustSetAnchorCertificatesOnly(trust, true)
-        var err: CFError?
-        if SecTrustEvaluateWithError(trust, &err) {
+        if Site.trusted(trust) {
             completionHandler(.useCredential, URLCredential(trust: trust))
         } else {
             completionHandler(.cancelAuthenticationChallenge, nil)
@@ -67,7 +74,7 @@ enum NetError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .offline: return "连不上公司服务器。在公司请连公司 Wi-Fi；在外面要等公司开通外网入口。"
+        case .offline: return "连不上公司服务器。请检查手机网络后再试；在公司可以连公司 Wi-Fi。"
         case .server(let code, let hint): return hint.isEmpty ? "服务器出错了（\(code)）" : hint
         }
     }

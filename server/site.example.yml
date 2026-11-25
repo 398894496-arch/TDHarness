@@ -6,3 +6,4 @@ login_port: 8443
 gateway_port: 8450
 company_path: D:/dsh/company
 brain_path: D:/dsh/brain
+# entry_proxy: 10.66.0.1   # the cloud entry for phones in the company tunnel (server/cloud): Caddy trusts its X-Forwarded-For

@@ -153,18 +153,13 @@ final class DeskRelay {
         }
     }
 
-    /// TLS whose certificate must chain to the company root and name the site's host (as Net.session checks).
+    /// TLS whose certificate must chain to the company root (or a public entry's) and name the site's host, as
+    /// Net.session checks.
     static func tlsParams() -> NWParameters {
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, Site.config.host)
         sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, trustRef, done in
-            let trust = sec_trust_copy_ref(trustRef).takeRetainedValue()
-            guard let ca = Site.caCert else { done(false); return }
-            SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, Site.config.host as CFString))
-            SecTrustSetAnchorCertificates(trust, [ca] as CFArray)
-            SecTrustSetAnchorCertificatesOnly(trust, true)
-            var e: CFError?
-            done(SecTrustEvaluateWithError(trust, &e))
+            done(Site.trusted(sec_trust_copy_ref(trustRef).takeRetainedValue()))
         }, DispatchQueue.global())
         return NWParameters(tls: tls)
     }
