@@ -52,7 +52,8 @@ struct MainView: View {
     @State private var tab = 1
     @State private var showSettings = false
 
-    private var unread: Int { chat.topics.reduce(0) { $0 + $1.unread } }
+    /// Only the chats in the list count (a chat deleted on this phone does not).
+    private var unread: Int { chat.topics.filter { chat.shows($0) }.reduce(0) { $0 + $1.unread } }
 
     private var inCall: Binding<Bool> {
         Binding(get: { calls.call != nil }, set: { if !$0 && calls.call?.state != "ended" { calls.hangup() } })

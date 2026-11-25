@@ -839,3 +839,126 @@ struct DocIcon: View {
         return ("doc.text", .purple)
     }
 }
+
+// MARK: - company-phone-swipe-v1: one left swipe for every list (the user, 2026-11-25: 「参考这样做就行了 左滑 所有都这样做就行了
+// 渐变一点」, WeChat's list as the reference): the row slides, flat blocks of its own height sit under it at the right,
+// words only, each block a soft gradient of its colour. One row open at a time; a spring, and a rubber band past the end.
+
+struct SwipeAction {
+    enum Tone { case sky, rose }
+    let title: String
+    let tone: Tone
+    let act: () -> Void
+
+    init(title: String, tone: Tone, act: @escaping () -> Void) {
+        self.title = title
+        self.tone = tone
+        self.act = act
+    }
+
+    /// The tone's two ends, light then deep: the app's own colours, not WeChat's (the user: 「不一定要参考微信的橙色和红色」).
+    var ends: (Color, Color) {
+        switch tone {
+        case .sky: (Color(red: 0.66, green: 0.78, blue: 0.98), Color(red: 0.46, green: 0.58, blue: 0.90))
+        case .rose: (Color(red: 0.95, green: 0.64, blue: 0.72), Color(red: 0.88, green: 0.42, blue: 0.52))
+        }
+    }
+}
+
+struct SwipeRow<Content: View>: View {
+    static var spring: Animation { .spring(response: 0.38, dampingFraction: 0.82) }
+
+    let id: String
+    @Binding var open: String?
+    let actions: [SwipeAction]
+    @ViewBuilder let content: Content
+
+    // The row is its own sideways scroll (the system's own nesting of sideways in up-and-down, its own feel and bounce),
+    // the blocks after it, and it rests either shut or fully open.
+    @State private var isOpen = false
+    // One look on every page (the user: 「形态一致 风格一致 配色一致」): each action a tile of the same size and corners,
+    // glossy, light at its left and deep at its right, centred in the row with a little air between tiles; an ordinary
+    // action sky, a deleting one rose.
+    private let w: CGFloat = 76
+    private let h: CGFloat = 40
+    private let gap: CGFloat = 6
+    private let radius: CGFloat = 14
+    private var full: CGFloat { CGFloat(actions.count) * (w + gap) + 10 }
+
+    var body: some View {
+        if actions.isEmpty {
+            content
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal) {
+                    HStack(spacing: 0) {
+                        content.containerRelativeFrame(.horizontal).id(0)
+                            .onGeometryChange(for: Bool.self) { $0.frame(in: .scrollView).minX < -full / 2 } action: { o in
+                                isOpen = o
+                                if o && open != id {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    open = id
+                                } else if !o && open == id {
+                                    open = nil
+                                }
+                            }
+                        HStack(spacing: gap) {
+                            ForEach(Array(actions.enumerated()), id: \.offset) { _, a in
+                                block(a) { withAnimation(Self.spring) { proxy.scrollTo(0, anchor: .leading) } }
+                            }
+                        }
+                        .padding(.leading, gap)
+                        .padding(.trailing, 10)
+                        .frame(maxHeight: .infinity)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .scrollTargetLayout()
+                }
+                .scrollIndicators(.hidden)
+                .scrollTargetBehavior(SwipeSnap(full: full))
+                .onChange(of: open) { _, o in
+                    if o != id && isOpen { withAnimation(Self.spring) { proxy.scrollTo(0, anchor: .leading) } }
+                }
+            }
+        }
+    }
+
+    private func block(_ a: SwipeAction, close: @escaping () -> Void) -> some View {
+        Button {
+            close()
+            a.act()
+        } label: {
+            let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+            Text(a.title).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white)
+                .shadow(color: a.ends.1.opacity(0.35), radius: 2, y: 1)
+                .lineLimit(1).fixedSize()
+                .frame(width: w, height: h)
+                .background(LinearGradient(colors: [a.ends.0, a.ends.1], startPoint: .leading, endPoint: .trailing), in: shape)
+                .overlay(LinearGradient(colors: [.white.opacity(0.30), .white.opacity(0)], startPoint: .top, endPoint: .center).clipShape(shape))
+                .overlay(shape.strokeBorder(.white.opacity(0.35), lineWidth: 0.5))
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Shut or fully open, whichever the finger was heading for.
+private struct SwipeSnap: ScrollTargetBehavior {
+    let full: CGFloat
+    func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+        target.rect.origin.x = target.rect.minX > full / 2 ? full : 0
+    }
+}
+
+extension View {
+    /// A scroll closes an open swipe row (iOS 18 and later; before that the next touch does).
+    @ViewBuilder func closesSwipe(_ open: Binding<String?>) -> some View {
+        if #available(iOS 18.0, *) {
+            onScrollPhaseChange { _, p in
+                if p != .idle && open.wrappedValue != nil { withAnimation(SwipeRow<EmptyView>.spring) { open.wrappedValue = nil } }
+            }
+        } else {
+            self
+        }
+    }
+}

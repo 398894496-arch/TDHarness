@@ -8,6 +8,7 @@ struct HistoryPage: View {
     @Binding var showSettings: Bool
     @State private var query = ""
     @State private var deleting: DeskSession?
+    @State private var openRow: String?
 
     private var rows: [DeskSession] {
         let q = query.trimmingCharacters(in: .whitespaces)
@@ -24,41 +25,38 @@ struct HistoryPage: View {
 
     var body: some View {
         NavigationStack {
-            // A list (for its swipe: 「归档或者删除怎么解决 左滑？」) drawn as the cards it was.
-            List {
-                ForEach(["今天", "最近一周", "更早"], id: \.self) { g in
-                    let list = rows.filter { group($0) == g }
-                    if !list.isEmpty {
-                        Section {
+            // Cards with the one swipe of every list (company-phone-swipe-v1): 归档 and, where the desk can, 删除.
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(["今天", "最近一周", "更早"], id: \.self) { g in
+                        let list = rows.filter { group($0) == g }
+                        if !list.isEmpty {
+                            Text(g).font(.footnote).foregroundStyle(.secondary).padding(.leading, 6).padding(.top, 8)
                             ForEach(Array(list.enumerated()), id: \.element.id) { i, s in
-                                Button {
-                                    desk.open(s.id)
-                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { tab = 1 }
-                                } label: { HistoryCard(s: s, on: s.id == desk.current) }
-                                .buttonStyle(PressStyle())
-                                .rise(i)
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    if desk.canRemove {
-                                        Button(role: .destructive) { deleting = s } label: { Label("删除", systemImage: "trash") }
-                                    }
-                                    if desk.canArchive {
-                                        Button { Task { await archive(s) } } label: { Label("归档", systemImage: "archivebox") }
-                                            .tint(.orange)
+                                SwipeRow(id: s.id, open: $openRow, actions: actions(s)) {
+                                    Button {
+                                        if openRow != nil { withAnimation(SwipeRow<EmptyView>.spring) { openRow = nil }; return }
+                                        desk.open(s.id)
+                                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { tab = 1 }
+                                    } label: { HistoryCard(s: s, on: s.id == desk.current) }
+                                    .buttonStyle(FadePress())
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                                .frosted(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                                .overlay {
+                                    if s.id == desk.current {
+                                        RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.ink.opacity(0.18), lineWidth: 1.5)
                                     }
                                 }
+                                .rise(i)
                             }
-                        } header: {
-                            Text(g).font(.footnote).foregroundStyle(.secondary).textCase(nil)
                         }
                     }
                 }
-                Color.clear.frame(height: 80).listRowBackground(Color.clear).listRowSeparator(.hidden)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 100)
             }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
+            .closesSwipe($openRow)
             .animation(.spring(response: 0.45, dampingFraction: 0.85), value: rows.map(\.id))
             .overlay {
                 if !desk.ready {
@@ -94,6 +92,13 @@ struct HistoryPage: View {
         }
     }
 
+    private func actions(_ s: DeskSession) -> [SwipeAction] {
+        var a: [SwipeAction] = []
+        if desk.canArchive { a.append(SwipeAction(title: "归档", tone: .sky) { Task { await archive(s) } }) }
+        if desk.canRemove { a.append(SwipeAction(title: "删除", tone: .rose) { deleting = s }) }
+        return a
+    }
+
     private func archive(_ s: DeskSession) async {
         if await desk.archive(s.id) { desk.say("已归档，电脑上「已归档」里还能找到") } else { desk.say("没归档成功，稍后再试") }
     }
@@ -104,17 +109,29 @@ struct HistoryPage: View {
     }
 }
 
+/// A press on a card whose glass is under the whole row: the words dim (a shrink would move only the words in the card).
+private struct FadePress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.55 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
 private struct HistoryCard: View {
     let s: DeskSession
     let on: Bool
 
     var body: some View {
-        PhoneCard {
-            VStack(alignment: .leading, spacing: 4) {
+        // (Fixed colours, not the hierarchical .secondary / .tertiary: over the card's material, inside the row's own
+        // sideways scroll, those draw nothing.)
+        // Only the words: the card itself is drawn under the whole row (HistoryPage), so the swipe's tiles open inside it
+        // as they do in Chat (the user: 「图1在框内 图2在框外 我说了要统一啊」).
+        VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(s.title).font(.body.weight(.semibold)).lineLimit(1)
                     Spacer()
-                    if let d = s.updated { Text(d.chatWhen).font(.footnote).foregroundStyle(.tertiary) }
+                    if let d = s.updated { Text(d.chatWhen).font(.footnote).foregroundStyle(Color(uiColor: .tertiaryLabel)) }
                 }
                 if s.busy {
                     HStack(spacing: 5) {
@@ -124,13 +141,12 @@ private struct HistoryCard: View {
                     }
                     .font(.subheadline)
                 } else if on {
-                    Text("正在看的对话").font(.subheadline).foregroundStyle(.secondary)
+                    Text("正在看的对话").font(.subheadline).foregroundStyle(Color(uiColor: .secondaryLabel))
                 }
-            }
         }
-        .overlay {
-            if on { RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.ink.opacity(0.18), lineWidth: 1.5) }
-        }
+        .padding(.horizontal, 14).padding(.vertical, 15)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .foregroundStyle(.primary)
     }
 }

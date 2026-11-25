@@ -16,15 +16,18 @@ enum ChatRoute: Hashable {
 struct ChatListPage: View {
     @EnvironmentObject var chat: ChatStore
     @EnvironmentObject var session: Session
+    @EnvironmentObject var desk: DeskModel
     @Binding var showSettings: Bool
     @State private var query = ""
     @State private var path: [ChatRoute] = []
     @State private var newGroup = false
     @State private var showMenu = false
+    @State private var deleting: ChatTopic?
+    @State private var openRow: String?
     @State private var hits: [ChatHit] = []
     @State private var searching = false
 
-    private var talked: [ChatTopic] { chat.topics.filter { $0.seq > 0 } }
+    private var talked: [ChatTopic] { chat.topics.filter { chat.shows($0) } }
     private var q: String { query.trimmingCharacters(in: .whitespaces) }
     private var nameHits: [ChatTopic] {
         q.isEmpty ? [] : chat.topics.filter { $0.name.localizedCaseInsensitiveContains(q) }
@@ -33,23 +36,11 @@ struct ChatListPage: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            ScrollView {
+            Group {
                 if q.isEmpty {
-                    if !talked.isEmpty {
-                        LazyVStack(spacing: 0) {
-                            ForEach(Array(talked.enumerated()), id: \.element.id) { i, t in
-                                NavigationLink(value: ChatRoute.chat(t.topic)) { ChatRow(t: t) }
-                                    .buttonStyle(RowPress())
-                                    .rise(i)
-                                if t.topic != talked.last?.topic { Divider().padding(.leading, 78) }
-                            }
-                        }
-                        .frosted(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 100)
-                    }
+                    chatList
                 } else {
-                    searchResults.padding(.bottom, 100)
+                    ScrollView { searchResults.padding(.bottom, 100) }
                 }
             }
             .overlay {
@@ -71,20 +62,10 @@ struct ChatListPage: View {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("设置")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    // A small menu of two lines (the user, 2026-11-25: 「展开太大了 小一点 对齐吧 … 通讯录用小书本 建群保留」):
-                    // a popover sized to its content, the icons in one column of one width.
-                    Button { showMenu = true } label: { Image(systemName: "line.3.horizontal") }
-                        .accessibilityLabel("更多")
-                        .popover(isPresented: $showMenu, arrowEdge: .top) {
-                            VStack(alignment: .leading, spacing: 0) {
-                                menuRow("book.closed", "通讯录") { path.append(.contacts) }
-                                Divider().padding(.horizontal, 14)
-                                menuRow("person.2.badge.plus", "建群") { newGroup = true }
-                            }
-                            .padding(.vertical, 4)
-                            .frame(width: 176)
-                            .presentationCompactAdaptation(.popover)
-                        }
+                    Button { withAnimation(.spring(response: 0.36, dampingFraction: 0.8)) { showMenu = true } } label: {
+                        Image(systemName: "line.3.horizontal")
+                    }
+                    .accessibilityLabel("更多")
                 }
             }
             .navigationDestination(for: ChatRoute.self) { r in
@@ -96,22 +77,99 @@ struct ChatListPage: View {
             .sheet(isPresented: $newGroup) {
                 NewGroupSheet { grp in path.append(.chat(grp)) }.environmentObject(chat)
             }
+            .confirmationDialog("删除这个聊天？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                                titleVisibility: .visible, presenting: deleting) { t in
+                Button("删除「\(t.name)」", role: .destructive) {
+                    Task { if !(await chat.deleteChat(t.topic)) { desk.say("没删掉，稍后再试") } }
+                }
+            } message: { _ in
+                Text("你这边的聊天记录会清空，对方那边不受影响。有新消息时它会重新出现。")
+            }
+        }
+        .overlay { menu }
+    }
+
+    /// The chats (the user, 2026-11-25: 「聊天界面 左滑 给两个选项 置顶和删除」): pinned ones first with a pin, a swipe
+    /// to the left for 置顶 / 取消置顶 and 删除.
+    /// The system's own swipe (iOS 26: two floating capsules with words under them) cut the card's row square and stood
+    /// off it (the user: 「这个设计你不觉得丑吗」): this one is the card's own — the row slides, two flat blocks of its height
+    /// under it, words only, the card's corners keeping them.
+    private var chatList: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(Array(talked.enumerated()), id: \.element.id) { i, t in
+                    let pinned = chat.pinned.contains(t.topic)
+                    SwipeRow(id: t.topic, open: $openRow, actions: [
+                        SwipeAction(title: pinned ? "取消置顶" : "置顶", tone: .sky) {
+                            Task { if !(await chat.togglePin(t.topic)) { desk.say(pinned ? "没取消成功，稍后再试" : "没置顶成功，稍后再试") } }
+                        },
+                        SwipeAction(title: "删除", tone: .rose) { deleting = t },
+                    ]) {
+                        Button {
+                            if openRow != nil { withAnimation(SwipeRow<EmptyView>.spring) { openRow = nil } }
+                            else { path.append(.chat(t.topic)) }
+                        } label: { ChatRow(t: t, pinned: pinned) }
+                        .buttonStyle(RowPress())
+                    }
+                    // The row's colour under the whole row, so the card stays whole while the tiles show.
+                    .background(pinned ? Color.white.opacity(0.78) : Color.white.opacity(0.55))
+                    if i < talked.count - 1 {
+                        Rectangle().fill(Color.black.opacity(0.08)).frame(height: 0.5).padding(.leading, 78)
+                            .background(Color.white.opacity(0.55))
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 100)
+        }
+        .closesSwipe($openRow)
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: talked.map(\.topic))
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: chat.pinned)
+    }
+
+    /// The menu (the user, 2026-11-25: 「再窄一点 … 两个图标也要是一个系列一样大小 … 跟左边的设置图标没有对齐」, then 「太宽太大
+    /// 了」 of the system's own): narrow, two lines and a line between, opening out of the button's own place — its top on
+    /// the line of the gear at the left, 16 from the edge as the gear is.
+    @ViewBuilder private var menu: some View {
+        GeometryReader { g in
+            ZStack(alignment: .topTrailing) {
+                if showMenu {
+                    Color.black.opacity(0.001)
+                        .onTapGesture { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { showMenu = false } }
+                    VStack(spacing: 0) {
+                        menuRow("book.closed", "通讯录") { path.append(.contacts) }
+                        Divider().padding(.horizontal, 12)
+                        menuRow("plus.bubble", "建群") { newGroup = true }
+                    }
+                    .frame(width: 140)
+                    // Glass a little whiter than the bar's, so the button under it does not show through.
+                    .background(.white.opacity(0.55), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .glass(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .padding(.top, g.safeAreaInsets.top)
+                    .padding(.trailing, 16)
+                    .transition(.scale(scale: 0.25, anchor: .topTrailing).combined(with: .opacity))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            .ignoresSafeArea()
         }
     }
 
     private func menuRow(_ icon: String, _ title: String, _ act: @escaping () -> Void) -> some View {
         Button {
-            showMenu = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { act() }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { showMenu = false }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { act() }
         } label: {
-            // The system's own menu rows: the words at the left in the body size, the icon at the right in one column.
-            HStack(spacing: 12) {
-                Text(title).font(.body)
+            HStack(spacing: 10) {
+                Text(title).font(.system(size: 15, weight: .medium))
                 Spacer(minLength: 0)
-                Image(systemName: icon).font(.system(size: 17)).symbolRenderingMode(.hierarchical).frame(width: 26)
+                // One box for both icons, so they look one size.
+                Image(systemName: icon).resizable().scaledToFit().frame(width: 17, height: 17)
             }
             .foregroundStyle(Color.ink)
-            .padding(.horizontal, 16).frame(height: 46).contentShape(Rectangle())
+            .padding(.horizontal, 14).frame(height: 40).contentShape(Rectangle())
         }
         .buttonStyle(RowPress())
     }
@@ -391,6 +449,7 @@ private struct RowPress: ButtonStyle {
 
 private struct ChatRow: View {
     let t: ChatTopic
+    var pinned = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -409,6 +468,7 @@ private struct ChatRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text(t.name).font(.body.weight(.semibold)).lineLimit(1)
+                    if pinned { Image(systemName: "pin.fill").font(.caption2).foregroundStyle(Color(red: 0.46, green: 0.58, blue: 0.90)).rotationEffect(.degrees(45)) }
                     Spacer()
                     if let d = t.touched { Text(d.chatWhen).font(.footnote).foregroundStyle(.tertiary) }
                 }

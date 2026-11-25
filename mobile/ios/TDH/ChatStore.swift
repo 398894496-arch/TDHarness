@@ -91,6 +91,12 @@ final class ChatStore: ObservableObject {
     @Published var loaded = false
     @Published var problem = ""
     @Published var me = ""
+    /// Pinned chats, the first the highest (Tinode's own: me's private tpin, as the desks' chat page keeps it).
+    @Published var pinned: [String] = []
+    /// Chats deleted on this phone: hidden until a message newer than the one they had (topic → its seq then).
+    /// Kept per person signed in (another person on the same phone has their own).
+    @Published var hidden: [String: Int] = [:]
+    private var hiddenKey: String { "tdhChatHidden." + me }
     /// The chat on screen: its messages count as read as they come.
     var open = ""
 
@@ -172,6 +178,7 @@ final class ChatStore: ObservableObject {
         let p = lg["params"] as? [String: Any] ?? [:]
         authToken = p["token"] as? String ?? ""
         me = p["user"] as? String ?? ""
+        hidden = (UserDefaults.standard.dictionary(forKey: hiddenKey) as? [String: Int]) ?? [:]
         connected = true
         problem = ""
         await subscribeMe()
@@ -242,6 +249,10 @@ final class ChatStore: ObservableObject {
         if topic == "me" {
             if let desc = meta["desc"] as? [String: Any], let pub = desc["public"] as? [String: Any] {
                 people[me] = ChatPerson(name: pub["fn"] as? String ?? "我", photo: photo(pub, key: me))
+            }
+            if let desc = meta["desc"] as? [String: Any], let priv = desc["private"] as? [String: Any] {
+                pinned = priv["tpin"] as? [String] ?? []
+                topics = sorted(topics)
             }
             if let subs = meta["sub"] as? [[String: Any]] {
                 var list = topics
@@ -341,8 +352,56 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    /// Pinned first (in their order), then the latest.
     private func sorted(_ l: [ChatTopic]) -> [ChatTopic] {
-        l.sorted { ($0.touched ?? .distantPast) > ($1.touched ?? .distantPast) }
+        l.sorted {
+            let a = pinned.firstIndex(of: $0.topic) ?? Int.max, b = pinned.firstIndex(of: $1.topic) ?? Int.max
+            if a != b { return a < b }
+            return ($0.touched ?? .distantPast) > ($1.touched ?? .distantPast)
+        }
+    }
+
+    /// Whether a chat shows in the list: pinned ones always; others once they have a message newer than a deletion.
+    func shows(_ t: ChatTopic) -> Bool {
+        if pinned.contains(t.topic) { return true }
+        return t.seq > 0 && t.seq > (hidden[t.topic] ?? 0)
+    }
+
+    /// 置顶 / 取消置顶 (company-phone-chat-swipe-v1, the user: 「聊天界面 左滑 给两个选项 置顶和删除」): me's private tpin,
+    /// the same list the desks' chat page pins with, so it holds on every device.
+    func togglePin(_ topic: String) async -> Bool {
+        var list = pinned.filter { $0 != topic }
+        if !pinned.contains(topic) { list.insert(topic, at: 0) }
+        let old = pinned
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { pinned = list; topics = sorted(topics) }
+        let r = await request(["set": ["topic": "me", "desc": ["private": ["tpin": list.isEmpty ? "\u{2421}" : list as Any]]]])
+        if r == nil || code(r!) >= 300 {
+            withAnimation { pinned = old; topics = sorted(topics) }
+            return false
+        }
+        return true
+    }
+
+    /// 删除 a chat on this person's side, as WeChat does: its messages deleted for them (not for the other side), and
+    /// the chat out of the list until someone writes in it again.
+    func deleteChat(_ topic: String) async -> Bool {
+        guard let t = topics.first(where: { $0.topic == topic }) else { return false }
+        if t.seq > 0 {
+            await attach(topic, limit: 1)
+            let r = await request(["del": ["topic": topic, "what": "msg", "delseq": [["low": 1, "hi": t.seq + 1]], "hard": false]])
+            if r == nil || code(r!) >= 300 { return false }
+            // Read up to the end on the server too: else its unread would come back on the next sync, a count on the tab
+            // from a chat no longer in the list.
+            await markRead(topic, t.seq)
+        }
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+            hidden[topic] = t.seq
+            messages[topic] = []
+            if let i = topics.firstIndex(where: { $0.topic == topic }) { topics[i].preview = ""; topics[i].read = t.seq }
+        }
+        UserDefaults.standard.set(hidden, forKey: hiddenKey)
+        if pinned.contains(topic) { _ = await togglePin(topic) }
+        return true
     }
 
     // MARK: asking
