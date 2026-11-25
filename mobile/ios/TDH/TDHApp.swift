@@ -28,10 +28,7 @@ struct RootView: View {
         ZStack {
             switch session.phase {
             case .starting:
-                VStack(spacing: 16) {
-                    LavaDots()
-                    Text(session.note).font(.footnote).foregroundStyle(.secondary)
-                }
+                LavaDots(width: 96, height: 48)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(DeskBackground())
                 .transition(.opacity)
@@ -45,60 +42,93 @@ struct RootView: View {
     }
 }
 
-/// 聊天 / 助手 / 工件, and a round 新对话 button set apart on the right (the search-role slot of the iOS 26 tab bar).
-/// Settings is a sheet from the gear in 助手 and 工件.
+/// company-phone-ui-v2 (the user, 2026-11-25: 「记录 助手 聊天 交付 … 我不要中文」「助手应为直接用AI」「下面就放四个按钮」):
+/// History · AI · Chat · Docs. Settings is a sheet from the gear on AI.
 struct MainView: View {
     @EnvironmentObject var session: Session
     @StateObject private var desk = DeskModel()
+    @StateObject private var chat = ChatStore()
+    @StateObject private var calls = CallCenter()
     @State private var tab = 1
     @State private var showSettings = false
 
+    private var unread: Int { chat.topics.reduce(0) { $0 + $1.unread } }
+
+    private var inCall: Binding<Bool> {
+        Binding(get: { calls.call != nil }, set: { if !$0 && calls.call?.state != "ended" { calls.hangup() } })
+    }
+
     var body: some View {
         tabs
+            .background(CallHost(web: calls.web).frame(width: 2, height: 2).opacity(0.01).allowsHitTesting(false))
+            .fullScreenCover(isPresented: inCall) {
+                if let c = calls.call {
+                    CallScreen(call: c).environmentObject(calls).environmentObject(chat)
+                }
+            }
             .overlay(alignment: .bottom) {
                 if let t = desk.toast {
                     Text(t)
                         .font(.subheadline.weight(.medium))
                         .padding(.horizontal, 18).padding(.vertical, 11)
-                        .background(.regularMaterial, in: Capsule())
-                        .shadow(color: .black.opacity(0.12), radius: 14, y: 6)
+                        .glass(Capsule())
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 104)
-                        .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.9)))
+                        .padding(.bottom, 170)
+                        .transition(.rise)
                         .allowsHitTesting(false)
                 }
             }
             .environmentObject(desk)
-            .sheet(isPresented: $showSettings) { SettingsSheet() }
+            .environmentObject(chat)
+            .environmentObject(calls)
+            .sheet(isPresented: $showSettings) { PhoneSettings().environmentObject(chat) }
             .fullScreenCover(isPresented: $session.needsAvatar) { AvatarSetupView().environmentObject(session) }
-            .onChange(of: tab) { _, now in
-                guard now == 3 else { return }
-                tab = 1
-                desk.newChat()
-            }
+            .onReceive(NotificationCenter.default.publisher(for: .tdhShowDesk)) { _ in tab = 1 }
             .task {
-                // The desk loads at sign-in, whichever tab is in front, so 助手 is ready when it is opened.
-                if let p = session.person { await desk.start(token: p.gwToken) }
+                // The desk and the chat start at sign-in, whichever tab is in front, so each is ready when opened.
+                guard let p = session.person else { return }
+                chat.start(login: p.login, gwToken: p.gwToken)
+                async let callsUp: Void = calls.start(login: p.login, gwToken: p.gwToken)
+                await desk.start(token: p.gwToken)
+                await callsUp
+                #if DEBUG
+                // Debug builds only: a test call to a chat named on the command line (-tdhCallTo 名字).
+                if let to = UserDefaults.standard.string(forKey: "tdhCallTo") {
+                    for _ in 0..<60 where !(calls.ready && chat.topics.contains { $0.name == to }) {
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                    }
+                    if let t = chat.topics.first(where: { $0.name == to && $0.topic.hasPrefix("usr") }) {
+                        print("DEBUG_CALL dial \(t.topic) ok=\(await calls.dial(t.topic))")
+                    } else { print("DEBUG_CALL dial: no such chat") }
+                }
+                #endif
             }
+            .onDisappear { chat.stop() }
             #if DEBUG
             .onAppear { if UserDefaults.standard.object(forKey: "tdhTab") != nil { tab = UserDefaults.standard.integer(forKey: "tdhTab") } }
             #endif
     }
 
     @ViewBuilder private var tabs: some View {
+        // Today's tab bar: the selected one in ink, not blue.
+        tabView.tint(Color.ink)
+    }
+
+    @ViewBuilder private var tabView: some View {
         if #available(iOS 18.0, *) {
             TabView(selection: $tab) {
-                Tab("聊天", systemImage: "bubble.left.and.bubble.right", value: 0) { ChatTab() }
-                Tab("助手", systemImage: "sparkles", value: 1) { DeskTab(showSettings: $showSettings) }
-                Tab("工件", systemImage: "doc.on.doc", value: 2) { ArtifactsTab(tab: $tab, showSettings: $showSettings) }
-                Tab("新对话", systemImage: "square.and.pencil", value: 3, role: .search) { Color.clear }
+                Tab("History", systemImage: "clock.arrow.circlepath", value: 0) { HistoryPage(tab: $tab, showSettings: $showSettings) }
+                Tab("AI", systemImage: "sparkles", value: 1) { DeskTab(showSettings: $showSettings) }
+                Tab("Chat", systemImage: "bubble.left.and.bubble.right", value: 2) { ChatListPage(showSettings: $showSettings) }
+                    .badge(unread)
+                Tab("Docs", systemImage: "doc.text", value: 3) { DocsPage(tab: $tab, showSettings: $showSettings) }
             }
         } else {
             TabView(selection: $tab) {
-                ChatTab().tabItem { Label("聊天", systemImage: "bubble.left.and.bubble.right") }.tag(0)
-                DeskTab(showSettings: $showSettings).tabItem { Label("助手", systemImage: "sparkles") }.tag(1)
-                ArtifactsTab(tab: $tab, showSettings: $showSettings).tabItem { Label("工件", systemImage: "doc.on.doc") }.tag(2)
-                Color.clear.tabItem { Label("新对话", systemImage: "square.and.pencil") }.tag(3)
+                HistoryPage(tab: $tab, showSettings: $showSettings).tabItem { Label("History", systemImage: "clock.arrow.circlepath") }.tag(0)
+                DeskTab(showSettings: $showSettings).tabItem { Label("AI", systemImage: "sparkles") }.tag(1)
+                ChatListPage(showSettings: $showSettings).tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }.tag(2).badge(unread)
+                DocsPage(tab: $tab, showSettings: $showSettings).tabItem { Label("Docs", systemImage: "doc.text") }.tag(3)
             }
         }
     }
@@ -147,7 +177,6 @@ enum DebugDrive {
 struct LavaDots: View {
     var width: CGFloat = 70
     var height: CGFloat = 36
-
     var body: some View {
         TimelineView(.animation) { tl in
             let t = tl.date.timeIntervalSinceReferenceDate

@@ -32,6 +32,7 @@ import chat_assist  # noqa: E402
 import chat_archive  # noqa: E402
 import chat_voice  # noqa: E402
 import chat_call  # noqa: E402
+import chat_search  # noqa: E402
 import login_sms  # noqa: E402
 import chat_docs  # noqa: E402
 import erp_sso  # noqa: E402
@@ -2266,6 +2267,19 @@ def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
         row = person(login) or {}
         got = chat_voice.text_for(TOKEN_STORE.parent, ref, login, row.get("role") == "admin")
         return 200, (dict({"ok": True}, **got) if got else {"ok": True, "pending": True})
+    if what == "find":
+        # company-chat-search-all-v1: the phone's search over all of the person's own chat messages (any age).
+        q = str(payload.get("q") or "").strip()
+        if not q:
+            return 400, {"ok": False, "error": "no-word"}
+        try:
+            hits = chat_search.search_all(chat_assist.load_config(TOKEN_STORE.parent), TOKEN_STORE.parent, login, q,
+                                          people_by_login(), _tinode_links())
+        except (RuntimeError, OSError, ValueError) as e:
+            sys.stderr.write("people-api chat-find %s failed %s\n" % (login, type(e).__name__))
+            return 200, {"ok": False, "error": "search-failed", "hint": "聊天记录现在搜不了，稍后再试。"}
+        sys.stderr.write("people-api chat-find %s n=%d\n" % (login, len(hits)))
+        return 200, {"ok": True, "q": q, "hits": hits}
     if what not in ("list", "read", "search"):
         return 404, {"ok": False, "error": "not-found"}
     chat_read.VOICE = chat_voice.lookup(TOKEN_STORE.parent)
@@ -2616,7 +2630,7 @@ def chat_call_once() -> dict:
 
 def chat_call_loop() -> None:
     time.sleep(float(os.environ.get("TDH_CHAT_CALL_DELAY") or 40))
-    every = float(os.environ.get("TDH_CHAT_CALL_EVERY") or 5)
+    every = float(os.environ.get("TDH_CHAT_CALL_EVERY") or 3)   # company-chat-call-fast-v1
     while True:
         try:
             chat_call_once()

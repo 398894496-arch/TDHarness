@@ -517,12 +517,16 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
   // company-chat-voice-v1 / company-chat-call-v1: the chat page as this Mac's own relay serves it (chat-relay.js:
   // http://127.0.0.1, ports 17811-17814) records voice messages and makes calls; its microphone is allowed here
   // without WebKit asking again each time (macOS still asks once, for the app: NSMicrophoneUsageDescription).
-  // Anything else gets WebKit's own question.
+  // company-chat-mic-frame-v1 (the user, 2026-11-25: 「每一次通话都有一个提示出来 我的mac」): on the desk the chat page is
+  // a frame inside the desk's own page (127.0.0.1:17803), and WebKit names the page's origin, not the frame's: the
+  // frame is looked at too. Anything else gets WebKit's own question.
   @available(macOS 12.0, *)
   func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo,
                type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
-    let local = origin.protocol == "http" && (origin.host == "127.0.0.1" || origin.host == "localhost") && (17811...17814).contains(origin.port)
-    decisionHandler(local && type == .microphone ? .grant : .prompt)
+    func loopback(_ o: WKSecurityOrigin) -> Bool { o.protocol == "http" && (o.host == "127.0.0.1" || o.host == "localhost") }
+    func relay(_ o: WKSecurityOrigin) -> Bool { loopback(o) && (17811...17814).contains(o.port) }
+    let chat = relay(origin) || (loopback(origin) && relay(frame.securityOrigin))
+    decisionHandler(chat && type == .microphone ? .grant : .prompt)
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

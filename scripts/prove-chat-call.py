@@ -205,6 +205,22 @@ def main() -> None:
         "这次通话没有说到要记下的事。") and "45秒" in cc.card_text(None, {}, "a", "b", datetime(2026, 11, 24, 9, 5), 45000), "nothing to keep, and a short call, say so")
     answers.clear()
 
+    # company-chat-call-fast-v1: one side said it hung up and Tinode has the call over: the minutes ONE_SIDE_S later,
+    # not after QUIET_S (the other side's word that it hung up may never come).
+    t2 = ms_now - 80000
+    cc.put_piece(rt, "lfh", "wang", 10, t2, 2000, wav(b"L1"), now)
+    record10 = dict(record8, state="finished", ms=20000)
+    find10 = lambda a, b, seq: record10 if seq == 10 else find8(a, b, seq)
+    run10 = lambda at: cc.run_once({}, rt, people, office, set(), post, recognise_fn=rec, ask=ask, find=find10, now=at)
+    cc.put_end(rt, "lfh", "wang", 10, now)
+    n0 = len(posts)
+    answers.append(json.dumps({"points": ["报价单今天发"], "decisions": [], "todos": []}, ensure_ascii=False))
+    run10(now + 1)
+    check(len(posts) == n0, "one side hung up a moment ago: the other side's last piece may still come")
+    run10(now + cc.ONE_SIDE_S + 1)
+    check(len(posts) == n0 + 1 and "报价单今天发" in posts[-1]["text"], "one side hung up and Tinode has the call over: the minutes seconds later")
+    answers.clear()
+
     # A call with no words: no card. Pieces of a call Tinode never had: dropped.
     asked["fail"] = 0
     said[b"E1"] = ""
@@ -214,14 +230,14 @@ def main() -> None:
     cc.put_end(rt, "lfh", "wang", 9, now)
     cc.put_end(rt, "wang", "lfh", 9, now)
     cc.run_once({}, rt, people, office, set(), post, recognise_fn=rec, ask=ask, find=find9, now=now)
-    check(len(posts) == 2 and json.loads((rt / cc.DIR / "lfh~wang~9" / "call.json").read_text(encoding="utf-8")).get("empty"), "a call with no words: no card")
+    check(len(posts) == 3 and json.loads((rt / cc.DIR / "lfh~wang~9" / "call.json").read_text(encoding="utf-8")).get("empty"), "a call with no words: no card")
     cc.put_piece(rt, "lfh", "boss", 11, ms_now, 2000, wav(b"L1"), now)
     cc.put_end(rt, "lfh", "boss", 11, now)
     cc.put_end(rt, "boss", "lfh", 11, now)
     cc.run_once({}, rt, people, office, set(), post, recognise_fn=rec, ask=ask, find=lambda a, b, s: None, now=now + 60)
     check((rt / cc.DIR / "boss~lfh~11").is_dir(), "a call Tinode has no record of (yet) is kept a while")
     out = cc.run_once({}, rt, people, office, set(), post, recognise_fn=rec, ask=ask, find=lambda a, b, s: None, now=now + cc.LOST_S + 5)
-    check(out["dropped"] == 1 and not (rt / cc.DIR / "boss~lfh~11").exists() and len(posts) == 2, "then dropped, nothing posted")
+    check(out["dropped"] == 1 and not (rt / cc.DIR / "boss~lfh~11").exists() and len(posts) == 3, "then dropped, nothing posted")
 
     # find_call reads Tinode's record (a stand-in psql).
     sqls = []

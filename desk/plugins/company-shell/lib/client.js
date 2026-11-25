@@ -9897,6 +9897,25 @@ window.__ModuleLoader__.load({
 					const a = (artStore.list || []).find(function (x) { return x.path === path; }) || { path: path, modified: 0 };
 					return forwardArtifact(a, topics || [], note || "").catch(function (err) { return { ok: false, error: String((err && err.message) || err) }; });
 				},
+				// A file from the phone's chat (company-chat-view-v1): into chats, or into the composer.
+				forwardFile: function (name, mime, b64, topics, note) {
+					return fetch("/company/chat/forward", {
+						method: "POST",
+						credentials: "same-origin",
+						headers: Object.assign({ "content-type": "application/json" }, CHAT_H),
+						body: JSON.stringify({ topics: topics || [], name: String(name || "文件"), mime: String(mime || "application/octet-stream"), title: String(name || "文件"), note: note || "", base64: String(b64 || "") })
+					}).then(function (r) { return r.json(); }).catch(function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
+				askFile: function (name, mime, b64) {
+					try {
+						const bin = atob(String(b64 || ""));
+						const bytes = new Uint8Array(bin.length);
+						for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+						const f = new File([bytes], String(name || "文件"), { type: String(mime || "application/octet-stream") });
+						document.documentElement.classList.remove("cs-phone-art");
+						return landDeskFiles([f]).then(function (n) { return { ok: n > 0 }; }, function () { return { ok: false }; });
+					} catch (err) { return Promise.resolve({ ok: false }); }
+				},
 				askArtifact: function (path) {
 					const a = (artStore.list || []).find(function (x) { return x.path === path; }) || { path: path, modified: 0 };
 					document.documentElement.classList.remove("cs-phone-art");
@@ -9911,6 +9930,26 @@ window.__ModuleLoader__.load({
 					rightbarToggle(false);
 				},
 				ask: function (text) { return insertDeskTextFn(String(text || ""), undefined, true); },
+				// company-phone-history-swipe-v1 (the user, 2026-11-25: 「归档或者删除怎么解决 左滑？」): History's swipe on the
+				// phone. What the kernel offers is asked first (can), so the phone shows only what will work.
+				can: function () {
+					const w = ctx.workspaces || {};
+					// The kernel archives a session (and brings it back); it has no way to delete one (2026-11-25: its session
+					// service offers none), so the phone offers what the desks do: 归档.
+					return { archive: typeof w.archiveSession === "function", remove: typeof w.deleteSession === "function" };
+				},
+				archive: function (id) {
+					const w = ctx.workspaces || {};
+					if (!id || typeof w.archiveSession !== "function") return Promise.resolve({ ok: false, error: "no-archive" });
+					return Promise.resolve().then(function () { return w.archiveSession(String(id)); })
+						.then(function () { tell(); return { ok: true }; }, function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
+				remove: function (id) {
+					const w = ctx.workspaces || {};
+					if (!id || typeof w.deleteSession !== "function") return Promise.resolve({ ok: false, error: "no-delete" });
+					return Promise.resolve().then(function () { return w.deleteSession(String(id)); })
+						.then(function () { tell(); return { ok: true }; }, function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
 				insets: function (top, bottom) {
 					const st = document.documentElement.style;
 					st.setProperty("--tdh-top", Math.max(0, Number(top) || 0) + "px");

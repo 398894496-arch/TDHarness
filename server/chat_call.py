@@ -42,6 +42,10 @@ SEG_MAX_MS = 65000
 SEG_MAX_BYTES = 3 * 1024 * 1024
 SIDE_MAX = 600                   # pieces from one side of one call (ten hours of talk)
 QUIET_S = 120                    # nothing from either side for this long: the call is over for us
+# company-chat-call-fast-v1 (the user, 2026-11-25: 「通话结束10秒-20秒就能出」): once one side has said it hung up (and
+# Tinode's record says the call is over), the other side gets this long for its last piece, then the minutes are made —
+# not two minutes more when the other side's word that it hung up never comes (a page closed, a phone gone to sleep).
+ONE_SIDE_S = 5
 STALE_S = 6 * 3600               # a call Tinode still has as going this long after it began: over
 LOST_S = 15 * 60                 # pieces for a call Tinode has no record of: dropped after this long
 KEEP_DONE_S = 7 * 86400
@@ -315,7 +319,9 @@ def run_once(cfg: dict, runtime: Path, people: dict, office: Path, bots, post, r
         # 2. Over? Both sides said so, or nothing for a while; and Tinode's record says so.
         left = list((home / "pieces").glob("*.wav")) if (home / "pieces").is_dir() else []
         quiet = now - float(m.get("last") or m.get("since") or now) >= QUIET_S
-        if left or not (set(m.get("ended") or {}) >= {a, b} or quiet):
+        ended = m.get("ended") or {}
+        one_side = bool(ended) and now - min(float(v) for v in ended.values()) >= ONE_SIDE_S
+        if left or not (set(ended) >= {a, b} or one_side or quiet):
             continue
         try:
             got = find(a, b, seq)

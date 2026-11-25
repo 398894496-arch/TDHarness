@@ -4,6 +4,14 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.25.4
+
+**手机端重做成 History · AI · Chat · Docs 四页；手机聊天有了语音消息、语音通话、通讯录和建群；通话纪要挂断后几秒就出；Mac 通话不再每次弹麦克风提示**
+- 手机端（iOS，`company-phone-ui-v2`）：底栏四页 History（过往对话，左滑归档）· AI · Chat · Docs，左上角都有设置。界面照 Today 的毛玻璃、细高光边和弹簧动效做；AI 页输入框是「+ / 按住说话 / 键盘」，只出答案不出工具过程，新对话页有问候和四张常用卡片；顶部的小动画只在 AI 思考时出现。
+- 手机聊天改成原生（`company-phone-chat-native-v1`）：头像圆形；按住说话发语音消息（和电脑同一种格式，服务器转写）；一对一语音通话，和电脑互通，挂断后照样出纪要（`company-phone-call-v1`），有拨号回铃、来电铃声、接通和挂断提示音；右上角菜单有通讯录、建群；搜索同时找同事和全部聊天记录。任务卡、TDH 助手的卡片（带「记下 / 不用」）、通话纪要、文件和转发的文档都按类型排版。
+- 服务器：通话纪要在一方挂断、通话已结束后约 5 秒就出，不再等对方报告或两分钟（`company-chat-call-fast-v1`）；新增全部聊天记录搜索，只搜自己所在的聊天，不限时间，只读（`company-chat-search-all-v1`）。
+- Mac：电脑端聊天打电话、录语音时不再每次都弹「允许使用麦克风」（聊天页在工作台页面里，原来只认了外层页面，`company-chat-mic-frame-v1`）。
+
 ## 2026.11.25.3
 
 **工件能转发、能交给助手；聊天里的文件点开就看，不再存到「下载」；Mac 偶发「拿不到座位」会自动再试**

@@ -292,7 +292,12 @@ final class ChatRelay {
             "var M;Object.defineProperty(window,'tinode',{configurable:true,get:function(){return M},set:function(v){" +
             "if(v&&typeof v.Tinode==='function'){var B=v.Tinode;var W=class extends B{constructor(c,o){super(Object.assign({},c,{transport:'lp'}),o)}};" +
             "M=new Proxy(v,{get:function(o,k){return k==='Tinode'?W:o[k]}})}else{M=v}}});" +
-            "window.TDH_PHONE=1;})();"
+            "window.TDH_PHONE=1;" +
+            // company-phone-call-v1: the phone's own call screen drives the page's calls (window.__tdhChat.fn) and hears
+            // every change of the call (S.call) here, on the "tdhcall" handler.
+            "setInterval(function(){try{var c=window.__tdhChat,h=window.webkit&&webkit.messageHandlers&&webkit.messageHandlers.tdhcall;" +
+            "if(!c||!h)return;var k=JSON.stringify({me:c.S.meId||'',call:c.S.call||null});if(k!==window.__tdhCallLast){window.__tdhCallLast=k;h.postMessage(k)}}catch(e){}},200);" +
+            "})();"
         return "<script>" + js + "</script>"
     }
 

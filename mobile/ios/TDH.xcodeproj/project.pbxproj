@@ -168,7 +168,9 @@
 				INFOPLIST_KEY_CFBundleDisplayName = TDH;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TDH 用麦克风发语音消息和打语音电话。";
-				INFOPLIST_KEY_NSCameraUsageDescription = "TDH 用相机拍你的头像。";
+				INFOPLIST_KEY_NSCameraUsageDescription = "TDH 用相机拍头像、拍照片发给同事或 AI。";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "TDH 在「+」里列出你最近的照片，点一张就发出去。";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "按住说话时，TDH 把你说的话转成文字发出去。";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "TDH 在公司里通过局域网直接连公司服务器。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -199,7 +201,9 @@
 				INFOPLIST_KEY_CFBundleDisplayName = TDH;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "TDH 用麦克风发语音消息和打语音电话。";
-				INFOPLIST_KEY_NSCameraUsageDescription = "TDH 用相机拍你的头像。";
+				INFOPLIST_KEY_NSCameraUsageDescription = "TDH 用相机拍头像、拍照片发给同事或 AI。";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "TDH 在「+」里列出你最近的照片，点一张就发出去。";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "按住说话时，TDH 把你说的话转成文字发出去。";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "TDH 在公司里通过局域网直接连公司服务器。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

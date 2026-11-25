@@ -1,41 +1,12 @@
-// 聊天: the company chat page (the same one the desks show), from ChatRelay on this phone.
+// The company chat page in a web view (the desks' way; the phone draws its Chat natively now, ChatViews.swift), and the
+// web view helpers the AI page uses.
 import SwiftUI
 import WebKit
-
-struct ChatTab: View {
-    @EnvironmentObject var session: Session
-    @State private var url: URL?
-    @State private var failed = ""
-
-    var body: some View {
-        Group {
-            if let u = url {
-                ChatWebView(url: u).ignoresSafeArea(edges: .bottom)
-            } else if !failed.isEmpty {
-                VStack(spacing: 14) {
-                    Text(failed).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("重试") { Task { await open() } }.buttonStyle(.bordered)
-                }.padding()
-            } else {
-                LavaDots()
-            }
-        }
-        .task { await open() }
-    }
-
-    private func open() async {
-        failed = ""
-        guard let p = session.person else { return }
-        do {
-            url = try await ChatRelay.shared.start(login: p.login, gwToken: p.gwToken)
-        } catch {
-            failed = "聊天没打开：" + ((error as? LocalizedError)?.errorDescription ?? "\(error)")
-        }
-    }
-}
+import ObjectiveC
 
 struct ChatWebView: UIViewRepresentable {
     let url: URL
+    var onFile: ((ChatFile) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -43,11 +14,20 @@ struct ChatWebView: UIViewRepresentable {
         let c = WKWebViewConfiguration()
         c.allowsInlineMediaPlayback = true
         c.mediaTypesRequiringUserActionForPlayback = []
+        if let onFile {
+            c.userContentController.add(FileMessages { body in
+                guard let m = body as? [String: Any], let b64 = m["data"] as? String, let data = Data(base64Encoded: b64) else { return }
+                onFile(ChatFile(name: m["name"] as? String ?? "文件", mime: m["mime"] as? String ?? "", data: data))
+            }, name: "tdhfile")
+        }
         let w = WKWebView(frame: .zero, configuration: c)
         w.uiDelegate = context.coordinator
         w.navigationDelegate = context.coordinator
         w.allowsBackForwardNavigationGestures = false
         w.scrollView.contentInsetAdjustmentBehavior = .never
+        w.isOpaque = false
+        w.backgroundColor = .clear
+        WebKeyboard.hideAccessoryBar(w)
         w.load(URLRequest(url: url))
         return w
     }
@@ -103,4 +83,39 @@ struct ChatWebView: UIViewRepresentable {
             vc.present(a, animated: true)
         }
     }
+}
+
+/// The ‹ › ✓ bar WebKit puts over the keyboard for a page's text fields, taken away (a phone app's own composer
+/// does not have one): the page's content view gets a subclass of its own whose inputAccessoryView is nothing.
+enum WebKeyboard {
+    static func hideAccessoryBar(_ web: WKWebView) {
+        guard let content = web.scrollView.subviews.first(where: { String(describing: type(of: $0)).hasPrefix("WKContent") }) else { return }
+        let base: AnyClass = type(of: content)
+        let name = String(cString: class_getName(base)) + "_TDHNoBar"
+        var sub: AnyClass? = NSClassFromString(name)
+        if sub == nil, let made = objc_allocateClassPair(base, name, 0) {
+            let block: @convention(block) (AnyObject) -> AnyObject? = { _ in nil }
+            let sel = #selector(getter: UIResponder.inputAccessoryView)
+            if let m = class_getInstanceMethod(UIResponder.self, sel) {
+                class_addMethod(made, sel, imp_implementationWithBlock(block), method_getTypeEncoding(m))
+            }
+            objc_registerClassPair(made)
+            sub = made
+        }
+        if let sub { object_setClass(content, sub) }
+    }
+}
+
+/// A file someone sent in the chat, handed over by the page when it is tapped (company-chat-view-v1).
+struct ChatFile: Identifiable {
+    let id = UUID()
+    let name: String
+    let mime: String
+    let data: Data
+}
+
+final class FileMessages: NSObject, WKScriptMessageHandler {
+    private let got: (Any) -> Void
+    init(_ got: @escaping (Any) -> Void) { self.got = got }
+    func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) { got(message.body) }
 }

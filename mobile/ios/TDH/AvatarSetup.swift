@@ -7,6 +7,9 @@ import UIKit
 
 struct AvatarSetupView: View {
     @EnvironmentObject var session: Session
+    @Environment(\.dismiss) private var dismiss
+    /// From settings (更换头像): it can be closed, and closes itself once the new picture is on.
+    var again = false
     @State private var item: PhotosPickerItem?
     @State private var image: UIImage?
     @State private var camera = false
@@ -19,11 +22,11 @@ struct AvatarSetupView: View {
             DeskBackground()
             VStack(spacing: 0) {
                 LavaDots().padding(.top, 56)
-                Text(done ? "头像已设置好" : "上传一张你的头像")
+                Text(done ? "头像已设置好" : again ? "换一张头像" : "上传一张你的头像")
                     .font(.title2.weight(.semibold))
                     .padding(.top, 20)
                     .contentTransition(.opacity)
-                Text("同事在聊天里靠头像认出你。设置好以后才能开始使用。")
+                Text(again ? "同事在聊天里靠头像认出你。" : "同事在聊天里靠头像认出你。设置好以后才能开始使用。")
                     .font(.footnote).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.top, 6).padding(.horizontal, 32)
@@ -82,7 +85,7 @@ struct AvatarSetupView: View {
                         }
                     }
                     .disabled(busy)
-                    Button("退出登录") { Task { await session.signOut() } }
+                    Button(again ? "取消" : "退出登录") { if again { dismiss() } else { Task { await session.signOut() } } }
                         .font(.footnote).foregroundStyle(.secondary).padding(.top, 4)
                 }
             }
@@ -112,7 +115,7 @@ struct AvatarSetupView: View {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             withAnimation { done = true }
             try? await Task.sleep(nanoseconds: 1_000_000_000)
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { session.needsAvatar = false }
+            if again { dismiss() } else { withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) { session.needsAvatar = false } }
         } else {
             error = "头像没传上去，检查一下网络再试一次"
             UINotificationFeedbackGenerator().notificationOccurred(.error)

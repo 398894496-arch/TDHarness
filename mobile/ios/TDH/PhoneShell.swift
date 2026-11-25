@@ -1,6 +1,7 @@
 // The phone app's own frame around the server desk (company-phone-layout-v1): the 工件 list and the settings sheet.
 // Settings used to be a 我 tab; like most phone assistants it is now a sheet from the gear, which frees the tab for 工件.
 import SwiftUI
+import QuickLook
 import WebKit
 
 struct ArtifactsTab: View {
@@ -98,7 +99,7 @@ struct ArtifactPager: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button { forwarding = true } label: { Label("转发到聊天", systemImage: "arrowshape.turn.up.right") }
-                    Button { Task { await ask() } } label: { Label("交给助手", systemImage: "sparkles") }
+                    Button { Task { await ask() } } label: { Label("交给 AI", systemImage: "sparkles") }
                     if let file = shareFile {
                         ShareLink(item: file) { Label("用其他 App 打开", systemImage: "square.and.arrow.up") }
                     }
@@ -124,7 +125,7 @@ struct ArtifactPager: View {
                     .buttonStyle(.bordered)
                     .buttonBorderShape(.capsule)
                     Button { Task { await ask() } } label: {
-                        Label(asking ? "正在放进去…" : "交给助手", systemImage: "sparkles").frame(maxWidth: .infinity).frame(height: 48)
+                        Label(asking ? "正在放进去…" : "交给 AI", systemImage: "sparkles").frame(maxWidth: .infinity).frame(height: 48)
                     }
                     .buttonStyle(.borderedProminent)
                     .buttonBorderShape(.capsule)
@@ -137,7 +138,8 @@ struct ArtifactPager: View {
             .padding(.bottom, 6)
         }
         .sheet(isPresented: $forwarding) {
-            ForwardPicker(item: item).environmentObject(desk)
+            ForwardPicker(title: item.title) { topics, note in await desk.forward(item.path, to: topics, note: note) }
+                .environmentObject(desk)
         }
     }
 
@@ -154,11 +156,11 @@ struct ArtifactPager: View {
 
     private func ask() async {
         asking = true
-        let ok = await desk.askArtifact(item.path)
+        let ok = await desk.askArtifact(item.path, title: item.title)
         asking = false
         if ok {
             tab = 1
-            desk.say("已放进助手对话框，说说要怎么处理，比如「做成 PDF」")
+            desk.say("已放进 AI 对话框，说说要怎么处理，比如「做成 PDF」")
         } else {
             desk.say("没放进去，稍后再试")
         }
@@ -215,7 +217,9 @@ private struct ArtifactWebView: UIViewRepresentable {
 struct ForwardPicker: View {
     @EnvironmentObject var desk: DeskModel
     @Environment(\.dismiss) private var dismiss
-    let item: DeskArtifact
+    let title: String
+    /// Sends the thing into the chats picked, with the note: the chats it went to, or why it did not.
+    let send: ([String], String) async -> (sent: [String], error: String?)
     @State private var chats: [DeskChat] = []
     @State private var live = true
     @State private var loading = true
@@ -272,7 +276,7 @@ struct ForwardPicker: View {
                 }
             }
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索同事或群")
-            .navigationTitle("转发「\(item.title)」")
+            .navigationTitle("转发「\(title)」")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -341,7 +345,7 @@ struct ForwardPicker: View {
     private func send() async {
         guard !picked.isEmpty, !sending else { return }
         sending = true
-        let r = await desk.forward(item.path, to: picked, note: note.trimmingCharacters(in: .whitespacesAndNewlines))
+        let r = await send(picked, note.trimmingCharacters(in: .whitespacesAndNewlines))
         sending = false
         if let e = r.error {
             error = "转发没成功：" + e
@@ -437,5 +441,111 @@ struct SettingsSheet: View {
             }
         }
         .presentationDragIndicator(.visible)
+    }
+}
+
+/// A chat file, shown by Quick Look (pages, PDF, pictures, Office files, text…), with 转发 and 交给助手. Nothing is
+/// kept: the file sits in this app's temporary folder while it is shown.
+struct ChatFileSheet: View {
+    @EnvironmentObject var desk: DeskModel
+    @EnvironmentObject var session: Session
+    @Environment(\.dismiss) private var dismiss
+    let file: ChatFile
+    @State private var local: URL?
+    @State private var forwarding = false
+    @State private var asking = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if let local {
+                    QuickLookView(url: local).ignoresSafeArea(edges: .bottom)
+                } else {
+                    VStack(spacing: 12) { LavaDots(); Text("正在打开…").font(.footnote).foregroundStyle(.secondary) }
+                }
+            }
+            .navigationTitle(file.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button { forwarding = true } label: { Label("转发到聊天", systemImage: "arrowshape.turn.up.right") }
+                        Button { Task { await ask() } } label: { Label("交给 AI", systemImage: "sparkles") }
+                    } label: { Image(systemName: "ellipsis") }
+                    .accessibilityLabel("更多")
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 12) {
+                    Button { forwarding = true } label: {
+                        Label("转发", systemImage: "arrowshape.turn.up.right").frame(maxWidth: .infinity).frame(height: 48)
+                    }
+                    .buttonStyle(.bordered).buttonBorderShape(.capsule)
+                    Button { Task { await ask() } } label: {
+                        Label(asking ? "正在放进去…" : "交给 AI", systemImage: "sparkles").frame(maxWidth: .infinity).frame(height: 48)
+                    }
+                    .buttonStyle(.borderedProminent).buttonBorderShape(.capsule).disabled(asking)
+                }
+                .font(.body.weight(.semibold))
+                .padding(.horizontal, 20).padding(.vertical, 8)
+                .background(.bar)
+            }
+        }
+        .task { local = Self.write(file) }
+        .onDisappear { if let local { try? FileManager.default.removeItem(at: local) } }
+        .sheet(isPresented: $forwarding) {
+            ForwardPicker(title: file.name) { topics, note in await desk.forwardFile(file, to: topics, note: note) }
+                .environmentObject(desk)
+        }
+    }
+
+    private func ask() async {
+        asking = true
+        let ok = await desk.askFile(file)
+        asking = false
+        if ok {
+            dismiss()
+            NotificationCenter.default.post(name: .tdhShowDesk, object: nil)
+            desk.say("已放进 AI 对话框，说说要怎么处理它")
+        } else {
+            desk.say(desk.ready ? "没放进去，稍后再试" : "AI 还没打开，稍后再试")
+        }
+    }
+
+    static func write(_ f: ChatFile) -> URL? {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("chat-view", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let safe = f.name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let url = dir.appendingPathComponent(safe.isEmpty ? "文件" : safe)
+        return (try? f.data.write(to: url, options: .atomic)) != nil ? url : nil
+    }
+}
+
+extension Notification.Name {
+    /// Asks the app to bring 助手 forward (a file was just handed to the assistant from 聊天).
+    static let tdhShowDesk = Notification.Name("tdhShowDesk")
+}
+
+struct QuickLookView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Source { Source(url) }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let c = QLPreviewController()
+        c.dataSource = context.coordinator
+        return c
+    }
+
+    func updateUIViewController(_ c: QLPreviewController, context: Context) {}
+
+    final class Source: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+        init(_ url: URL) { self.url = url }
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { url as NSURL }
     }
 }

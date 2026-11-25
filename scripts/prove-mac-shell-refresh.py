@@ -44,8 +44,10 @@ def main() -> None:
     check(binary[:4] == b"\xca\xfe\xba\xbe" and b"{{TDH_HOST}}" not in binary, "the shell is a universal Mach-O, with nothing for the site to rewrite")
     src = (APP / "src" / "CompanyDesk.release.swift").read_text(encoding="utf-8")
     check("requestMediaCapturePermissionFor origin: WKSecurityOrigin" in src and "web!.uiDelegate = self" in src
-          and '(17811...17814).contains(origin.port)' in src and 'origin.protocol == "http"' in src
+          and '(17811...17814).contains(o.port)' in src and 'o.protocol == "http"' in src
           and "type == .microphone ? .grant : .prompt" in src, "the shell grants the microphone to the chat page on this Mac's relay only")
+    # company-chat-mic-frame-v1: the chat is a frame in the desk's page; WebKit names the page, so the frame is looked at.
+    check("relay(frame.securityOrigin)" in src and "loopback(origin)" in src, "the chat page as a frame in the desk's page gets the microphone without asking each call")
     check("cfg.mediaTypesRequiringUserActionForPlayback = []" in src, "a call's sound plays without a click")
 
     import importlib.util

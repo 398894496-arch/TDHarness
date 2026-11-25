@@ -1,0 +1,278 @@
+// company-phone-ui-v2: History (the assistant's past conversations, the same as on the computer), Docs (what the
+// assistant made), and the settings sheet — the prototype the user approved, on real data.
+import SwiftUI
+
+struct HistoryPage: View {
+    @EnvironmentObject var desk: DeskModel
+    @Binding var tab: Int
+    @Binding var showSettings: Bool
+    @State private var query = ""
+    @State private var deleting: DeskSession?
+
+    private var rows: [DeskSession] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty ? desk.sessions : desk.sessions.filter { $0.title.localizedCaseInsensitiveContains(q) }
+    }
+
+    private func group(_ s: DeskSession) -> String {
+        guard let d = s.updated else { return "更早" }
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "今天" }
+        if let n = cal.dateComponents([.day], from: cal.startOfDay(for: d), to: cal.startOfDay(for: Date())).day, n < 7 { return "最近一周" }
+        return "更早"
+    }
+
+    var body: some View {
+        NavigationStack {
+            // A list (for its swipe: 「归档或者删除怎么解决 左滑？」) drawn as the cards it was.
+            List {
+                ForEach(["今天", "最近一周", "更早"], id: \.self) { g in
+                    let list = rows.filter { group($0) == g }
+                    if !list.isEmpty {
+                        Section {
+                            ForEach(Array(list.enumerated()), id: \.element.id) { i, s in
+                                Button {
+                                    desk.open(s.id)
+                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { tab = 1 }
+                                } label: { HistoryCard(s: s, on: s.id == desk.current) }
+                                .buttonStyle(PressStyle())
+                                .rise(i)
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    if desk.canRemove {
+                                        Button(role: .destructive) { deleting = s } label: { Label("删除", systemImage: "trash") }
+                                    }
+                                    if desk.canArchive {
+                                        Button { Task { await archive(s) } } label: { Label("归档", systemImage: "archivebox") }
+                                            .tint(.orange)
+                                    }
+                                }
+                            }
+                        } header: {
+                            Text(g).font(.footnote).foregroundStyle(.secondary).textCase(nil)
+                        }
+                    }
+                }
+                Color.clear.frame(height: 80).listRowBackground(Color.clear).listRowSeparator(.hidden)
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .animation(.spring(response: 0.45, dampingFraction: 0.85), value: rows.map(\.id))
+            .overlay {
+                if !desk.ready {
+                    if desk.failed.isEmpty { LavaDots(width: 96, height: 48) }
+                    else { Text(desk.failed).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center).padding() }
+                } else if rows.isEmpty {
+                    ContentUnavailableView(query.isEmpty ? "还没有对话" : "没找到",
+                                           systemImage: query.isEmpty ? "clock.arrow.circlepath" : "magnifyingglass",
+                                           description: Text(query.isEmpty ? "在 AI 里说第一句话，电脑上的对话也会出现在这里" : "换个词试试"))
+                }
+            }
+            .background(DeskBackground())
+            .navigationTitle("History")
+            .searchable(text: $query, prompt: "搜索过往对话")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("设置")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        desk.newChat()
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { tab = 1 }
+                    } label: { Image(systemName: "square.and.pencil") }
+                    .accessibilityLabel("新对话")
+                }
+            }
+            .confirmationDialog("删除这个对话？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                                titleVisibility: .visible, presenting: deleting) { s in
+                Button("删除「\(s.title)」", role: .destructive) { Task { await remove(s) } }
+            } message: { _ in
+                Text("删除后电脑上也看不到了，不能恢复。只想收起来就用「归档」。")
+            }
+        }
+    }
+
+    private func archive(_ s: DeskSession) async {
+        if await desk.archive(s.id) { desk.say("已归档，电脑上「已归档」里还能找到") } else { desk.say("没归档成功，稍后再试") }
+    }
+
+    private func remove(_ s: DeskSession) async {
+        deleting = nil
+        if await desk.remove(s.id) { desk.say("已删除") } else { desk.say("没删掉，稍后再试") }
+    }
+}
+
+private struct HistoryCard: View {
+    let s: DeskSession
+    let on: Bool
+
+    var body: some View {
+        PhoneCard {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(s.title).font(.body.weight(.semibold)).lineLimit(1)
+                    Spacer()
+                    if let d = s.updated { Text(d.chatWhen).font(.footnote).foregroundStyle(.tertiary) }
+                }
+                if s.busy {
+                    HStack(spacing: 5) {
+                        Circle().fill(.blue).frame(width: 6, height: 6)
+                            .phaseAnimator([0.3, 1]) { c, o in c.opacity(o).scaleEffect(o) } animation: { _ in .easeInOut(duration: 0.8) }
+                        Text("进行中").foregroundStyle(.blue)
+                    }
+                    .font(.subheadline)
+                } else if on {
+                    Text("正在看的对话").font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .overlay {
+            if on { RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.ink.opacity(0.18), lineWidth: 1.5) }
+        }
+        .foregroundStyle(.primary)
+    }
+}
+
+struct DocsPage: View {
+    @EnvironmentObject var desk: DeskModel
+    @Binding var tab: Int
+    @Binding var showSettings: Bool
+    @State private var rows: [DeskArtifact] = []
+    @State private var loading = true
+    @State private var query = ""
+    @State private var path: [DeskArtifact] = []
+
+    private var shown: [DeskArtifact] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty ? rows : rows.filter { $0.title.localizedCaseInsensitiveContains(q) }
+    }
+
+    private func group(_ a: DeskArtifact) -> String {
+        guard let d = a.updated else { return "更早" }
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "今天" }
+        if let n = cal.dateComponents([.day], from: cal.startOfDay(for: d), to: cal.startOfDay(for: Date())).day, n < 7 { return "最近一周" }
+        return "更早"
+    }
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(["今天", "最近一周", "更早"], id: \.self) { g in
+                        let list = shown.filter { group($0) == g }
+                        if !list.isEmpty {
+                            Text(g).font(.footnote).foregroundStyle(.secondary).padding(.leading, 6).padding(.top, 6)
+                            ForEach(Array(list.enumerated()), id: \.element.id) { i, a in
+                                NavigationLink(value: a) {
+                                    PhoneCard {
+                                        HStack(spacing: 14) {
+                                            DocIcon(a: a)
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(a.title).font(.body.weight(.semibold)).lineLimit(1)
+                                                if let d = a.updated { Text(d.chatWhen).font(.footnote).foregroundStyle(.secondary) }
+                                            }
+                                            Spacer()
+                                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(PressStyle()).foregroundStyle(.primary)
+                                .rise(i)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 16).padding(.bottom, 100)
+            }
+            .refreshable { await load() }
+            .overlay {
+                if loading && rows.isEmpty {
+                    LavaDots(width: 96, height: 48)
+                } else if shown.isEmpty {
+                    ContentUnavailableView(query.isEmpty ? "还没有文档" : "没找到",
+                                           systemImage: query.isEmpty ? "doc.text" : "magnifyingglass",
+                                           description: Text(query.isEmpty ? "让 AI 写报告、做表格，做好的文件会出现在这里" : "换个词试试"))
+                }
+            }
+            .background(DeskBackground())
+            .navigationTitle("Docs")
+            .searchable(text: $query, prompt: "搜索文档")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("设置")
+                }
+            }
+            .navigationDestination(for: DeskArtifact.self) { a in ArtifactPager(items: shown, start: a, tab: $tab) }
+        }
+        .task(id: desk.ready) { await load() }
+    }
+
+    private func load() async {
+        if !desk.ready { loading = desk.failed.isEmpty; return }
+        loading = true
+        rows = await desk.artifacts().sorted { ($0.updated ?? .distantPast) > ($1.updated ?? .distantPast) }
+        loading = false
+    }
+}
+
+struct PhoneSettings: View {
+    @EnvironmentObject var session: Session
+    @EnvironmentObject var chat: ChatStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmOut = false
+    @State private var avatar = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    VStack(spacing: 8) {
+                        let me = chat.people[chat.me]
+                        Avatar(name: me?.name ?? session.person?.login ?? "我", image: me?.photo, size: 76)
+                        Text(me?.name ?? session.person?.login ?? "").font(.title3.weight(.semibold))
+                        Text([session.person?.dept ?? "", session.person?.login ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity).listRowBackground(Color.clear)
+                }
+                Section("账号") {
+                    Button { avatar = true } label: { Label("更换头像", systemImage: "person.crop.circle") }.foregroundStyle(.primary)
+                    if let d = session.person?.dept, !d.isEmpty {
+                        LabeledContent { Text(d) } label: { Label("部门", systemImage: "building.2") }
+                    }
+                    if let r = session.person?.role, !r.isEmpty {
+                        LabeledContent { Text(r) } label: { Label("角色", systemImage: "person.badge.key") }
+                    }
+                }
+                Section("通用") {
+                    LabeledContent { Text(session.server.isEmpty ? "未连接" : "已连接") } label: { Label("公司服务器", systemImage: "server.rack") }
+                    LabeledContent { Text(chat.connected ? "已连接" : "正在连接") } label: { Label("聊天", systemImage: "bubble.left.and.bubble.right") }
+                    LabeledContent { Text((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "") } label: {
+                        Label("关于 TDH", systemImage: "info.circle")
+                    }
+                }
+                Section {
+                    Button("退出登录", role: .destructive) { confirmOut = true }.frame(maxWidth: .infinity)
+                } footer: {
+                    Text("退出后这台手机不再免登录，下次要重新输验证码或密码。")
+                }
+            }
+            .tint(Color.ink)
+            .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }.accessibilityLabel("关闭")
+                }
+            }
+            .confirmationDialog("退出登录？", isPresented: $confirmOut, titleVisibility: .visible) {
+                Button("退出登录", role: .destructive) { dismiss(); Task { await session.signOut() } }
+            }
+            .sheet(isPresented: $avatar, onDismiss: { chat.refreshCard() }) { AvatarSetupView(again: true).environmentObject(session) }
+        }
+        .presentationDragIndicator(.visible)
+    }
+}
