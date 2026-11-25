@@ -342,7 +342,10 @@ function userPatch(models, def) {
     "          supportsUsageInStreaming: true\n        models:\n" + rows + "\n" +
     "- id: agent-default-model\n  name: \"@deepseek-ai/dsh-agent-default-model\"\n  config:\n    provider: office\n" +
     "    model: " + (def.model || list[0].id) + "\n    reasoningEffort: " + (def.effort || "high") + "\n" +
-    "- id: ui-settings-general\n  name: \"@deepseek-ai/dsh-client-ui-settings-general\"\n  config:\n    welcomeNoticeVersion: 2026-09-28.1\n";
+    "- id: ui-settings-general\n  name: \"@deepseek-ai/dsh-client-ui-settings-general\"\n  config:\n    welcomeNoticeVersion: 2026-09-28.1\n" +
+    // The user, 2026-11-25: 「两边同时在一个会话里发消息，默认做成插话」. Enter while the agent runs steers the running turn
+    // (the kernel's own default queues it as the next turn).
+    "- id: ui-conversation\n  name: \"@deepseek-ai/dsh-client-ui-conversation\"\n  config:\n    busyEnter: steer\n";
 }
 
 // The kernel as the person: desk-hub-launch.exe (CreateProcessWithLogonW) with the password on stdin, never on a
