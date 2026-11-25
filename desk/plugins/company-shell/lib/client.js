@@ -619,6 +619,26 @@ window.__ModuleLoader__.load({
 			".cs-toast.is-out { animation: cs-toast-out .3s ease-in both; }",
 			"@keyframes cs-toast-in { from { opacity: 0; transform: translate(-50%, 14px) scale(.94); } to { opacity: 1; transform: translate(-50%, 0); } }",
 			"@keyframes cs-toast-out { to { opacity: 0; transform: translate(-50%, 8px) scale(.97); } }",
+			".cs-view { position: fixed; z-index: 1750; display: flex; flex-direction: column; border-radius: 22px; overflow: hidden; font-family: " + FONT + ";",
+			"  background: linear-gradient(180deg, var(--look-sky, #dfe9fb) 0%, var(--look-mist, #eef1f7) 40%, var(--look-peach, #f6e6d8) 100%);",
+			"  border: 1px solid var(--look-glass-line); box-shadow: 0 30px 80px rgba(20,30,60,.30); animation: cs-view-in .5s " + LOOK_SPRING + " both; }",
+			"@keyframes cs-view-in { from { opacity: 0; transform: translateY(14px) scale(.95); } to { opacity: 1; transform: none; } }",
+			".cs-view-bar { flex: none; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 12px 0 12px; cursor: grab; user-select: none; }",
+			"html.cs-view-moving, html.cs-view-moving * { cursor: grabbing !important; user-select: none !important; } html.cs-view-moving iframe { pointer-events: none !important; }",
+			".cs-view-chip { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 14px; cursor: grab; -webkit-user-drag: element;",
+			"  transition: background .2s, transform .35s " + LOOK_SPRING + "; }",
+			".cs-view-chip:hover { background: var(--look-glass); } .cs-view-chip:active { transform: scale(.98); }",
+			".cs-view-ext { flex: none; min-width: 34px; height: 34px; padding: 0 4px; border-radius: 10px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--look-accent); }",
+			".cs-view-name { min-width: 0; font-size: 14px; font-weight: 600; color: var(--look-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-view-bar .cs-art-refresh { margin-left: 0; flex: none; }",
+			".cs-view-sheet { position: relative; flex: 1; min-height: 0; margin: 0 12px 12px; border-radius: 16px; overflow: hidden; background: #fff; border: 1px solid var(--look-glass-line); }",
+			".cs-view-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }",
+			".cs-view-media { width: 100%; height: 100%; display: grid; place-items: center; background: rgba(0,0,0,.03); }",
+			".cs-view-media img, .cs-view-media video { max-width: 100%; max-height: 100%; object-fit: contain; }",
+			".cs-view-text { margin: 0; padding: 16px 18px; height: 100%; overflow: auto; box-sizing: border-box; font: 12.5px/1.6 ui-monospace, Menlo, Consolas, monospace; color: #1d2433; white-space: pre-wrap; word-break: break-word; }",
+			".cs-view-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; color: var(--look-ink2); font-size: 13px; }",
+			".cs-view-empty b { color: var(--look-ink); font-size: 15px; }",
+			".cs-art-bar-title[draggable='true'] { cursor: grab; -webkit-user-drag: element; }",
 			".cs-art-card[draggable='true'] { -webkit-user-drag: element; } .cs-art-card.is-dragging { opacity: .5; transform: scale(.97); }",
 			"html.cs-art-dragging [data-company-chat] { outline: 2px dashed var(--look-accent); outline-offset: -6px; border-radius: 18px; }",
 			".cs-art-full { position: fixed; inset: 12px; z-index: 1700; border-radius: 26px; overflow: hidden; border: 1px solid var(--look-glass-line);",
@@ -7606,6 +7626,11 @@ window.__ModuleLoader__.load({
 				if (artDrag) artDrag.done = true;
 				return giveArtifactToAssistant(art);
 			}
+			let viewId = "";
+			try { viewId = dt && dt.getData ? dt.getData("application/x-tdh-file") : ""; } catch (err) { viewId = ""; }
+			if (viewId && viewStore.files.has(viewId)) {
+				return landDeskFiles([viewStore.files.get(viewId)]).then(function (n) { if (n) csToast("已放进助手对话框，说说要怎么处理它"); return n; });
+			}
 			if (!(dt && dt.files && dt.files.length) && chatDrag && !chatDrag.done && Date.now() - chatDrag.at < 120000) return landChatDrag();
 			const entries = [];
 			if (dt && dt.items) {
@@ -8392,7 +8417,7 @@ window.__ModuleLoader__.load({
 				if (!picked.length || busy) return;
 				setBusy(true);
 				setErr("");
-				forwardArtifact(a, picked, note).then(function (j) {
+				(props.send ? props.send(picked, note) : forwardArtifact(a, picked, note)).then(function (j) {
 					setBusy(false);
 					if (j && j.ok) {
 						const miss = (j.failed || []).length;
@@ -8401,7 +8426,7 @@ window.__ModuleLoader__.load({
 					} else {
 						setErr("转发没成功：" + ((j && j.error) || "请稍后再试"));
 					}
-				}, function () { setBusy(false); setErr("工件没读出来，稍后再试"); });
+				}, function () { setBusy(false); setErr(props.send ? "文件没读出来，稍后再试" : "工件没读出来，稍后再试"); });
 			};
 			const el = React.createElement;
 			const row = function (t) {
@@ -8415,7 +8440,7 @@ window.__ModuleLoader__.load({
 			const recent = term ? [] : all.slice(0, 5);
 			const rest = term ? rows : all.slice(5);
 			const sheet = el("div", { className: "cs-fwd-mask", onMouseDown: function (e) { if (e.target === e.currentTarget) props.onClose(); } },
-				el("div", { className: "cs-fwd", role: "dialog", "aria-label": "转发工件" },
+				el("div", { className: "cs-fwd", role: "dialog", "aria-label": "转发" },
 					el("div", { className: "cs-fwd-head" },
 						el("b", null, "转发「" + (a.title || a.name) + "」"),
 						el("button", { type: "button", className: "cs-fwd-x", "aria-label": "关闭", onClick: props.onClose },
@@ -8488,6 +8513,7 @@ window.__ModuleLoader__.load({
 				const f = chatFrameEl();
 				if (!f || e.source !== f.contentWindow) return;
 				const m = e.data || {};
+				if (m.type === "tdh-chat-view" && m.buf) { viewOpen(m); return; }
 				if (m.type === "tdh-chat-topic") chatTopicNow = /^(usr|grp|p2p)[A-Za-z0-9_-]{2,60}$/.test(String(m.topic || "")) ? String(m.topic) : "";
 				else if (m.type === "tdh-chat-drag") chatDrag = { id: m.id, href: String(m.href || ""), name: String(m.name || "文件"), mime: String(m.mime || ""), bytes: null, at: Date.now(), done: false };
 				else if (m.type === "tdh-chat-drag-bytes" && chatDrag && chatDrag.id === m.id && m.buf) chatDrag.bytes = m.buf;
@@ -8523,6 +8549,144 @@ window.__ModuleLoader__.load({
 				if (n) csToast("已放进助手对话框，说说要怎么处理它");
 				return n;
 			}, function () { csToast("没拿到这个文件，在聊天里先下载一次再拖"); return 0; });
+		}
+		// company-chat-view-v1 (the user, 2026-11-25: 「点击以后展开一个子窗口 然后可以查看 像微信那样」「子窗口也有转发按钮
+		// 并且可拖拽进助手对话框」「点击不要保存 也不需要保存 只展开就行」): a file clicked in 聊天 (chat-relay.js chatViewer
+		// hands its bytes over) opens in a window of its own over the desk — moved by its title bar, the file shown when
+		// this page can show it (a page, PDF, picture, text, sound or film), with 转发 and 交给助手; its file chip drags
+		// into the conversation.
+		const viewStore = { cur: null, subs: new Set(), files: new Map(), seq: 0 };
+		function viewSet(v) { viewStore.cur = v; viewStore.subs.forEach(function (f) { try { f(); } catch (err) {} }); }
+		function viewSubscribe(f) { viewStore.subs.add(f); return function () { viewStore.subs.delete(f); }; }
+		function viewSnapshot() { return viewStore.cur; }
+		function viewKind(name, mime) {
+			const n = String(name || "").toLowerCase();
+			const m = String(mime || "").toLowerCase();
+			if (/^image\//.test(m) || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(n)) return "image";
+			if (m === "application/pdf" || /\.pdf$/.test(n)) return "pdf";
+			if (m === "text/html" || /\.html?$/.test(n)) return "html";
+			if (/^video\//.test(m) || /\.(mp4|mov|webm|m4v)$/.test(n)) return "video";
+			if (/^audio\//.test(m) || /\.(mp3|m4a|wav|aac|ogg|amr)$/.test(n)) return "audio";
+			if (/^text\//.test(m) || /json|xml|csv/.test(m) || /\.(txt|md|csv|json|log|xml|ya?ml|ini|py|js|ts|sql)$/.test(n)) return "text";
+			return "other";
+		}
+		function viewMime(name, mime) {
+			if (mime) return mime;
+			const k = viewKind(name, "");
+			const ext = String(name || "").toLowerCase().split(".").pop();
+			if (k === "image") return "image/" + (ext === "jpg" ? "jpeg" : ext === "svg" ? "svg+xml" : ext);
+			return k === "pdf" ? "application/pdf" : k === "html" ? "text/html" : k === "text" ? "text/plain" : "application/octet-stream";
+		}
+		function viewOpen(m) {
+			try {
+				const name = String(m.name || "文件");
+				const mime = viewMime(name, String(m.mime || ""));
+				const file = new File([m.buf], name, { type: mime });
+				const id = "v" + (++viewStore.seq);
+				viewStore.files.set(id, file);
+				if (viewStore.files.size > 20) viewStore.files.delete(viewStore.files.keys().next().value);
+				const old = viewStore.cur;
+				if (old && old.url) { try { URL.revokeObjectURL(old.url); } catch (err) {} }
+				viewSet({ id: id, name: name, mime: mime, kind: viewKind(name, mime), file: file, url: URL.createObjectURL(file) });
+			} catch (err) { csToast("这个文件打不开"); }
+		}
+		function bytesToBase64(buf) {
+			const b = new Uint8Array(buf);
+			let s = "";
+			for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+			return btoa(s);
+		}
+		function forwardFile(file, topics, note) {
+			if (file.size > 32 * 1024 * 1024) return Promise.resolve({ ok: false, error: "文件超过 32 MB" });
+			return file.arrayBuffer().then(function (buf) {
+				return fetch("/company/chat/forward", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: Object.assign({ "content-type": "application/json" }, CHAT_H),
+					body: JSON.stringify({ topics: topics, name: file.name, mime: file.type || "application/octet-stream", title: file.name, note: note || "", base64: bytesToBase64(buf) })
+				}).then(function (r) { return r.json().catch(function () { return { ok: false, error: "bad-json" }; }); });
+			});
+		}
+		function ViewBody(props) {
+			const v = props.v;
+			const el = React.createElement;
+			const [text, setText] = React.useState(null);
+			React.useEffect(function () {
+				let live = true;
+				setText(null);
+				if (v.kind === "html" || v.kind === "text") v.file.text().then(function (t) { if (live) setText(t); });
+				return function () { live = false; };
+			}, [v.id]);
+			if (v.kind === "image") return el("div", { className: "cs-view-media" }, el("img", { src: v.url, alt: v.name, draggable: false }));
+			if (v.kind === "pdf") return el("iframe", { className: "cs-view-frame", src: v.url, title: v.name });
+			if (v.kind === "video") return el("div", { className: "cs-view-media" }, el("video", { src: v.url, controls: true, autoPlay: false }));
+			if (v.kind === "audio") return el("div", { className: "cs-view-media" }, el("audio", { src: v.url, controls: true }));
+			if (v.kind === "html") return text == null ? el("div", { className: "cs-view-empty" }, "正在打开…") :
+				el("iframe", { className: "cs-view-frame", title: v.name, sandbox: "allow-scripts allow-popups allow-forms allow-modals", srcDoc: text, referrerPolicy: "no-referrer" });
+			if (v.kind === "text") return text == null ? el("div", { className: "cs-view-empty" }, "正在打开…") : el("pre", { className: "cs-view-text" }, text.slice(0, 400000));
+			return el("div", { className: "cs-view-empty" },
+				el("b", null, v.name),
+				el("span", null, "这种文件这里看不了。可以「交给助手」让它读，或「转发」给同事。"));
+		}
+		function ChatViewerHost() {
+			const v = React.useSyncExternalStore(viewSubscribe, viewSnapshot);
+			const [pos, setPos] = React.useState(null);
+			const [fwd, setFwd] = React.useState(false);
+			const drag = React.useRef(null);
+			React.useEffect(function () {
+				if (!v) return undefined;
+				const onKey = function (e) { if (e.key === "Escape" && !fwd) viewSet(null); };
+				window.addEventListener("keydown", onKey);
+				return function () { window.removeEventListener("keydown", onKey); };
+			}, [v, fwd]);
+			if (!v) return null;
+			const el = React.createElement;
+			const W = Math.min(620, window.innerWidth - 40);
+			const H = Math.min(Math.round(window.innerHeight * 0.68), 720);
+			// Beside the chat column and high, so the conversation's composer stays in sight for a drag into it.
+			const dock = document.querySelector("aside.cs-chat-dock");
+			const dockLeft = dock ? dock.getBoundingClientRect().left : window.innerWidth;
+			const at = pos || { x: Math.max(20, Math.round(dockLeft - W - 16)), y: Math.max(16, Math.round(window.innerHeight * 0.07)) };
+			const onDown = function (e) {
+				if (e.button !== 0 || (e.target && e.target.closest && e.target.closest("button, [draggable='true']"))) return;
+				drag.current = { dx: e.clientX - at.x, dy: e.clientY - at.y };
+				const move = function (ev) {
+					const d = drag.current;
+					if (!d) return;
+					setPos({ x: Math.min(window.innerWidth - 80, Math.max(-W + 120, ev.clientX - d.dx)), y: Math.min(window.innerHeight - 50, Math.max(0, ev.clientY - d.dy)) });
+				};
+				const up = function () { drag.current = null; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); document.documentElement.classList.remove("cs-view-moving"); };
+				window.addEventListener("pointermove", move);
+				window.addEventListener("pointerup", up);
+				document.documentElement.classList.add("cs-view-moving");
+			};
+			const icon = function (d) {
+				return el("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
+					d.map(function (x, i) { return el("path", { key: i, d: x }); }));
+			};
+			const win = el("div", { className: "cs-view", role: "dialog", "aria-label": v.name, style: { left: at.x + "px", top: at.y + "px", width: W + "px", height: H + "px" } },
+				el("div", { className: "cs-view-bar", onPointerDown: onDown },
+					el("span", { className: "cs-view-chip", draggable: true, title: "拖进对话框，交给助手处理",
+						onDragStart: function (e) {
+							try {
+								e.dataTransfer.effectAllowed = "copy";
+								e.dataTransfer.setData("application/x-tdh-file", v.id);
+								e.dataTransfer.setData("text/plain", v.name);
+							} catch (err) {}
+						} },
+						el("span", { className: "cs-view-ext" }, (String(v.name).split(".").pop() || "文件").slice(0, 4).toUpperCase()),
+						el("span", { className: "cs-view-name" }, v.name)),
+					el("button", { type: "button", className: "cs-art-refresh", title: "交给助手（放进对话框，再说要怎么处理）", "aria-label": "交给助手",
+						onClick: function () { landDeskFiles([v.file]).then(function (n) { if (n) csToast("已放进助手对话框，说说要怎么处理它"); }); } },
+						icon(["M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z", "M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"])),
+					el("button", { type: "button", className: "cs-art-refresh", title: "转发到聊天", "aria-label": "转发", onClick: function () { setFwd(true); } },
+						icon(["M14 5l7 7-7 7", "M21 12H9a6 6 0 0 0-6 6v1"])),
+					el("button", { type: "button", className: "cs-art-refresh", title: "关闭（Esc）", "aria-label": "关闭", onClick: function () { viewSet(null); setPos(null); } },
+						icon(["M6 6l12 12", "M18 6L6 18"]))),
+				el("div", { className: "cs-view-sheet" }, el(ViewBody, { v: v })));
+			return el(React.Fragment, null,
+				document.body ? ReactDOM.createPortal(win, document.body) : win,
+				fwd ? el(ForwardSheet, { item: { title: v.name, name: v.name }, send: function (topics, note) { return forwardFile(v.file, topics, note); }, onClose: function () { setFwd(false); } }) : null);
 		}
 		function ArtView(props) {
 			const a = props.item;
@@ -8571,7 +8735,8 @@ window.__ModuleLoader__.load({
 					React.createElement("button", { type: "button", className: "cs-art-bar-back", "aria-label": full ? "退出全屏" : "返回全部工件",
 						onClick: full ? function () { flowSwap(function () { fullHook[1](false); }); } : props.onBack },
 						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M15 18l-6-6 6-6" }))),
-					React.createElement("span", { className: "cs-art-bar-title", title: a.title }, (body && body.title) || a.title),
+					React.createElement("span", { className: "cs-art-bar-title", title: "拖进对话框交给助手，或拖到聊天里发给对方", draggable: true,
+						onDragStart: function (e) { artDragStart(e, a); }, onDragEnd: artDragEnd }, (body && body.title) || a.title),
 					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "交给助手", title: "交给助手（放进对话框，再说要怎么改）", onClick: function () { giveArtifactToAssistant(a); } },
 						icon(["M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z", "M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"])),
 					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "转发", title: "转发到聊天", onClick: function () { fwdHook[1](true); } },
@@ -10104,6 +10269,13 @@ window.__ModuleLoader__.load({
 					id: "company-task-inspector",
 					order: 20
 				}, TaskInspector);
+			});
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
+					id: "company-chat-viewer",
+					order: 30
+				}, ChatViewerHost);
 			});
 
 			ctx.slots.inject("settings.section", function () {

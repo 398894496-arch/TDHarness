@@ -438,6 +438,7 @@ assert.ok(spage.includes("window.TDH_SHOT=1"), "the page is told it can take scr
 assert.ok(!spage.includes("/tdh/save"), "and the file bridge stays off when it is off");
 assert.ok(!page.body.includes("TDH_SHOT"), "a relay without screenshots does not say it has them");
 assert.ok(page.body.includes("tdh-chat-drag") && page.body.includes("tdh-art-drag"), "the chat page carries the drag bridge");
+assert.ok(page.body.includes("tdh-chat-view"), "the chat page hands clicked files to the desk's viewer instead of saving them");
 assert.equal((await sreq("POST", "/tdh/shot")).status, 403, "no key: refused");
 let sj = JSON.parse((await sreq("POST", "/tdh/shot?k=" + sk)).body.toString());
 assert.equal(sj.ok, true);

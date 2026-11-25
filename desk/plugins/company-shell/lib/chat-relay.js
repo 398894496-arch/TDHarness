@@ -408,6 +408,7 @@ function bootScript(login, tok, files, shot) {
 		"c.serverAddress=location.host;c.secureConnection=false;s.setItem('settings',JSON.stringify(c))" +
 		"}catch(e){}})();" +
 		(shot ? "window.TDH_SHOT=1;" : "") +
+		"try{(" + VIEW + ")()}catch(e){}" +
 		(files ? "try{(" + BRIDGE + ")()}catch(e){}" : "") +
 		"try{(" + DND + ")()}catch(e){}";
 	return "<script>" + js + "</script>";
@@ -468,6 +469,44 @@ function chatDnd() {
 		say({ type: "tdh-chat-drop", topic: topic() });
 	}, true);
 }
+// company-chat-view-v1 (the user, 2026-11-25: 「点击以后展开一个子窗口 然后可以查看 像微信那样」「点击不要保存 也不需要
+// 保存 只展开就行」): a file the chat hands out (it builds the file as a blob and clicks a download link to it) is not
+// saved; its bytes go to the desk around the page, which opens it in a window of its own. Runs before the Mac file
+// bridge, whose saving it takes the place of. A page with no desk around it keeps the chat's own download.
+function chatViewer() {
+	if (window.parent === window) return;
+	var seq = 0;
+	var blobs = new Map();
+	var make = URL.createObjectURL;
+	URL.createObjectURL = function (o) {
+		var u = make.call(URL, o);
+		if (o instanceof Blob) {
+			blobs.set(u, o);
+			setTimeout(function () { blobs.delete(u); }, 60000);
+		}
+		return u;
+	};
+	document.addEventListener("click", function (e) {
+		var t = e.target;
+		var link = t && t.nodeType === 1 && t.closest ? t.closest("a[download]") : null;
+		if (!link || !link.href) return;
+		var href = link.href;
+		var name = link.getAttribute("download") || "文件";
+		var b = blobs.get(href);
+		e.preventDefault();
+		e.stopPropagation();
+		e.stopImmediatePropagation();
+		(b ? Promise.resolve(b) : fetch(href).then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.blob(); }))
+			.then(function (blob) { return blob.arrayBuffer().then(function (buf) { return { buf: buf, mime: blob.type || "" }; }); })
+			.then(function (f) {
+				var id = ++seq;
+				parent.postMessage({ type: "tdh-chat-view", id: id, name: String(name).slice(0, 200), mime: f.mime, buf: f.buf }, "*", [f.buf]);
+			}, function () {});
+	}, true);
+}
+const VIEW = chatViewer.toString();
+if (/<\/script/i.test(VIEW)) throw new Error("chat-relay: the viewer closes its script element");
+
 const DND = chatDnd.toString();
 if (/<\/script/i.test(DND)) throw new Error("chat-relay: the drag bridge closes its script element");
 
