@@ -286,14 +286,21 @@ struct PhoneSettings: View {
                 Section("通用") {
                     LabeledContent { Text(session.server.isEmpty ? "未连接" : "已连接") } label: { Label("公司服务器", systemImage: "server.rack") }
                     LabeledContent { Text(chat.connected ? "已连接" : "正在连接") } label: { Label("聊天", systemImage: "bubble.left.and.bubble.right") }
-                    LabeledContent { Text((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "") } label: {
+                    LabeledContent { Text(((Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "") + (BetaBadge.on ? " Beta" : "")) } label: {
                         Label("关于 TDH", systemImage: "info.circle")
+                    }
+                }
+                Section("关于") {
+                    ForEach(LegalDoc.allCases) { d in
+                        NavigationLink { LegalView(doc: d) } label: {
+                            Label(d.title, systemImage: d == .terms ? "doc.text" : d == .privacy ? "hand.raised" : "exclamationmark.shield")
+                        }
                     }
                 }
                 Section {
                     Button("退出登录", role: .destructive) { confirmOut = true }.frame(maxWidth: .infinity)
                 } footer: {
-                    Text("退出后这台手机不再免登录，下次要重新输验证码或密码。")
+                    Text("退出后这台手机不再保持登录，下次要重新用手机号验证码登录。")
                 }
             }
             .tint(Color.ink)

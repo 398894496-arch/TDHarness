@@ -177,7 +177,7 @@ def main() -> None:
         check(st == 401, "lfh's code does not open wang's account")
         st, r = call("login/sms", {"phone": "138 0013 8000", "code": code, "remember": True, "device_id": "mac-ABCDEF12"})
         check(st == 200 and r["login"] == "lfh" and r["gw_token"] == lfh_tok and r.get("smb_user") is not None, "the right code: lfh's full sign-in")
-        check(r["remember_token"].startswith("tdhr_") and r["remember_days"] == 30, "remembered for 30 days")
+        check(r["remember_token"].startswith("tdhr_") and r["remember_days"] == 365, "remembered for a year, renewed on each use")
         dev = r["remember_token"]
         check(call("login/sms", {"phone": "13800138000", "code": code})[0] == 401, "a code is good once")
 
@@ -240,8 +240,11 @@ def main() -> None:
     c = sent[-1][1]
     check(ls.check_code("13800138000", c, now=t0 + 301) == "", "a code after 5 minutes: no")
     tok = ls.remember(rt2, "lfh", "mac-ABCDEF12", "sms", now=t0)
-    check(ls.resume(rt2, tok, "mac-ABCDEF12", now=t0 + 29 * 86400) == "lfh" and ls.resume(rt2, tok, "mac-ABCDEF12", now=t0 + 30 * 86400 + 1) == "",
-          "a remembered device: 30 days, then sign in again")
+    # 「只要不退出永久免登录」: each use moves the end a year on; a year unused, it lapses.
+    check(ls.resume(rt2, tok, "mac-ABCDEF12", now=t0 + 300 * 86400) == "lfh"
+          and ls.resume(rt2, tok, "mac-ABCDEF12", now=t0 + 600 * 86400) == "lfh"
+          and ls.resume(rt2, tok, "mac-ABCDEF12", now=t0 + 966 * 86400) == "",
+          "a remembered device: renewed on each use, lapses after a year unused")
     check(ls.remember(rt2, "lfh", "short", "sms") == "", "an odd device id gets no token")
     print("LOGIN_SMS_PROVE_OK=1")
 

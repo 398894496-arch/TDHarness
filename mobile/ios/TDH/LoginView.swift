@@ -14,7 +14,12 @@ struct LoginView: View {
     @State private var code = ""
     @State private var user = ""
     @State private var password = ""
-    @State private var remember = true
+    /// 「只要不退出永久免登录」: always remembered (the server renews it on each use).
+    private let remember = true
+    /// The three documents, agreed to here; not ticked for the person (company-phone-legal-v1).
+    @State private var agreed = false
+    @State private var reading: LegalDoc?
+    @State private var nudge: CGFloat = 0
     @State private var busy = false
     @State private var message = ""
     @State private var countdown = 0
@@ -29,6 +34,7 @@ struct LoginView: View {
                 LavaDots()
                     .scaleEffect(busy ? 1.25 : 1)
                     .padding(.top, 72)
+                BetaBadge().padding(.top, 14)
                 Text(title)
                     .font(.title2.weight(.semibold))
                     .padding(.top, 22)
@@ -93,7 +99,7 @@ struct LoginView: View {
 
     private var title: String {
         switch step {
-        case .phone: return "你的手机号是？"
+        case .phone: return "手机号登录"
         case .code: return "请输入验证码"
         case .password: return "用公司账号登录"
         }
@@ -201,7 +207,16 @@ struct LoginView: View {
     private var bottomBar: some View {
         VStack(spacing: 12) {
             if step != .code {
-                Button { Task { step == .phone ? await askCode() : await signIn() } } label: {
+                Button {
+                    // The documents first: a shake of the line and a word, not the code.
+                    guard agreed else {
+                        message = "请先阅读并勾选同意服务协议、隐私政策和免责声明"
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.3)) { nudge += 1 }
+                        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                        return
+                    }
+                    Task { step == .phone ? await askCode() : await signIn() }
+                } label: {
                     Text(step == .phone ? "发送验证码" : "登录")
                         .font(.body.weight(.semibold))
                         .frame(maxWidth: .infinity)
@@ -211,18 +226,28 @@ struct LoginView: View {
                 .buttonBorderShape(.capsule)
                 .disabled(busy || !ready)
             }
-            HStack {
-                Toggle(isOn: $remember) { Text("30 天内免登录").font(.footnote) }
+            // The agreement (the user, 2026-11-25: no 30 天内免登录, no 用账号密码登录 — the phone number only).
+            HStack(alignment: .top, spacing: 6) {
+                Toggle(isOn: $agreed) { EmptyView() }
                     .toggleStyle(CheckToggle())
-                Spacer()
-                Button(step == .password ? "用手机验证码登录" : "用账号密码登录") {
-                    message = ""
-                    step = step == .password ? .phone : .password
-                    focus = step == .password ? .user : .phone
+                    .labelsHidden()
+                HStack(spacing: 0) {
+                    Text("我已阅读并同意").onTapGesture { agreed.toggle() }
+                    ForEach(LegalDoc.allCases) { d in
+                        Button("《" + d.title + "》") { reading = d }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color(red: 0.36, green: 0.52, blue: 0.92))
+                    }
                 }
                 .font(.footnote)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
             }
             .foregroundStyle(.secondary)
+            .modifier(Shake(amount: nudge))
+            .onChange(of: agreed) { _, on in if on && message.hasPrefix("请先阅读") { message = "" } }
+            .sheet(item: $reading) { LegalSheet(doc: $0) }
         }
         .padding(.horizontal, 24)
         .padding(.bottom, 8)

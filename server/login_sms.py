@@ -51,7 +51,9 @@ CODE_TRIES = 5
 GAP_S = 60
 DAY_MAX = 10
 ADDR_HOUR_MAX = 30
-REMEMBER_S = 30 * 86400
+# The user, 2026-11-25: 「只要不退出永久免登录」: a remembered device stays signed in as long as it is used — each
+# sign-in by its token moves the end a year on (unused for a year, it lapses); signing out ends it at once.
+REMEMBER_S = 365 * 86400
 DEVICE = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 REMEMBER_FILE = "login-remember.json"
 SMS_CONF = "sms.json"
@@ -263,6 +265,7 @@ def resume(runtime: Path, token: str, device: str, now: float | None = None) -> 
                 if x.get("device") != device or float(x.get("exp") or 0) <= now:
                     return ""
                 x["used"] = int(now)
+                x["exp"] = int(now + REMEMBER_S)
                 _save(runtime, d, now)
                 return str(x.get("login") or "")
     return ""

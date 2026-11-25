@@ -56,7 +56,10 @@ struct RootView: View {
         ZStack {
             switch session.phase {
             case .starting:
-                LavaDots(width: 96, height: 48)
+                VStack(spacing: 18) {
+                    LavaDots(width: 96, height: 48)
+                    BetaBadge()
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(DeskBackground())
                 .transition(.opacity)

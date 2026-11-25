@@ -978,3 +978,22 @@ extension View {
         }
     }
 }
+
+/// The test build's mark (the user, 2026-11-25: 「版本记得是Beta版 注明一下 在开机页的时候」「首页logo也要说明」): a small
+/// glass capsule under the drops of the opening and sign-in pages. Off (and the plain icon back,
+/// mobile/ios/icon-release-1024.png) for the App Store.
+struct BetaBadge: View {
+    static let on = true
+
+    var body: some View {
+        if Self.on {
+            Text("Beta")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .tracking(0.6)
+                .foregroundStyle(Color.ink.opacity(0.7))
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(Color.paper.opacity(0.55), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.rim.opacity(0.8), lineWidth: 0.5))
+        }
+    }
+}
