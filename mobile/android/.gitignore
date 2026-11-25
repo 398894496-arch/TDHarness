@@ -1,0 +1,11 @@
+# The site's server and CA (written by make-site.sh, never committed), local SDK path, signing, build output.
+app/src/main/assets/site.json
+local.properties
+keystore.properties
+*.jks
+*.keystore
+.gradle/
+build/
+app/build/
+.idea/
+*.iml

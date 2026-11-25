@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The web views load the person's desk and chat from this app's own relay on the phone (plain HTTP on loopback);
+     everything that leaves the phone is HTTPS checked against the company's CA in code (Site.kt). -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

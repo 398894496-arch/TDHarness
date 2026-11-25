@@ -94,6 +94,13 @@ powershell -ExecutionPolicy Bypass -File scripts\setup-all.ps1
 
 每一项的完整说明：[项目讲解](docs/BRIEF.zh.md)（中文）、[docs/PRODUCT.md](docs/PRODUCT.md)（英文）。
 
+## 手机 App
+
+员工手机上也能用：AI 助手、公司聊天、历史对话、AI 做的文档。手机连的是员工自己在服务器上的工作台，在公司外经云入口连回来，证书只认公司自己的 CA。
+
+- **iPhone**：TestFlight 分发，说明见 [mobile/ios](mobile/ios/README.md)。
+- **Android**：直接装 APK，说明见 [mobile/android](mobile/android/README.md)。
+
 ## 它是怎么搭起来的
 
 ```mermaid
