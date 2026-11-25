@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.25.3
+
+**工件能转发、能交给助手；聊天里的文件点开就看，不再存到「下载」；Mac 偶发「拿不到座位」会自动再试**
+- 工件（右侧「工件」）：详情顶栏的刷新按钮换成「转发」，最近聊过的人排在前面，可以搜索、一次选几个人、附一句留言；旁边加「交给助手」，工件作为文件放进对话框，接着说「做成 PDF」「这里怎么改」就行。工件卡片和详情的标题都能拖：拖进对话框是交给助手，拖到聊天里是发给正在聊的人（`company-chat-forward-v1`）。
+- 聊天：点文件不再存到「下载」，而是在桌面上弹出一个能挪动的小窗口直接看（网页、PDF、图片、文本、音视频；其他文件显示卡片），窗口里有「转发」「交给助手」，左上角的文件卡片能拖进对话框（`company-chat-view-v1`）。聊天里的文件、图片也能直接拖进对话框。
+- 修：任务卡里的会话、归档会话点「打开」没有反应（内核把打开会话的接口换了位置）。
+- Mac：更新后第一次打开偶尔提示「拿不到座位，或公司盘太慢」，现在会等上一次的桌面收尾后自动再试一次（`company-lease-retry-v1`）。
+- 服务器工作台（只对开通的人，目前只有测试账号）：电脑和手机用的是同一个放在公司服务器上的助手，两边实时同步（`company-desk-server-mode-v1`）。
+
 ## 2026.11.25.2
 
 **修 Windows 打开后一片空白**
