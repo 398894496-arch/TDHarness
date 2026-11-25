@@ -47,6 +47,11 @@ const CFG = {
   maxStarts: 2,
   startTimeoutMs: 180000,
   idleMs: 12 * 3600 * 1000,
+  // company-desk-hub-warm-v1 (the user, 2026-11-25: 「手机APP启动的时候就缓存热进程」「电脑端打开APP进程也都保持热进程」):
+  // the kernels of everyone switched over are started before the working day and kept through it; a kernel is only
+  // stopped outside these hours, 12 h after its last window went. A first answer then costs the model's own time only.
+  warmHour: Number(process.env.DESK_HUB_WARM_HOUR || 7),
+  workEndHour: Number(process.env.DESK_HUB_WORK_END_HOUR || 20),
   whoCacheMs: 60000,
 };
 
@@ -442,6 +447,22 @@ async function onRequest(req, res) {
   if (p === "/_hub/health") { res.writeHead(200, { "Content-Type": "text/plain" }); res.end("ok"); return; }
   const a = await admit(req);
   if (a.deny) { const [c, h] = DENY[a.deny]; fail(res, c, a.deny, h); return; }
+  if (p === "/_hub/warm") {
+    // The app's launch and the computer's start ask for this: the kernel comes up while the person is still looking at
+    // the screen, not when they send the first question.
+    let state = "up";
+    try {
+      const d0 = desks.get(a.w.login);
+      if (!d0 || d0.state !== "up" || !alive(d0.pid)) {
+        const full = await who(bearer(req), { start: true });
+        if (full) ensureDesk(full).catch(() => {});
+        state = "starting";
+      } else d0.lastSeen = Date.now();
+    } catch { state = "down"; }
+    const body = Buffer.from(JSON.stringify({ ok: true, login: a.w.login, state }));
+    res.writeHead(200, { "Content-Type": "application/json", "Content-Length": body.length, "Cache-Control": "no-store" }); res.end(body);
+    return;
+  }
   if (p === "/_hub/status") {
     const d = desks.get(a.w.login);
     const body = Buffer.from(JSON.stringify({ ok: true, login: a.w.login, state: d ? d.state : "down", clients: d ? d.clients : 0 }));
@@ -504,12 +525,39 @@ async function onUpgrade(req, sock, head) {
 function idleSweep() {
   for (const [login, d] of desks) {
     if (d.state === "up" && !alive(d.pid)) { d.state = "down"; log("DESK_GONE", login); continue; }
-    if (d.state === "up" && d.clients === 0 && Date.now() - d.lastSeen > CFG.idleMs) stopDesk(login, "idle");
+    const h = new Date().getHours();
+    const working = h >= CFG.warmHour && h < CFG.workEndHour;
+    if (!working && d.state === "up" && d.clients === 0 && Date.now() - d.lastSeen > CFG.idleMs) stopDesk(login, "idle");
   }
+}
+
+// Before the working day (and at the hub's own start inside it), everyone switched over gets a running kernel.
+let warmedOn = "";
+async function warmAll(why) {
+  let users = [];
+  try { users = JSON.parse(fs.readFileSync(path.join(runtimeDir(), "desk-hub-users.json"), "utf8")); } catch {}
+  if (!Array.isArray(users)) return;
+  for (const login of users) {
+    const d = desks.get(login);
+    if (d && (d.state === "up" || d.state === "starting")) continue;
+    const r = await postJson(CFG.people, "/company/desk-hub/who", { login, start: true }, { "X-Desk-Hub": secret() });
+    const w = r.status === 200 && r.json && r.json.ok && r.json.server_desk ? r.json : null;
+    if (!w) { log("WARM_SKIP", login, "status=" + r.status); continue; }
+    try { await ensureDesk(w); } catch {}
+  }
+  log("WARM_ALL", why, users.length);
+}
+function warmTick() {
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const h = now.getHours();
+  if (h >= CFG.warmHour && h < CFG.workEndHour && warmedOn !== day) { warmedOn = day; warmAll("day").catch(() => {}); }
 }
 
 function serve() {
   stopOrphans();
+  setTimeout(warmTick, 5000).unref();
+  setInterval(warmTick, 60 * 1000).unref();
   const srv = http.createServer((req, res) => { onRequest(req, res).catch((e) => fail(res, 500, "hub-error", String(e && e.message))); });
   srv.on("upgrade", (req, sock, head) => { onUpgrade(req, sock, head).catch(() => sock.destroy()); });
   srv.listen(CFG.port, "127.0.0.1", () => log("DESK_HUB_LISTEN", "127.0.0.1:" + CFG.port));

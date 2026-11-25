@@ -1444,7 +1444,12 @@ class Handler(BaseHTTPRequestHandler):
                 or not want or not hmac.compare_digest(want, given)):
             self._send(*json_bytes({"ok": False, "error": "denied"}, 403))
             return
-        login = login_from_token(str(payload.get("token") or ""))
+        # By sign-in token (a window's relay), or by login for the hub's own morning start (company-desk-hub-warm-v1):
+        # the hub's secret above already proves the caller.
+        tok = str(payload.get("token") or "")
+        login = login_from_token(tok) if tok else str(payload.get("login") or "").strip().lower()
+        if not tok and not LOGIN_RE.match(login):
+            login = ""
         row = person(login) if login else None
         if not row or row.get("status", "active") != "active":
             self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
