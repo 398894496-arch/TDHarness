@@ -2638,8 +2638,15 @@ internal sealed class ShellForm : Form
             _err.ForeColor = Color.FromArgb(217, 45, 32);
             _err.Text = "正在挂入公司盘…";
             Application.DoEvents();
-            AppHost.EnsureShare(hit.SmbUser, hit.SmbPass);
             var serverDesk = AppHost.ServerDeskFor(hit);
+            // company-desk-server-mode-v1: the desk on the server does not read the share from here; the share is still
+            // mounted for Explorer, and its failing does not stop the desk.
+            if (serverDesk)
+            {
+                try { AppHost.EnsureShare(hit.SmbUser, hit.SmbPass); }
+                catch (Exception shareEx) { AppHost.Log("server-desk share " + shareEx.Message); }
+            }
+            else AppHost.EnsureShare(hit.SmbUser, hit.SmbPass);
             // company-first-login-wait-v1：新员工第一次登录时，服务器刚建好他的共享盘账号，个人目录的授权
             // 可能还差几秒（服务器也会先等授权再回话，这里再兜一层）。先等，不直接报 workspace-missing。
             // company-desk-server-mode-v1: the desk on the server opens the person's folder there, not from this computer.
