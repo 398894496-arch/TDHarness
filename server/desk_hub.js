@@ -189,8 +189,16 @@ function seatWorkspace(file, personal) {
     for (const sid of rows[id].sessionIds || []) sessions.add(sid);
     delete rows[id];
   }
+  // One workspace only, the person's own folder (company-single-workspace-v1, as the computers' collapse-seats): any
+  // other row (the old 团队 seat on the share's root) gives its chats to it and goes. With two, a new window (the
+  // phone) asked 「选择一个工作区开始」 instead of opening the person's.
+  for (const id of Object.keys(rows)) {
+    if (id === keep) continue;
+    for (const sid of (rows[id] && rows[id].sessionIds) || []) sessions.add(sid);
+    delete rows[id];
+  }
   Object.assign(rows[keep], { path: real, title: "工作区", sessionIds: [...sessions], updatedAt: now });
-  ws.global.workspaceIds = [keep].concat(ws.global.workspaceIds.filter((id) => id !== keep && rows[id]));
+  ws.global.workspaceIds = [keep];
   const tmp = file + ".hub.tmp";
   fs.writeFileSync(tmp, JSON.stringify(ws, null, 2) + "\n");
   fs.renameSync(tmp, file);

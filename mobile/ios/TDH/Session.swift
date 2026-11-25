@@ -32,6 +32,7 @@ final class Session: ObservableObject {
                 let (code, j) = try await Net.postJSON("/company/login/resume", ["token": tok, "device_id": Keychain.deviceId])
                 if code == 200, let p = take(j) {
                     person = p
+                    warm(p)
                     note = ""
                     phase = .signedIn
                     return
@@ -80,12 +81,18 @@ final class Session: ObservableObject {
             if remember, let t = j["remember_token"] as? String, !t.isEmpty { Keychain.set(rememberKey, t) }
             if !remember { Keychain.delete(rememberKey) }
             person = p
+            warm(p)
             server = Net.base?.host ?? ""
             phase = .signedIn
             return nil
         } catch {
             return (error as? LocalizedError)?.errorDescription
         }
+    }
+
+    /// company-desk-hub-warm-v1: the person's kernel on the server comes up while they look at the screen.
+    private func warm(_ p: Person) {
+        Task.detached { _ = try? await Net.getJSON("/desk-hub/_hub/warm", token: p.gwToken, timeout: 20) }
     }
 
     private func take(_ j: [String: Any]) -> Person? {
@@ -100,6 +107,7 @@ final class Session: ObservableObject {
         }
         Keychain.delete(rememberKey)
         ChatRelay.shared.stop()
+        DeskRelay.shared.stop()
         person = nil
         phase = .signedOut
     }

@@ -9,6 +9,9 @@ struct TDHApp: App {
             RootView()
                 .environmentObject(session)
                 .task {
+                    #if DEBUG
+                    DebugDrive.seed()
+                    #endif
                     await session.start()
                     #if DEBUG
                     await DebugDrive.run(session)
@@ -44,7 +47,7 @@ struct MainView: View {
         TabView(selection: $tab) {
             ChatTab()
                 .tabItem { Label("聊天", systemImage: "bubble.left.and.bubble.right") }.tag(0)
-            AssistantView()
+            DeskTab()
                 .tabItem { Label("助手", systemImage: "sparkles") }.tag(1)
             MeView()
                 .tabItem { Label("我", systemImage: "person.crop.circle") }.tag(2)
@@ -59,6 +62,14 @@ struct MainView: View {
 /// Debug builds only, for checks without a person at the screen (simctl launch … -tdhTestUser u -tdhTestPass p,
 /// or -tdhTestPhone n [-tdhTestCode c], -tdhTab 0|1|2, -tdhAsk "问题"). Not in a release build.
 enum DebugDrive {
+    /// Before the start: a test device's id and remembered sign-in (minted on a test server for a test account),
+    /// so a check can open the app signed in without typing anything. -tdhTestDevice id -tdhTestRemember token.
+    static func seed() {
+        let d = UserDefaults.standard
+        if let dev = d.string(forKey: "tdhTestDevice"), !dev.isEmpty { Keychain.set("device.id", dev) }
+        if let tok = d.string(forKey: "tdhTestRemember"), !tok.isEmpty { Keychain.set("remember.token", tok) }
+    }
+
     @MainActor
     static func run(_ s: Session) async {
         let d = UserDefaults.standard
