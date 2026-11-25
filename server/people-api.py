@@ -1430,6 +1430,38 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _desk_hub_who(self, payload: dict) -> None:
+        """company-desk-hub-v1 (server/desk_hub.js): who a sign-in token belongs to, for the hub on this machine only
+        (loopback, not through Caddy, with runtime/desk-hub.token). With start, what it needs to start the person's
+        kernel as them: their share account and the gateway token their kernel uses. server_desk: the person is
+        switched to the desk on this server (runtime/desk-hub-users.json, a list of logins)."""
+        try:
+            want = (ROOT / "runtime" / "desk-hub.token").read_text(encoding="utf-8").strip()
+        except OSError:
+            want = ""
+        given = str(self.headers.get("X-Desk-Hub") or "")
+        if (self.client_address[0] not in ("127.0.0.1", "::1") or self.headers.get("X-Forwarded-For")
+                or not want or not hmac.compare_digest(want, given)):
+            self._send(*json_bytes({"ok": False, "error": "denied"}, 403))
+            return
+        login = login_from_token(str(payload.get("token") or ""))
+        row = person(login) if login else None
+        if not row or row.get("status", "active") != "active":
+            self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
+            return
+        try:
+            on = json.loads((ROOT / "runtime" / "desk-hub-users.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            on = []
+        out = {"ok": True, "login": login, "role": row.get("role") or "", "dept": row.get("dept") or "",
+               "personal": str(row.get("personal") or ""), "org": str(row.get("org") or ""),
+               "server_desk": isinstance(on, list) and login in on}
+        if payload.get("start") and out["server_desk"]:
+            smb_user, smb_pass = person_smb(login)
+            pid = str(row.get("pid") or ("p-" + login))
+            out.update({"smb_user": smb_user, "smb_pass": smb_pass, "kernel_token": mint_token(pid)})
+        self._send(*json_bytes(out))
+
     def _desk_store(self, what: str, payload: dict) -> None:
         """company-desk-store-v1 (desk_store.py): the person's chats whole (pull) and back in pieces (push), only for
         the device that holds their seat. Under /company/desk-lease so the site's Caddy route already reaches it."""
@@ -2012,6 +2044,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/company/desk-lease/store/skills":
             self._desk_skills(payload)
+            return
+        if path == "/company/desk-hub/who":
+            self._desk_hub_who(payload)
             return
         if path in ("/company/desk-lease/store/pull", "/company/desk-lease/store/push"):
             self._desk_store(path.rsplit("/", 1)[-1], payload)
