@@ -31,7 +31,16 @@ internal static class DeskHubLaunch
     private static extern bool CreateProcessWithLogonW(string user, string domain, string password, int logonFlags,
         string app, StringBuilder cmdLine, int creationFlags, IntPtr env, string cwd, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
 
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool LogonUserW(string user, string domain, string password, int type, int provider, out IntPtr token);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CreateProcessAsUserW(IntPtr token, string app, StringBuilder cmdLine, IntPtr pa, IntPtr ta, bool inherit,
+        int creationFlags, IntPtr env, string cwd, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr h);
+    [DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(IntPtr h, uint ms);
+    [DllImport("kernel32.dll")] private static extern bool GetExitCodeProcess(IntPtr h, out uint code);
 
     private const int LOGON_WITH_PROFILE = 1;
     private const int CREATE_UNICODE_ENVIRONMENT = 0x400, CREATE_NO_WINDOW = 0x08000000;
@@ -45,11 +54,35 @@ internal static class DeskHubLaunch
         return a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t' }) < 0 ? a : "\"" + a + "\"";
     }
 
-    private static int Main()
+    private const int LOGON32_LOGON_INTERACTIVE = 2, LOGON32_PROVIDER_DEFAULT = 0;
+
+    // As SYSTEM (the hub's scheduled task): log the account on, then start the program with that token on a window
+    // station of its own (lpDesktop ""). Secondary logon (CreateProcessWithLogonW) refuses SYSTEM, and from another
+    // account's service session its console programs die initialising (0xC0000142, 2026-11-25).
+    private static bool StartAsUser(string user, string pass, StringBuilder line, IntPtr env, string cwd, ref STARTUPINFO si, out PROCESS_INFORMATION pi, out int err)
+    {
+        pi = new PROCESS_INFORMATION();
+        IntPtr tok;
+        if (!LogonUserW(user, ".", pass, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, out tok)) { err = Marshal.GetLastWin32Error(); return false; }
+        try
+        {
+            var ok = CreateProcessAsUserW(tok, null, line, IntPtr.Zero, IntPtr.Zero, false, CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, env, cwd, ref si, out pi);
+            err = ok ? 0 : Marshal.GetLastWin32Error();
+            return ok;
+        }
+        finally { CloseHandle(tok); }
+    }
+
+    // desk-hub-launch.exe             the job on stdin (the hub's own process)
+    // desk-hub-launch.exe --job F     the job in file F, removed once read (a scheduled task has no stdin)
+    private static int Main(string[] argv)
     {
         try
         {
-            var job = (Dictionary<string, object>)new JavaScriptSerializer().DeserializeObject(Console.In.ReadToEnd());
+            string raw;
+            if (argv.Length == 2 && argv[0] == "--job") { raw = File.ReadAllText(argv[1]); File.Delete(argv[1]); }
+            else raw = Console.In.ReadToEnd();
+            var job = (Dictionary<string, object>)new JavaScriptSerializer().DeserializeObject(raw);
             var user = (string)job["user"];
             var pass = (string)job["password"];
             var exe = (string)job["exe"];
@@ -89,10 +122,20 @@ internal static class DeskHubLaunch
             si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
             si.dwFlags = STARTF_USESHOWWINDOW;
             si.wShowWindow = 0;
+            // Not this (service) session's desktop, which the person's account may not open: a console program then dies
+            // initialising (0xC0000142) without a line. Empty: Windows gives the new logon a window station of its own.
+            si.lpDesktop = "";
             PROCESS_INFORMATION pi;
-            var ok = CreateProcessWithLogonW(user, ".", pass, LOGON_WITH_PROFILE, null, line,
-                CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, envPtr, cwd, ref si, out pi);
-            var err = Marshal.GetLastWin32Error();
+            bool ok;
+            int err;
+            if (System.Security.Principal.WindowsIdentity.GetCurrent().IsSystem)
+                ok = StartAsUser(user, pass, line, envPtr, cwd, ref si, out pi, out err);
+            else
+            {
+                ok = CreateProcessWithLogonW(user, ".", pass, LOGON_WITH_PROFILE, null, line,
+                    CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, envPtr, cwd, ref si, out pi);
+                err = Marshal.GetLastWin32Error();
+            }
             Marshal.FreeHGlobal(envPtr);
             pass = null;
             if (!ok)
@@ -101,6 +144,16 @@ internal static class DeskHubLaunch
                 return 2;
             }
             CloseHandle(pi.hThread);
+            // Gone within two seconds is a start that failed: say how (the hub stops waiting for the kernel's line).
+            if (WaitForSingleObject(pi.hProcess, 2000) == 0)
+            {
+                uint code;
+                GetExitCodeProcess(pi.hProcess, out code);
+                CloseHandle(pi.hProcess);
+                Console.WriteLine("PID=" + pi.dwProcessId);
+                Console.WriteLine("EXITED=0x" + code.ToString("X8"));
+                return 0;
+            }
             CloseHandle(pi.hProcess);
             Console.WriteLine("PID=" + pi.dwProcessId);
             return 0;

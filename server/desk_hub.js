@@ -5,7 +5,7 @@
 // desk window, the phone — is a client of it, so a question asked on one shows on the other as it happens (the
 // kernel's API gateway streams the same events to every connected window; tested 2026-11-25: 6 s).
 //
-//   window (127.0.0.1 page) -> that device's own relay -> https://<site>:8443/desk-hub/... (Caddy) -> this hub
+//   window (127.0.0.1 page) -> that device's own relay -> https://<site>:8443/desk-hub/... (Caddy) -> this hub (4197)
 //     -> the person's kernel on 127.0.0.1:<port>
 //
 // The relay adds `Authorization: Bearer <the person's sign-in token>`; the page never holds it. This hub:
@@ -20,7 +20,7 @@
 //   - leaves a kernel running while any window is connected, and for 12 hours after the last one went (tasks keep
 //     running with no window open: the computer off, the phone locked).
 //
-//   node desk_hub.js            serve (DESK_HUB_PORT, default 4190, loopback)
+//   node desk_hub.js            serve (DESK_HUB_PORT, default 4197, loopback; 4190 is the manufacturing API's)
 //   node desk_hub.js selftest   the routing, the start queue and the proxying against a fake people service and kernel
 "use strict";
 const http = require("http");
@@ -33,7 +33,7 @@ const { spawn, spawnSync } = require("child_process");
 const ROOT = process.env.TDH_ROOT || "D:\\dsh";
 const runtimeDir = () => path.join(process.env.TDH_ROOT || ROOT, "runtime");
 const CFG = {
-  port: Number(process.env.DESK_HUB_PORT || 4190),
+  port: Number(process.env.DESK_HUB_PORT || 4197),
   people: process.env.DESK_HUB_PEOPLE || "http://127.0.0.1:4181",
   gateway: process.env.DESK_HUB_GATEWAY || "http://127.0.0.1:8450/v1",
   desks: process.env.DESK_HUB_DESKS || path.join(ROOT, "desks"),
@@ -50,7 +50,13 @@ const CFG = {
   whoCacheMs: 60000,
 };
 
-function log(...a) { process.stdout.write(new Date().toISOString() + " " + a.join(" ") + "\n"); }
+// Run as a scheduled task there is no console: the lines also go to D:\dsh\logs\desk-hub.log (DESK_HUB_LOG).
+const LOG_FILE = process.env.DESK_HUB_LOG || (process.platform === "win32" ? path.join(ROOT, "logs", "desk-hub.log") : "");
+function log(...a) {
+  const line = new Date().toISOString() + " " + a.join(" ") + "\n";
+  process.stdout.write(line);
+  if (LOG_FILE) { try { fs.appendFileSync(LOG_FILE, line); } catch {} }
+}
 function secret() {
   try { return fs.readFileSync(path.join(runtimeDir(), "desk-hub.token"), "utf8").trim(); } catch { return ""; }
 }
@@ -99,9 +105,17 @@ function release() {
   if (next) next(); else starting--;
 }
 function usedPorts() { return new Set([...desks.values()].filter((d) => d.state !== "down").map((d) => d.port)); }
-function freePort() {
+// A port no kernel of ours holds and nothing else on this server listens on.
+function portFree(p) {
+  return new Promise((resolve) => {
+    const t = net.createServer();
+    t.once("error", () => resolve(false));
+    t.listen(p, "127.0.0.1", () => t.close(() => resolve(true)));
+  });
+}
+async function freePort() {
   const used = usedPorts();
-  for (let p = CFG.firstPort; p < CFG.firstPort + 400; p++) if (!used.has(p)) return p;
+  for (let p = CFG.firstPort; p < CFG.firstPort + 400; p++) if (!used.has(p) && (await portFree(p))) return p;
   throw new Error("no-port");
 }
 function alive(pid) {
@@ -122,7 +136,7 @@ async function ensureDesk(w) {
     await slot();
     const t0 = Date.now();
     try {
-      d.port = freePort();
+      d.port = await freePort();
       const started = await launcher(w, d.port);
       Object.assign(d, started, { state: "up" });
       log("DESK_UP", w.login, "port=" + d.port, "pid=" + d.pid, "ms=" + (Date.now() - t0));
