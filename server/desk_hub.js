@@ -139,6 +139,7 @@ async function ensureDesk(w) {
       d.port = await freePort();
       const started = await launcher(w, d.port);
       Object.assign(d, started, { state: "up" });
+      await pinWorkspace(d.port, w.personal);
       log("DESK_UP", w.login, "port=" + d.port, "pid=" + d.pid, "ms=" + (Date.now() - t0));
       return d;
     } catch (e) {
@@ -150,6 +151,85 @@ async function ensureDesk(w) {
     }
   })();
   return d.ready;
+}
+
+// The desk's one workspace is the person's folder as THIS machine sees it. The computers wrote it as they see it
+// (\\tdharness.local\dsh-company\emp-<login>, desk-lease.js ensureSeatWorkspaces); the kernel compares the row's path
+// with the real path of its folder, so on the server that row matched nothing and the composer only said 「选择一个工作区
+// 开始」. Rows for the same folder (by its last part) become one, its chats kept, the path the server's own.
+function seatWorkspace(file, personal) {
+  let ws = null;
+  try { ws = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+  if (!ws || typeof ws !== "object") ws = { unit: { name: "workspace", version: 2 } };
+  if (!ws.global) ws.global = { initialized: true, workspaceIds: [], archivedSessionIds: [] };
+  if (!Array.isArray(ws.global.workspaceIds)) ws.global.workspaceIds = [];
+  if (!ws.tables) ws.tables = {};
+  if (!ws.tables.workspaces) ws.tables.workspaces = {};
+  const rows = ws.tables.workspaces;
+  let real = personal;
+  try { real = fs.realpathSync.native(personal); } catch {}
+  const leaf = path.win32.basename(String(personal).replace(/[\\/]+$/, "")).toLowerCase();
+  const mine = Object.keys(rows).filter((id) => {
+    const p = String((rows[id] && rows[id].path) || "").replace(/[\\/]+$/, "");
+    return p && path.win32.basename(p).toLowerCase() === leaf;
+  });
+  const now = new Date().toISOString();
+  let keep = mine[0];
+  if (!keep) {
+    keep = "w-seat-" + Date.now().toString(36);
+    rows[keep] = { path: real, title: "工作区", sessionIds: [], createdAt: now, updatedAt: now };
+  }
+  const sessions = new Set(rows[keep].sessionIds || []);
+  for (const id of mine.slice(1)) {
+    for (const sid of rows[id].sessionIds || []) sessions.add(sid);
+    delete rows[id];
+  }
+  Object.assign(rows[keep], { path: real, title: "工作区", sessionIds: [...sessions], updatedAt: now });
+  ws.global.workspaceIds = [keep].concat(ws.global.workspaceIds.filter((id) => id !== keep && rows[id]));
+  const tmp = file + ".hub.tmp";
+  fs.writeFileSync(tmp, JSON.stringify(ws, null, 2) + "\n");
+  fs.renameSync(tmp, file);
+}
+
+// The person's folder as the desk's one workspace, named 工作区 (what the computers' shell does after its start:
+// AppHost.PinWorkspaces, company-single-workspace-v1). Without it the composer only says 「选择一个工作区开始」.
+function kernelRpc(port, method, payload) {
+  return new Promise((resolve) => {
+    const raw = Buffer.from(JSON.stringify({ type: "client-request", rpcId: crypto.randomUUID(), method, payload }));
+    const req = http.request({ hostname: "127.0.0.1", port, path: "/api/" + method, method: "POST", timeout: 15000,
+      headers: { "Content-Type": "application/json; charset=utf-8", "Content-Length": raw.length, Host: "127.0.0.1:" + port } }, (res) => {
+      const c = []; res.on("data", (x) => c.push(x));
+      res.on("end", () => { let j = null; try { j = JSON.parse(Buffer.concat(c).toString("utf8")); } catch {} resolve({ status: res.statusCode, json: j }); });
+    });
+    req.on("error", () => resolve({ status: 0, json: null }));
+    req.on("timeout", () => { req.destroy(); resolve({ status: 0, json: null }); });
+    req.end(raw);
+  });
+}
+function findKey(o, key) {
+  if (!o || typeof o !== "object") return "";
+  if (typeof o[key] === "string") return o[key];
+  for (const v of Object.values(o)) { const f = findKey(v, key); if (f) return f; }
+  return "";
+}
+async function pinWorkspace(port, personal) {
+  if (!personal) return;
+  const r = await kernelRpc(port, "workspace.create", { path: personal });
+  const id = findKey(r.json, "workspaceId");
+  if (id) await kernelRpc(port, "workspace.rename", { workspaceId: id, title: "工作区" });
+  log("WORKSPACE", "port=" + port, "status=" + r.status, id ? "pinned" : "no-id");
+}
+
+// Kernels a previous run of this hub started (it forgot them when it stopped): a second kernel for the same person
+// would write the same chats. Stopped before anything is served.
+function stopOrphans() {
+  if (process.platform !== "win32") return;
+  const ps = "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Where-Object { $_.CommandLine -like '*\\desks\\*\\home\\profiles\\web\\overlay.yml*' } | ForEach-Object { $_.ProcessId }";
+  const r = spawnSync("powershell.exe", ["-NoProfile", "-Command", ps], { encoding: "utf8", windowsHide: true, timeout: 30000 });
+  for (const pid of String(r.stdout || "").split(/\s+/).filter(Boolean)) {
+    spawnSync("taskkill.exe", ["/PID", pid, "/T", "/F"], { stdio: "ignore", windowsHide: true });
+    log("ORPHAN_STOPPED", pid);
+  }
 }
 
 function stopDesk(login, why) {
@@ -215,6 +295,7 @@ function prepareHome(w) {
   const roam = path.join(work, ".dsh-desk");
   fs.mkdirSync(path.join(roam, "sessions"), { recursive: true });
   fs.mkdirSync(path.join(roam, "storages"), { recursive: true });
+  seatWorkspace(path.join(roam, "storages", "workspace.json"), work);
   if (!fs.existsSync(path.join(home, "profiles", "web", "overlay.yml"))) {
     fs.mkdirSync(base, { recursive: true });
     fs.cpSync(path.join(CFG.pack, "home"), home, { recursive: true });
@@ -425,6 +506,7 @@ function idleSweep() {
 }
 
 function serve() {
+  stopOrphans();
   const srv = http.createServer((req, res) => { onRequest(req, res).catch((e) => fail(res, 500, "hub-error", String(e && e.message))); });
   srv.on("upgrade", (req, sock, head) => { onUpgrade(req, sock, head).catch(() => sock.destroy()); });
   srv.listen(CFG.port, "127.0.0.1", () => log("DESK_HUB_LISTEN", "127.0.0.1:" + CFG.port));
@@ -445,7 +527,7 @@ async function selftest() {
     req.on("end", () => {
       const b = JSON.parse(Buffer.concat(c).toString() || "{}");
       const ok = req.headers["x-desk-hub"] === sec;
-      const map = { dsh_aliceToken0123456789: { login: "alice", server_desk: true }, dsh_bobbyToken0123456789: { login: "bob", server_desk: false } };
+      const map = { dsh_aliceToken0123456789: { login: "alice", server_desk: true, personal: "/tmp/alice" }, dsh_bobbyToken0123456789: { login: "bob", server_desk: false } };
       const w = ok ? map[b.token] : null;
       const body = JSON.stringify(w ? Object.assign({ ok: true, kernel_token: b.start ? "dsh_kernel" : undefined }, w) : { ok: false });
       res.writeHead(w ? 200 : 401, { "Content-Type": "application/json" }); res.end(body);
@@ -454,7 +536,11 @@ async function selftest() {
   await new Promise((r) => people.listen(0, "127.0.0.1", r));
   // fake kernel: answers with what it saw; echoes on a raw upgrade
   const seen = [];
-  const kernel = http.createServer((req, res) => { seen.push({ url: req.url, host: req.headers.host, origin: req.headers.origin, auth: req.headers.authorization }); res.writeHead(200, { "Content-Type": "text/plain" }); res.end("kernel:" + req.url); });
+  const kernel = http.createServer((req, res) => {
+    seen.push({ url: req.url, host: req.headers.host, origin: req.headers.origin, auth: req.headers.authorization, method: req.method });
+    if (req.url === "/api/workspace.create") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ type: "result", result: { workspaceId: "ws-1" } })); return; }
+    res.writeHead(200, { "Content-Type": "text/plain" }); res.end("kernel:" + req.url);
+  });
   kernel.on("upgrade", (req, sock) => { seen.push({ ws: req.url, host: req.headers.host, origin: req.headers.origin }); sock.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"); sock.on("data", (d) => sock.write("echo:" + d)); });
   await new Promise((r) => kernel.listen(0, "127.0.0.1", r));
   const kport = kernel.address().port;
@@ -487,6 +573,7 @@ async function selftest() {
   assert.strictEqual(first.host, "127.0.0.1:" + desks.get("alice").port);
   assert.strictEqual(first.origin, "http://127.0.0.1:" + desks.get("alice").port, "origin as the kernel's own page");
   assert.ok(!seen.some((s) => s.auth), "the sign-in token never reaches the kernel");
+  assert.ok(seen.some((s) => s.url === "/api/workspace.rename"), "the workspace pinned and named");
   assert.ok(seen.some((s) => s.url === "/api/x?y=1"), "prefix taken off, query kept");
   // a WebSocket passes both ways
   const echoed = await new Promise((resolve) => {
@@ -517,4 +604,4 @@ if (require.main === module) {
     serve();
   }
 }
-module.exports = { userPatch, innerPath, withKernelToken };
+module.exports = { userPatch, innerPath, withKernelToken, seatWorkspace };
