@@ -1908,13 +1908,22 @@ internal static class AppHost
 
     internal static void WaitTask(Task t)
     {
+        WaitTask(t, -1);
+    }
+
+    // false: still not done after ms (ms < 0: no limit).
+    internal static bool WaitTask(Task t, int ms)
+    {
+        var end = DateTime.UtcNow.AddMilliseconds(ms < 0 ? int.MaxValue : ms);
         while (!t.IsCompleted)
         {
+            if (ms >= 0 && DateTime.UtcNow > end) return false;
             Application.DoEvents();
             System.Threading.Thread.Sleep(40);
         }
         if (t.Exception != null)
             throw t.Exception.InnerException ?? (Exception)t.Exception;
+        return true;
     }
 }
 
@@ -2148,15 +2157,9 @@ internal sealed class ShellForm : Form
             : "公司已发新版。\n\n点「是」一键更新，不用打开下载页。\n\n是 = 现在更新\n否 = 稍后再说\n取消 = 退出";
         // company-login-page-v1 (the user, 2026-11-24: 「更新什么的这些弹窗能省则省，更新也做到 UI 里」): with the sign-in page
         // up, the update just runs and its progress is on the page's waiting card; the question stays for the native window.
+        // company-no-dialogs-v1: no question either way; the native window shows the progress in its status line.
         var dr = DialogResult.Yes;
-        if (_loginWeb == null)
-        {
-            Invoke(new Action(delegate
-            {
-                dr = MessageBox.Show(this, ask, "TDHarness",
-                    MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1);
-            }));
-        }
+        AppHost.Log("update-auto " + (ask.Length > 0 ? "yes" : ""));
         if (dr == DialogResult.Cancel)
         {
             BeginInvoke(new Action(delegate { Close(); }));
@@ -2208,14 +2211,7 @@ internal sealed class ShellForm : Form
         }
         ShowNote("更新完成，正在重新打开…", false);
         PushWait("更新完成，正在重新打开…");
-        if (_loginWeb == null)
-        {
-            Invoke(new Action(delegate
-            {
-                MessageBox.Show(this, "更新完成。请重新登录。", "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }));
-        }
-        else Thread.Sleep(800);
+        Thread.Sleep(800);
         AppHost.RelaunchSelf();
     }
 
@@ -2634,8 +2630,15 @@ internal sealed class ShellForm : Form
     // one (SendCode, SignIn, AutoResume): what the page typed goes into the native boxes and the native button is
     // pressed, and whatever the native status line says is sent to the page. No WebView2, no login.html, or any
     // failure here: the native sign-in stays, as before.
+    // company-login-page-win-off-v1 (2026-11-25): the sign-in page in a WebView2 left the window empty on the office's
+    // Windows desks the morning it first ran (it waited for WebView2 on the UI thread before anything else started, so
+    // not even the update check ran; after a sign-in the desk's own WebView2 came up empty). The native sign-in, the one
+    // these desks ran for weeks, until the page is proven on one of them.
+    internal static bool WebLoginOn = Environment.GetEnvironmentVariable("TDH_WEB_LOGIN") == "1";
+
     private void ShowLoginPage()
     {
+        if (!WebLoginOn) return;
         if (_loginWeb != null || _web != null) return;
         if (DeskPrereq.WebView2Version().Length == 0) return;
         var file = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "login.html");
@@ -2795,26 +2798,34 @@ internal sealed class ShellForm : Form
 
     private void ShowDesk()
     {
-        _login.Visible = false;
-        _login.Enabled = false;
-        if (_loginWeb != null) _loginWeb.Visible = false;
-        _web = new WebView2();
-        _web.Dock = DockStyle.Fill;
-        Controls.Add(_web);
-        _web.BringToFront();
+        // company-desk-show-safe-v1 (2026-11-25): the desk's WebView2 is made ready behind the sign-in, and the sign-in is
+        // put away only then. Before, it was hidden first: a WebView2 that failed or never came up left an empty window
+        // (the error went to a label nobody could see). Now the sign-in stays, with the reason.
+        var web = new WebView2();
+        web.Dock = DockStyle.Fill;
+        web.Visible = false;
+        Controls.Add(web);
         var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TDHarness", "webview");
         Directory.CreateDirectory(data);
         try
         {
             var envTask = CoreWebView2Environment.CreateAsync(null, data);
-            AppHost.WaitTask(envTask);
-            var ready = _web.EnsureCoreWebView2Async(envTask.Result);
-            AppHost.WaitTask(ready);
+            if (!AppHost.WaitTask(envTask, 60000)) throw new TimeoutException("webview2-env-timeout");
+            var ready = web.EnsureCoreWebView2Async(envTask.Result);
+            if (!AppHost.WaitTask(ready, 60000)) throw new TimeoutException("webview2-init-timeout");
         }
         catch (Exception ex)
         {
-            throw new Exception("这台电脑缺微软 WebView2 组件（webview2-missing " + ex.Message + "）。重新打开 TDHarness 会自动安装；还不行请联系管理员");
+            AppHost.Log("desk-webview " + ex.Message);
+            try { Controls.Remove(web); web.Dispose(); } catch { }
+            throw new Exception("这台电脑的微软 WebView2 组件没能打开（" + ex.Message + "）。请重启电脑后再打开 TDHarness；还不行请联系管理员");
         }
+        _web = web;
+        _login.Visible = false;
+        _login.Enabled = false;
+        if (_loginWeb != null) _loginWeb.Visible = false;
+        _web.Visible = true;
+        _web.BringToFront();
         _web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
         _web.CoreWebView2.Settings.AreDevToolsEnabled = false;
         // The desk window shows the desk and nothing else. A page that asks for a

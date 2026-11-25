@@ -8,7 +8,7 @@
 [![release](https://img.shields.io/github/v/release/398894496-arch/TDHarness?label=release)](https://github.com/398894496-arch/TDHarness/releases)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Version: 2026.11.25**
+**Version: 2026.11.25.2**
 
 ![The agent read a sales sheet in the workspace, summed it by region and wrote the review file in 28 seconds](docs/screenshots/00-agent-at-work.jpg)
 

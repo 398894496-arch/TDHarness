@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.25.2
+
+**修 Windows 打开后一片空白**
+- 用户：「今天进去一直这个样子」「其他同事也是白屏」。Windows 上从 2026.11.24.5 起，登录也是一张网页（WebView2）。在公司的 Windows 电脑上，这张网页有的在登录前就打不开（等网页控件的时候其余一切都没开始，连自动更新都不检查），有的登录后桌面网页没出来，窗口只剩灰底。
+  - Windows 先换回原来的登录框（`company-login-page-win-off-v1`），也就是这些电脑一直在用的那个；登录、验证码、30 天免登录都和之前一样。
+  - 桌面网页准备好以后才收起登录框（`company-desk-show-safe-v1`）；打不开时登录框留着，并写明原因（等一分钟还没好就算打不开），不再留一个空窗口。
+  - 有新版时直接更新，不弹对话框。
+- 还卡在空白窗口的电脑：关掉 TDHarness 重开一次就会自动更新；还是空白就重启电脑再开。
+
 ## 2026.11.25
 
 **Mac 在外面打开从几分钟变成十几秒；不再弹 Tailscale 和各种系统对话框；熔岩灯恢复粘稠；工件可全屏、可拖宽，夜间模式下工件和 ERP 也变深色**
