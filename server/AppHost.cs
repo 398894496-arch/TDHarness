@@ -684,6 +684,7 @@ internal static class AppHost
             hit.SmbUser = JsonField(text, "smb_user");
             hit.SmbPass = JsonField(text, "smb_pass");
             hit.RememberToken = JsonField(text, "remember_token");
+            hit.ServerDesk = JsonField(text, "server_desk") == "true";
             return hit;
         }
     }
@@ -1249,6 +1250,157 @@ internal static class AppHost
         catch { }
         try { RunLease("quit", personal ?? "", org ?? ""); }
         catch (Exception ex) { Log("lease-quit " + ex.Message); }
+    }
+
+    // company-desk-server-mode-v1: a person switched to the desk on the company server (the sign-in says server_desk,
+    // from runtime/desk-hub-users.json) gets no kernel, no seat and no pinned workspaces on this computer. This
+    // computer starts only desk-hub-relay.js on the desk port: the window loads http://127.0.0.1:17803/ as always, and
+    // the relay passes it on to https://<site>/desk-hub/ with the sign-in token. TDH_SERVER_DESK=0 keeps the local desk
+    // (a pack without the relay too); TDH_SERVER_DESK=1 asks for the server's desk whatever the sign-in said (a test
+    // against a people service not updated yet: the hub still checks the person is switched).
+    internal static bool ServerDeskFor(LoginHit hit)
+    {
+        var env = Environment.GetEnvironmentVariable("TDH_SERVER_DESK");
+        if (hit == null || !(hit.ServerDesk || env == "1")) return false;
+        if (env == "0") { Log("server-desk off env"); return false; }
+        if (!File.Exists(Path.Combine(Root, "desk-hub-relay.js"))) { Log("server-desk off no-relay"); return false; }
+        return true;
+    }
+
+    internal static string BareDeskUrl()
+    {
+        return "http://127.0.0.1:" + DeskPort + "/";
+    }
+
+    internal static Process StartDeskRelay()
+    {
+        var node = NodeBin();
+        var js = Path.Combine(Root, "desk-hub-relay.js");
+        var site = LeaseSite();
+        if (!File.Exists(node)) throw new Exception("bundled-node-missing");
+        if (!File.Exists(js)) throw new Exception("desk-hub-relay-missing");
+        if (string.IsNullOrEmpty(site)) throw new Exception("desk-hub-site-missing");
+        var psi = new ProcessStartInfo();
+        psi.FileName = node;
+        var args = "\"" + js + "\" --site \"" + site + "\" --port " + DeskPort
+            + " --token-file \"" + Path.Combine(Rc8Dir(), "gw.token") + "\"";
+        var ca = Path.Combine(Root, "company-ca.crt");
+        if (File.Exists(ca)) args += " --ca \"" + ca + "\"";
+        psi.Arguments = args;
+        psi.WorkingDirectory = Root;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        ClearChildNodeOptions(psi);
+        psi.EnvironmentVariables["NO_PROXY"] = Site.NoProxy;
+        psi.EnvironmentVariables["NODE_USE_ENV_PROXY"] = "0";
+        foreach (var key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy" })
+        {
+            try { psi.EnvironmentVariables.Remove(key); }
+            catch { }
+        }
+        var relayLog = Path.Combine(DeskHome, "desk-hub-relay.log");
+        try { Directory.CreateDirectory(DeskHome); } catch { }
+        DataReceivedEventHandler sink = delegate(object sender, DataReceivedEventArgs e)
+        {
+            if (e.Data == null) return;
+            try { File.AppendAllText(relayLog, DateTime.Now.ToString("o") + " " + e.Data + "\r\n"); } catch { }
+        };
+        var p = new Process();
+        p.StartInfo = psi;
+        p.OutputDataReceived += sink;
+        p.ErrorDataReceived += sink;
+        if (!p.Start()) throw new Exception("desk-hub-relay-start-failed");
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        // StopDeskNode kills it by this pid (and by its place under Root) on sign-out, close, or the next sign-in.
+        try { File.WriteAllText(Path.Combine(Rc8Dir(), "desk.pid"), p.Id.ToString()); } catch { }
+        Log("build " + BuildStamp.Mark + " site=" + BuildStamp.Site + " keyed=" + BuildStamp.Keyed);
+        Log("server-desk relay " + p.Id + " site=" + site);
+        for (var i = 0; i < 100; i++)
+        {
+            Application.DoEvents();
+            Thread.Sleep(150);
+            if (PortUp()) return p;
+            if (p.HasExited) throw new Exception("desk-hub-relay-exit " + p.ExitCode);
+        }
+        try { p.Kill(); } catch { }
+        throw new Exception("desk-hub-relay-not-up");
+    }
+
+    // One request to this computer's relay: (status, body). Status 0 when nothing answered in time.
+    internal static int RelayGet(string path, int timeoutMs, out string body)
+    {
+        body = "";
+        try
+        {
+            var req = (HttpWebRequest)WebRequest.Create(BareDeskUrl().TrimEnd('/') + path);
+            req.Method = "GET";
+            req.Proxy = null;
+            req.Timeout = timeoutMs;
+            req.ReadWriteTimeout = timeoutMs;
+            req.AllowAutoRedirect = false;
+            using (var resp = (HttpWebResponse)req.GetResponse())
+            using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+            {
+                body = sr.ReadToEnd();
+                return (int)resp.StatusCode;
+            }
+        }
+        catch (WebException wex)
+        {
+            var r = wex.Response as HttpWebResponse;
+            if (r == null) return 0;
+            try { using (var sr = new StreamReader(r.GetResponseStream(), Encoding.UTF8)) body = sr.ReadToEnd(); } catch { }
+            return (int)r.StatusCode;
+        }
+        catch { return 0; }
+    }
+
+    // The hub's own answer, before the window shows anything: who it thinks this is (_hub/status: not switched,
+    // signed out, the server not reached), then the first page, which starts the person's kernel on the server when
+    // it is not running (up to 3 minutes there). The sign-in stays up meanwhile, saying what it waits for.
+    internal static void WaitServerDesk(Action<string> say)
+    {
+        string body;
+        var code = RelayGet("/_hub/status", 20000, out body);
+        Log("server-desk status " + code + " " + (JsonField(body, "state") ?? ""));
+        ThrowHubAnswer(code, body);
+        if (JsonField(body, "state") != "up") say("正在打开服务器上的工作台（第一次要一两分钟）…");
+        var done = false;
+        var warmCode = 0;
+        var warmBody = "";
+        var t = new Thread(new ThreadStart(delegate
+        {
+            string b;
+            warmCode = RelayGet("/", 240000, out b);
+            warmBody = b;
+            done = true;
+        }));
+        t.IsBackground = true;
+        t.Start();
+        while (!done)
+        {
+            Application.DoEvents();
+            Thread.Sleep(150);
+        }
+        Log("server-desk warm " + warmCode);
+        ThrowHubAnswer(warmCode, warmBody);
+    }
+
+    private static void ThrowHubAnswer(int code, string body)
+    {
+        if (code >= 200 && code < 400) return;
+        var hint = JsonField(body, "hint");
+        if (code == 0) throw new Exception("本机中转没有响应（desk-hub-relay），请重新打开 TDHarness");
+        if (code == 502 && hint.Length == 0)
+        {
+            var text = (body ?? "").Trim();
+            if (text.Length > 120) text = text.Substring(0, 120);
+            throw new Exception(text.Length > 0 ? text : "连不上公司服务器");
+        }
+        throw new Exception((hint.Length > 0 ? hint : "服务器上的工作台没有正常回应") + "（" + code + "）");
     }
 
     internal static void StartDesk(string work, string gwToken)
@@ -1943,6 +2095,8 @@ internal sealed class LoginHit
     public string GwToken;
     // company-login-remember-v1: this computer's device token, when the sign-in asked to be remembered.
     public string RememberToken;
+    // company-desk-server-mode-v1: the person's desk runs on the company server (server/desk_hub.js).
+    public bool ServerDesk;
 }
 
 internal sealed class ShellForm : Form
@@ -1971,6 +2125,9 @@ internal sealed class ShellForm : Form
     private string _personal = "";
     private string _org = "";
     private Process _leaseWatch;
+    // company-desk-server-mode-v1: this sign-in's desk is on the company server; _relay is this computer's relay to it.
+    private bool _serverDesk;
+    private Process _relay;
     private System.Windows.Forms.Timer _logoutWatch;
 
     public ShellForm()
@@ -2089,7 +2246,8 @@ internal sealed class ShellForm : Form
             AppHost.ClearLogin();
             var closingWatch = _leaseWatch;
             _leaseWatch = null;
-            AppHost.QuitLease(_personal, _org, closingWatch);
+            _relay = null;
+            if (!_serverDesk) AppHost.QuitLease(_personal, _org, closingWatch);
             AppHost.StopDeskNode();
         };
         Shown += delegate
@@ -2480,10 +2638,19 @@ internal sealed class ShellForm : Form
             _err.ForeColor = Color.FromArgb(217, 45, 32);
             _err.Text = "正在挂入公司盘…";
             Application.DoEvents();
-            AppHost.EnsureShare(hit.SmbUser, hit.SmbPass);
+            var serverDesk = AppHost.ServerDeskFor(hit);
+            // company-desk-server-mode-v1: the desk on the server does not read the share from here; the share is still
+            // mounted for Explorer, and its failing does not stop the desk.
+            if (serverDesk)
+            {
+                try { AppHost.EnsureShare(hit.SmbUser, hit.SmbPass); }
+                catch (Exception shareEx) { AppHost.Log("server-desk share " + shareEx.Message); }
+            }
+            else AppHost.EnsureShare(hit.SmbUser, hit.SmbPass);
             // company-first-login-wait-v1：新员工第一次登录时，服务器刚建好他的共享盘账号，个人目录的授权
             // 可能还差几秒（服务器也会先等授权再回话，这里再兜一层）。先等，不直接报 workspace-missing。
-            if (!string.IsNullOrEmpty(hit.Personal) && !Directory.Exists(hit.Personal))
+            // company-desk-server-mode-v1: the desk on the server opens the person's folder there, not from this computer.
+            if (!serverDesk && !string.IsNullOrEmpty(hit.Personal) && !Directory.Exists(hit.Personal))
             {
                 _err.ForeColor = Color.FromArgb(90, 90, 90);
                 _err.Text = "正在准备你的个人目录…";
@@ -2496,7 +2663,7 @@ internal sealed class ShellForm : Form
                 _err.ForeColor = Color.FromArgb(217, 45, 32);
                 _err.Text = "";
             }
-            if (string.IsNullOrEmpty(hit.Personal) || !Directory.Exists(hit.Personal))
+            if (!serverDesk && (string.IsNullOrEmpty(hit.Personal) || !Directory.Exists(hit.Personal)))
                 throw new Exception("company-workspace-missing");
             _authUser = hit.Login;
             _authPass = pass;
@@ -2508,7 +2675,30 @@ internal sealed class ShellForm : Form
             AppHost.StopDeskNode();
             var oldWatch = _leaseWatch;
             _leaseWatch = null;                 // a watch we stop ourselves is not a seat lost (company-seat-back-v1)
+            _relay = null;
             try { AppHost.QuitLease(hit.Personal, hit.Org, oldWatch); } catch { }
+            _serverDesk = serverDesk;
+            if (serverDesk)
+            {
+                // No seat, no kernel, no pinned workspaces here: the relay, the hub's answer, then the desk.
+                _err.ForeColor = Color.FromArgb(90, 90, 90);
+                _err.Text = "正在连接服务器上的工作台…";
+                Application.DoEvents();
+                var relay = AppHost.StartDeskRelay();
+                _relay = relay;
+                try { AppHost.WaitServerDesk(delegate(string text) { _err.Text = text; Application.DoEvents(); }); }
+                catch
+                {
+                    _relay = null;
+                    AppHost.StopDeskNode();
+                    throw;
+                }
+                WatchRelay(relay);
+                _err.Text = "";
+                ShowDesk();
+                WatchLogout();
+                return;
+            }
             AppHost.AcquireLease(hit.Personal, hit.Org);
             _err.Text = "正在打开本机 Agent…";
             Application.DoEvents();
@@ -2549,6 +2739,28 @@ internal sealed class ShellForm : Form
         }
     }
 
+    // company-desk-server-mode-v1: the relay stopping is this computer's TDH stopping (as the lease watch says it for a
+    // local desk): back to the sign-in, with the reason.
+    private void WatchRelay(Process relay)
+    {
+        var t = new Thread(new ThreadStart(delegate
+        {
+            try { relay.WaitForExit(); }
+            catch { return; }
+            try
+            {
+                BeginInvoke(new Action(delegate
+                {
+                    if (!object.ReferenceEquals(_relay, relay)) return;     // stopped by us, or a newer sign-in's
+                    SeatLost("这台电脑的 TDH 停了。点「登录」重新打开。");
+                }));
+            }
+            catch { }
+        }));
+        t.IsBackground = true;
+        t.Start();
+    }
+
     // company-seat-back-v1: back to the sign-in, the account kept (the password only in memory, as it was), the reason said.
     private void SeatLost(string why)
     {
@@ -2558,6 +2770,7 @@ internal sealed class ShellForm : Form
             _logoutWatch = null;
         }
         _leaseWatch = null;
+        _relay = null;
         AppHost.StopDeskNode();
         if (_web != null)
         {
@@ -2606,7 +2819,8 @@ internal sealed class ShellForm : Form
         AppHost.ClearLogin();
         var oldWatch = _leaseWatch;
         _leaseWatch = null;
-        AppHost.QuitLease(_personal, _org, oldWatch);
+        _relay = null;
+        if (!_serverDesk) AppHost.QuitLease(_personal, _org, oldWatch);
         AppHost.StopDeskNode();
         if (_web != null)
         {
@@ -2851,6 +3065,8 @@ internal sealed class ShellForm : Form
             if (e.PermissionKind == CoreWebView2PermissionKind.Microphone && AppHost.IsLocalChatUrl(e.Uri))
                 e.State = CoreWebView2PermissionState.Allow;
         };
-        _web.CoreWebView2.Navigate(AppHost.WaitDeskNavigateUrl(8000));
+        // company-desk-server-mode-v1: the relay's page has no start token of this computer's to wait for (the hub hands
+        // the kernel's on the first GET /); a web-runtime.out left by an earlier local desk must not be read.
+        _web.CoreWebView2.Navigate(_serverDesk ? AppHost.BareDeskUrl() : AppHost.WaitDeskNavigateUrl(8000));
     }
 }

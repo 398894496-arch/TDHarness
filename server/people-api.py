@@ -867,7 +867,19 @@ def login_payload(login: str) -> dict | None:
         "gw_token": mint_token(pid),
         "smb_user": smb_user,
         "smb_pass": smb_pass,
+        # company-desk-server-mode-v1: this person's desk runs on the company server (server/desk_hub.js); the computer
+        # starts only its relay (desk-hub-relay.js) instead of a kernel of its own.
+        "server_desk": server_desk_on(login),
     }
+
+
+def server_desk_on(login: str) -> bool:
+    """company-desk-hub-v1: switched to the desk on this server (runtime/desk-hub-users.json, a list of logins)."""
+    try:
+        on = json.loads((ROOT / "runtime" / "desk-hub-users.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(on, list) and login in on
 
 
 def _sms_test_sender():
@@ -1454,13 +1466,9 @@ class Handler(BaseHTTPRequestHandler):
         if not row or row.get("status", "active") != "active":
             self._send(*json_bytes({"ok": False, "error": "bad-token"}, 401))
             return
-        try:
-            on = json.loads((ROOT / "runtime" / "desk-hub-users.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            on = []
         out = {"ok": True, "login": login, "role": row.get("role") or "", "dept": row.get("dept") or "",
                "personal": str(row.get("personal") or ""), "org": str(row.get("org") or ""),
-               "server_desk": isinstance(on, list) and login in on}
+               "server_desk": server_desk_on(login)}
         if payload.get("start") and out["server_desk"]:
             smb_user, smb_pass = person_smb(login)
             pid = str(row.get("pid") or ("p-" + login))

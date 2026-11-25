@@ -122,6 +122,10 @@ function signedIn(hit) {
         if (hit.login) write(path.join(rc8, "login.name"), String(hit.login).trim() + "\n");
   // company-remember-login-v1: the account dialog offers the last account that signed in here (a name, not a password; kept on logout).
   if (hit.login) write(path.join(rc8, "last.login"), String(hit.login).trim() + "\n");
+  // company-desk-server-mode-v1: this person's desk runs on the company server; start.command starts only the relay.
+  const serverDesk = path.join(rc8, "server.desk");
+  if (hit.server_desk === true) write(serverDesk, "1\n");
+  else { try { fs.unlinkSync(serverDesk); } catch { /* none */ } }
   if (mode === "sms" && payload.phone) write(path.join(rc8, "last.phone"), String(payload.phone).replace(/[^0-9+]/g, "") + "\n");
   // company-login-remember-v1: this Mac stays signed in for 30 days (退出登录 forgets it).
   if (hit.remember_token && /^tdhr_[0-9a-f]{32}$/.test(String(hit.remember_token))) write(rememberPath, String(hit.remember_token) + "\n", 0o600);
