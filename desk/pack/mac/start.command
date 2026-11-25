@@ -440,7 +440,21 @@ fi
 if [ -f "$LEASE_JS" ]; then
   boot_status lease
   [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ] || osascript -e 'display dialog "正在交接会话。" buttons {"OK"} giving up after 1 with title "TDHarness"' >/dev/null 2>&1 || true
-  if ! "$NODEBIN" "$LEASE_JS" acquire --personal "$WORK" --org "$PIN_ORG" --home "$DSH_HOME" --site "$LEASE_SITE" "${STORE_ARGS[@]+"${STORE_ARGS[@]}"}"; then
+  # company-lease-retry-v1 (2026-11-25, 田总's Mac: the start right after an update ran into the previous start, which
+  # was still letting go of its desk, its memory disk and its sending; 「拿不到座位，或公司盘太慢」 once, fine on the next
+  # sign-in): one more try, after that one has had a few seconds to finish, before saying so.
+  lease_acquire() { "$NODEBIN" "$LEASE_JS" acquire --personal "$WORK" --org "$PIN_ORG" --home "$DSH_HOME" --site "$LEASE_SITE" "${STORE_ARGS[@]+"${STORE_ARGS[@]}"}"; }
+  LEASE_OK=1
+  if ! lease_acquire; then
+    echo "LEASE_ACQUIRE_RETRY=1"
+    for _ in $(seq 1 20); do
+      /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break
+      sleep 1
+    done
+    sleep 3
+    lease_acquire || LEASE_OK=0
+  fi
+  if [ "$LEASE_OK" != 1 ]; then
     boot_status fail
     printf '%s\n' "Error: 拿不到座位，或公司盘太慢。没有开桌。" > "$DSH_HOME/web-runtime.err"
     [ "${TDH_SHELL_LOGIN_PAGE:-}" = 1 ] || osascript -e 'display dialog "拿不到座位，或公司盘太慢。没有开桌。" buttons {"OK"} with title "TDHarness"' >/dev/null 2>&1 || true
