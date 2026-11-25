@@ -125,7 +125,7 @@ struct LoginView: View {
         }
         .padding(.horizontal, 22)
         .frame(height: 56)
-        .background(.white.opacity(0.88), in: Capsule())
+        .background(Color.paper.opacity(0.88), in: Capsule())
         .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
     }
 
@@ -147,7 +147,7 @@ struct LoginView: View {
                         .font(.title2.weight(.semibold).monospacedDigit())
                         .frame(maxWidth: .infinity)
                         .frame(height: 54)
-                        .background(.white.opacity(on || !ch.isEmpty ? 0.95 : 0.55), in: RoundedRectangle(cornerRadius: 14))
+                        .background(Color.paper.opacity(on || !ch.isEmpty ? 0.95 : 0.55), in: RoundedRectangle(cornerRadius: 14))
                         .overlay(RoundedRectangle(cornerRadius: 14).stroke(on ? Color.accentColor.opacity(0.6) : .clear, lineWidth: 1.5))
                         .shadow(color: .black.opacity(on ? 0.08 : 0.03), radius: 8, y: 3)
                         .animation(.easeOut(duration: 0.15), value: code)
@@ -176,7 +176,7 @@ struct LoginView: View {
                 .onSubmit { Task { await signIn() } }
                 .padding(.horizontal, 18).frame(height: 52)
         }
-        .background(.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 18))
+        .background(Color.paper.opacity(0.9), in: RoundedRectangle(cornerRadius: 18))
         .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
     }
 

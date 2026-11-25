@@ -33,7 +33,7 @@ struct AvatarSetupView: View {
 
                 ZStack {
                     Circle()
-                        .fill(.white.opacity(0.7))
+                        .fill(Color.paper.opacity(0.7))
                         .overlay(Circle().strokeBorder(style: StrokeStyle(lineWidth: 2, dash: image == nil ? [7, 6] : [])).foregroundStyle(Color.accentColor.opacity(0.5)))
                     if let image {
                         Image(uiImage: image).resizable().scaledToFill().clipShape(Circle())

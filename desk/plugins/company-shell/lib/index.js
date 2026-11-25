@@ -2697,8 +2697,62 @@ function addZhThinkSection(ctx) {
 	}
 }
 
+// company-phone-push-v1 (the user, 2026-11-25: 「AI如果刚刚问了问题 已经出答案了怎么提醒」): when a turn of this person's
+// conversation ends here, the site is told (POST /company/ext/chat/ai-done) and notifies their phones (server/push.py).
+// The kernel keeps answering with no window open (the phone locked, the computer off), so this is where it is known.
+// Not for a subagent's own session, not for a turn the person stopped, and not for a quick one (under 15 s: they were
+// most likely watching it). The site gets the conversation's title and the answer's first words, nothing else.
+const AI_PUSH_MIN_MS = 15000;
+
+function textOfMessage(data) {
+	const seen = [];
+	const walk = (v, depth) => {
+		if (seen.length > 3 || depth > 4 || v == null) return;
+		if (typeof v === "string") return;
+		if (Array.isArray(v)) { v.forEach((x) => walk(x, depth + 1)); return; }
+		if (typeof v === "object") {
+			const kind = String(v.type || "");
+			if (kind && /think|reason/i.test(kind)) return;
+			if (typeof v.text === "string" && v.text.trim() && (!kind || kind === "text" || kind === "output_text")) seen.push(v.text.trim());
+			for (const k of ["content", "message", "parts"]) if (v[k] != null) walk(v[k], depth + 1);
+		}
+	};
+	walk(data, 0);
+	return seen.join(" ").replace(/\s+/g, " ").slice(0, 160);
+}
+
+export function addAiDonePush(ctx, post) {
+	if (typeof ctx.on !== "function") return;
+	const send = post || ((body) => proxyCompany("/company/ext/chat/ai-done", "POST", Buffer.from(JSON.stringify(body))));
+	const started = new Map();
+	const said = new Map();
+	ctx.on("session/event", (session, event) => {
+		try {
+			if (!session || !event) return;
+			const header = session.header || {};
+			if (header.origin === "subagent" || header.parentSession) return;
+			const id = String(session.id || header.id || "");
+			if (!id) return;
+			if (event.type === "turn/start") { started.set(id, Date.now()); said.delete(id); return; }
+			if (event.type === "assistant/message") { const t = textOfMessage(event.data); if (t) said.set(id, t); return; }
+			if (event.type !== "turn/end") return;
+			const t0 = started.get(id) || 0;
+			const preview = said.get(id) || "";
+			started.delete(id);
+			said.delete(id);
+			const kind = String((event.data && event.data.reason && event.data.reason.kind) || "");
+			if (kind === "aborted" || !t0 || Date.now() - t0 < AI_PUSH_MIN_MS) return;
+			const title = String(header.title || (session.metadata && session.metadata.title) || "");
+			Promise.resolve(send({ session: id, title: title.slice(0, 80), preview, reason: kind === "error" ? "error" : "done" })).catch(() => {});
+		} catch {
+			// a notification is never worth a turn
+		}
+	});
+}
+
 export function apply(ctx) {
 	const tools = typeof ctx.get === "function" ? ctx.get("tools") : ctx.tools;
+	addAiDonePush(ctx);
 	addMemoryRecallSection(ctx);
 	addArtifactThemeSection(ctx);
 	addZhThinkSection(ctx);

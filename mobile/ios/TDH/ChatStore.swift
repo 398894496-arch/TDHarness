@@ -99,6 +99,13 @@ final class ChatStore: ObservableObject {
     private var hiddenKey: String { "tdhChatHidden." + me }
     /// The chat on screen: its messages count as read as they come.
     var open = ""
+    /// A colleague's new message for the banner (company-phone-notices-v1), the newest one.
+    @Published var incoming: Banner?
+    /// A chat to open on the Chat page (a banner or a notification tapped); kept until the page takes it, since the page
+    /// may not exist yet when it is asked for.
+    @Published var openRequest: String?
+    /// The last seq of each chat already announced, so a message is announced once.
+    private var announced: [String: Int] = [:]
 
     private var login = ""
     private var gwToken = ""
@@ -333,6 +340,13 @@ final class ChatStore: ObservableObject {
             if seq >= t.seq { t.touched = max(t.touched ?? msg.at, msg.at) }
             topics[i] = t
             topics = sorted(topics)
+            // A banner for a colleague's message just now, unread, in a chat not on screen — once each.
+            if msg.from != me && topic != open && seq > t.read && seq > (announced[topic] ?? 0)
+                && abs(msg.at.timeIntervalSinceNow) < 90 {
+                announced[topic] = seq
+                let body = Self.preview(msg, group: t.group, who: people[msg.from]?.name, me: false)
+                incoming = Banner(kind: .chat, target: topic, title: t.name, body: body.isEmpty ? "发来一条消息" : body, photo: t.photo)
+            }
         }
         if topic == open && msg.from != me { Task { await markRead(topic, seq) } }
     }
@@ -347,6 +361,11 @@ final class ChatStore: ObservableObject {
             topics[i] = t
             topics = sorted(topics)
             if !attached.contains(src) { Task { await attach(src, limit: 1) } }
+        } else if what == "read", let seq = p["seq"] as? Int, let i = topics.firstIndex(where: { $0.topic == src }) {
+            // Read on another device (the desk, the user 2026-11-25: 「电脑已读 手机端就要标记为已读」): Tinode tells this
+            // person's other sessions, and the count here goes with it.
+            if seq > topics[i].read { topics[i].read = seq }
+            ChatNotices.clear(topic: src, upTo: seq)
         } else if what == "msg" || what == "acs" || what == "upd" {
             Task { await refreshMe() }
         }
@@ -463,6 +482,7 @@ final class ChatStore: ObservableObject {
     private func markRead(_ topic: String, _ seq: Int) async {
         if let i = topics.firstIndex(where: { $0.topic == topic }) { topics[i].read = max(topics[i].read, seq) }
         await send(["note": ["topic": topic, "what": "read", "seq": seq]])
+        ChatNotices.clear(topic: topic, upTo: seq)
     }
 
     // MARK: sending

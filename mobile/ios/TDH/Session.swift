@@ -125,6 +125,7 @@ final class Session: ObservableObject {
     }
 
     func signOut() async {
+        await PushCenter.shared.stop()
         if let tok = Keychain.get(rememberKey) {
             _ = try? await Net.postJSON("/company/login/forget", ["token": tok])
         }

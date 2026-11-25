@@ -33,6 +33,7 @@ import chat_archive  # noqa: E402
 import chat_voice  # noqa: E402
 import chat_call  # noqa: E402
 import chat_search  # noqa: E402
+import push  # noqa: E402
 import login_sms  # noqa: E402
 import chat_docs  # noqa: E402
 import erp_sso  # noqa: E402
@@ -2267,6 +2268,16 @@ def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
         row = person(login) or {}
         got = chat_voice.text_for(TOKEN_STORE.parent, ref, login, row.get("role") == "admin")
         return 200, (dict({"ok": True}, **got) if got else {"ok": True, "pending": True})
+    if what == "push":
+        # company-phone-push-v1: a phone of this person, for notifications (on: false forgets it).
+        return 200, push.register(TOKEN_STORE.parent, login, str(payload.get("token") or ""),
+                                  str(payload.get("env") or "sandbox"), payload.get("on", True) is not False)
+    if what == "ai-done":
+        # company-phone-push-v1: the desk's kernel finished a turn of this person's conversation (company-shell).
+        out = push.ai_done(TOKEN_STORE.parent, push.config(TOKEN_STORE.parent), login, str(payload.get("session") or ""),
+                           str(payload.get("title") or ""), str(payload.get("preview") or ""), str(payload.get("reason") or ""))
+        sys.stderr.write("people-api push ai-done %s sent=%s\n" % (login, out.get("sent")))
+        return 200, out
     if what == "find":
         # company-chat-search-all-v1: the phone's search over all of the person's own chat messages (any age).
         q = str(payload.get("q") or "").strip()
@@ -2626,6 +2637,35 @@ def chat_call_once() -> dict:
         except OSError:
             pass
     return out
+
+
+PUSH_STATE: dict = {}
+
+
+def push_once() -> dict:
+    """company-phone-push-v1: one round of chat notifications (new messages, read elsewhere)."""
+    runtime = TOKEN_STORE.parent
+    apns = push.config(runtime)
+    if apns is None or not push.devices(runtime):
+        return {"skipped": "off"}
+    names = dict(people_by_login())
+    for k, v in CHAT_BOTS.items():
+        names.setdefault(k, {"name": v})
+    return push.chat_round(chat_assist.load_config(runtime), runtime, apns, names, _tinode_links(), set(CHAT_BOTS),
+                           chat_assist.psql, chat_assist.fetch, chat_assist.max_id, chat_assist.login_of, PUSH_STATE)
+
+
+def push_loop() -> None:
+    time.sleep(float(os.environ.get("TDH_PUSH_DELAY") or 20))
+    every = float(os.environ.get("TDH_PUSH_EVERY") or 2)
+    while True:
+        try:
+            push_once()
+        except Exception as exc:  # noqa: BLE001 - the chat works without it; the next round tries again
+            import traceback
+            where = traceback.extract_tb(exc.__traceback__)[-1]
+            sys.stderr.write("people-api push failed %s at %s:%d\n" % (type(exc).__name__, os.path.basename(where.filename), where.lineno))
+        time.sleep(every)
 
 
 def chat_call_loop() -> None:
@@ -3379,6 +3419,8 @@ def main() -> None:
         threading.Thread(target=chat_voice_loop, name="chat-voice", daemon=True).start()
     if os.environ.get("TDH_CHAT_CALL", "1") != "0":
         threading.Thread(target=chat_call_loop, name="chat-call", daemon=True).start()
+    if os.environ.get("TDH_PUSH", "1") != "0":
+        threading.Thread(target=push_loop, name="push", daemon=True).start()
     if os.environ.get("TDH_ERP_SYNC", "1") != "0":
         threading.Thread(target=erp_sync_loop, name="erp-sync", daemon=True).start()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)

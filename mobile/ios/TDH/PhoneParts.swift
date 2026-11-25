@@ -15,8 +15,24 @@ import UniformTypeIdentifiers
 // little blur rather than sliding in straight.
 
 extension Color {
-    /// Today's ink: the selected tab, the icons, the switches, the send button.
-    static let ink = Color(red: 0.11, green: 0.12, blue: 0.14)
+    /// One colour by day, another by night (company-phone-dark-v1, the user 2026-11-25: 「设置里增加一个黑夜模式」).
+    static func day(_ d: (CGFloat, CGFloat, CGFloat, CGFloat), night n: (CGFloat, CGFloat, CGFloat, CGFloat)) -> Color {
+        Color(UIColor { t in
+            let c = t.userInterfaceStyle == .dark ? n : d
+            return UIColor(red: c.0, green: c.1, blue: c.2, alpha: c.3)
+        })
+    }
+
+    /// Today's ink: the selected tab, the icons, the switches, the send button. Near-white by night.
+    static let ink = day((0.11, 0.12, 0.14, 1), night: (0.93, 0.94, 0.96, 1))
+    /// A surface under words (cards, rows, menus, panes): white by day, a deep slate by night.
+    static let paper = day((1, 1, 1, 1), night: (0.17, 0.19, 0.24, 1))
+    /// The bright edge of glass: white by day, a faint line by night.
+    static let rim = day((1, 1, 1, 1), night: (1, 1, 1, 0.22))
+    /// One's own message: a pale sky by day, a deep blue by night.
+    static let mine = day((0.82, 0.88, 0.99, 1), night: (0.20, 0.28, 0.46, 1))
+    /// A sheet's ground under its cards.
+    static let ground = day((0.97, 0.97, 0.99, 1), night: (0.08, 0.09, 0.12, 1))
 }
 
 extension View {
@@ -27,7 +43,7 @@ extension View {
         } else {
             self.background(.ultraThinMaterial, in: shape)
                 .background((tint ?? .white).opacity(tint == nil ? 0.25 : 0.85), in: shape)
-                .overlay(shape.stroke(LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.25)], startPoint: .top, endPoint: .bottom), lineWidth: 0.6))
+                .overlay(shape.stroke(LinearGradient(colors: [Color.rim.opacity(0.95), Color.rim.opacity(0.25)], startPoint: .top, endPoint: .bottom), lineWidth: 0.6))
                 .shadow(color: Color(red: 0.12, green: 0.2, blue: 0.35).opacity(0.10), radius: 14, y: 6)
         }
     }
@@ -41,10 +57,10 @@ extension View {
     }
 
     /// A pane of content (cards, bubbles, lists): frosted, a bright edge on top fading down, a soft shadow.
-    func frosted<S: InsettableShape>(_ shape: S, wash: Color = .white, amount: Double = 0.5) -> some View {
+    func frosted<S: InsettableShape>(_ shape: S, wash: Color = .paper, amount: Double = 0.5) -> some View {
         self.background(wash.opacity(amount), in: shape)
             .background(.ultraThinMaterial, in: shape)
-            .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.95), .white.opacity(0.3)], startPoint: .top, endPoint: .bottom), lineWidth: 0.6))
+            .overlay(shape.strokeBorder(LinearGradient(colors: [Color.rim.opacity(0.95), Color.rim.opacity(0.3)], startPoint: .top, endPoint: .bottom), lineWidth: 0.6))
             .shadow(color: Color(red: 0.12, green: 0.2, blue: 0.35).opacity(0.08), radius: 16, y: 6)
     }
 
@@ -667,12 +683,12 @@ struct PlusSheet: View {
                         row("doc.text", "选一个文档", "从 Docs") { docs = true }
                     }
                 }
-                .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(Color.paper, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .padding(.horizontal, 16)
                 Spacer()
             }
             .padding(.top, 4)
-            .background(Color(red: 0.97, green: 0.97, blue: 0.99))
+            .background(Color.ground)
             .navigationTitle("添加到对话")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

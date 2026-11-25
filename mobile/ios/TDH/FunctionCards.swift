@@ -195,7 +195,7 @@ struct TaskCardView: View {
             if !card.note.isEmpty {
                 Text(card.note).font(.subheadline).foregroundStyle(Color.ink.opacity(0.85))
                     .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.white.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(Color.paper.opacity(0.55), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             Text("在电脑 TDH 左栏「任务」里查看和处理").font(.caption2).foregroundStyle(.tertiary)
         }
@@ -253,7 +253,7 @@ struct FileCard: View {
                     if !ext.isEmpty && !isDoc {
                         Text(String(ext.prefix(4))).font(.system(size: 8, weight: .heavy)).foregroundStyle(tint)
                             .padding(.horizontal, 3).padding(.vertical, 1)
-                            .background(.white, in: RoundedRectangle(cornerRadius: 3)).offset(x: 4, y: 4)
+                            .background(Color.paper, in: RoundedRectangle(cornerRadius: 3)).offset(x: 4, y: 4)
                     }
                 }
                 VStack(alignment: .leading, spacing: 3) {

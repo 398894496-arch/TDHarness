@@ -38,7 +38,7 @@ struct HistoryPage: View {
                                         if openRow != nil { withAnimation(SwipeRow<EmptyView>.spring) { openRow = nil }; return }
                                         desk.open(s.id)
                                         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { tab = 1 }
-                                    } label: { HistoryCard(s: s, on: s.id == desk.current) }
+                                    } label: { HistoryCard(s: s, on: s.id == desk.current, fresh: desk.answered.contains(s.id)) }
                                     .buttonStyle(FadePress())
                                 }
                                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
@@ -121,6 +121,8 @@ private struct FadePress: ButtonStyle {
 private struct HistoryCard: View {
     let s: DeskSession
     let on: Bool
+    /// Answered while not looked at (company-phone-notices-v1).
+    var fresh = false
 
     var body: some View {
         // (Fixed colours, not the hierarchical .secondary / .tertiary: over the card's material, inside the row's own
@@ -129,6 +131,10 @@ private struct HistoryCard: View {
         // as they do in Chat (the user: 「图1在框内 图2在框外 我说了要统一啊」).
         VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
+                    if fresh {
+                        Circle().fill(Color(red: 0.46, green: 0.58, blue: 0.90)).frame(width: 8, height: 8)
+                            .transition(.scale.combined(with: .opacity))
+                    }
                     Text(s.title).font(.body.weight(.semibold)).lineLimit(1)
                     Spacer()
                     if let d = s.updated { Text(d.chatWhen).font(.footnote).foregroundStyle(Color(uiColor: .tertiaryLabel)) }
@@ -140,6 +146,8 @@ private struct HistoryCard: View {
                         Text("进行中").foregroundStyle(.blue)
                     }
                     .font(.subheadline)
+                } else if fresh {
+                    Text("有新回复").font(.subheadline).foregroundStyle(Color(red: 0.40, green: 0.52, blue: 0.86))
                 } else if on {
                     Text("正在看的对话").font(.subheadline).foregroundStyle(Color(uiColor: .secondaryLabel))
                 }
@@ -240,6 +248,7 @@ struct PhoneSettings: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmOut = false
     @State private var avatar = false
+    @AppStorage(Appearance.key) private var appearance = Appearance.system
 
     var body: some View {
         NavigationStack {
@@ -262,6 +271,17 @@ struct PhoneSettings: View {
                     if let r = session.person?.role, !r.isEmpty {
                         LabeledContent { Text(r) } label: { Label("角色", systemImage: "person.badge.key") }
                     }
+                }
+                // company-phone-dark-v1 (the user, 2026-11-25: 「设置里增加一个黑夜模式」).
+                Section("外观") {
+                    Picker("外观", selection: $appearance) {
+                        Text("跟随系统").tag(Appearance.system)
+                        Text("浅色").tag(Appearance.light)
+                        Text("深色").tag(Appearance.dark)
+                    }
+                    .pickerStyle(.segmented)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
                 }
                 Section("通用") {
                     LabeledContent { Text(session.server.isEmpty ? "未连接" : "已连接") } label: { Label("公司服务器", systemImage: "server.rack") }

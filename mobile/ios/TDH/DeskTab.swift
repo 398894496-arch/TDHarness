@@ -35,6 +35,11 @@ struct DeskChat: Identifiable, Equatable {
 @MainActor
 final class DeskModel: ObservableObject {
     @Published var sessions: [DeskSession] = []
+    /// company-phone-notices-v1: the AI page in front (set by the tab bar); conversations answered while it was not,
+    /// or while another one was open there (a dot on the AI tab and in History); the latest of them, for the banner.
+    var aiVisible = false { didSet { if aiVisible { answered.remove(current) } } }
+    @Published var answered: Set<String> = []
+    @Published var finished: Banner?
     @Published var current = ""
     @Published var ready = false
     @Published var loaded = false
@@ -135,11 +140,13 @@ final class DeskModel: ObservableObject {
             }
         }
         #endif
+        if type == "ready" { setDark(dark) }
         guard type == "state" else { return }
         ready = true
         // The page knows the open chat a moment after it opens; until then keep the one this app just asked for.
         if let c = m["current"] as? String, !c.isEmpty { current = c }
         let rows = m["sessions"] as? [[String: Any]] ?? []
+        let wasBusy = Set(sessions.filter(\.busy).map(\.id))
         sessions = rows.compactMap { r in
             guard let id = r["id"] as? String, !id.isEmpty else { return nil }
             let ms = (r["updated"] as? NSNumber)?.doubleValue ?? 0
@@ -147,14 +154,30 @@ final class DeskModel: ObservableObject {
                                updated: ms > 0 ? Date(timeIntervalSince1970: ms / 1000) : nil,
                                busy: r["busy"] as? Bool ?? false)
         }
+        // An answer finished: was running, now is not.
+        for s in sessions where wasBusy.contains(s.id) && !s.busy {
+            if aiVisible && s.id == current { continue }
+            answered.insert(s.id)
+            finished = Banner(kind: .ai, target: s.id, title: "AI 已回复", body: s.title)
+        }
+        if aiVisible { answered.remove(current) }
     }
 
     private func call(_ body: String, _ args: [String: Any] = [:]) {
         Task { _ = try? await web.callAsyncJavaScript(body, arguments: args, in: nil, contentWorld: .page) }
     }
 
+    /// company-phone-dark-v1: the page's own dark palette (body[data-ds-dark-theme]) on this phone only, following the
+    /// app; the person's theme setting (the desk on the computer) is left as it is.
+    private var dark = false
+    func setDark(_ d: Bool) {
+        dark = d
+        call("window.__tdhDark = d; if (window.__tdhSetDark) window.__tdhSetDark(d)", ["d": d])
+    }
+
     func open(_ id: String) {
         current = id
+        if aiVisible { answered.remove(id) }
         call("if (window.tdhPhone) tdhPhone.open(id)", ["id": id])
     }
 
@@ -284,11 +307,19 @@ final class DeskModel: ObservableObject {
     "html.cs-phone [data-chat-flow-kind=assistant-step] [data-slot='conversation.chat.node']>div{background:rgba(255,255,255,.55);-webkit-backdrop-filter:blur(22px) saturate(1.7);backdrop-filter:blur(22px) saturate(1.7);border:.5px solid rgba(255,255,255,.95);border-radius:22px;padding:14px 16px;box-shadow:0 8px 22px rgba(31,51,89,.08),inset 0 1px 0 rgba(255,255,255,.95)}",
     "html.cs-phone [data-chat-flow-kind=assistant-step]{animation:tdh-in .6s cubic-bezier(.2,1.25,.32,1) both}",
     "html.cs-phone [data-chat-flow-kind=user]{animation:tdh-up .55s cubic-bezier(.2,1.3,.32,1) both}",
+    "html.cs-phone body[data-ds-dark-theme] [data-chat-flow-kind=user] [class*='_bubble']{background:rgba(51,72,120,.74)!important;color:#eef1f7!important;border-color:rgba(255,255,255,.14)!important;box-shadow:0 6px 16px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.12)!important}",
+    "html.cs-phone body[data-ds-dark-theme] [data-chat-flow-kind=assistant-step] [data-slot='conversation.chat.node']>div{background:rgba(38,42,54,.62);border-color:rgba(255,255,255,.12);box-shadow:0 8px 22px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.10)}",
+    "html.cs-phone body[data-ds-dark-theme] .cs-typing{background:rgba(38,42,54,.62)!important;border-color:rgba(255,255,255,.12)!important;box-shadow:0 6px 16px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.10)!important}",
     "html.cs-phone .cs-typing{background:rgba(255,255,255,.55)!important;-webkit-backdrop-filter:blur(20px) saturate(1.7);border:.5px solid rgba(255,255,255,.95);box-shadow:0 6px 16px rgba(31,51,89,.08),inset 0 1px 0 rgba(255,255,255,.95)!important}",
     "@keyframes tdh-in{from{opacity:0;filter:blur(8px);transform:translateY(10px) scale(.96);transform-origin:top left}to{opacity:1;filter:none;transform:none}}",
     "@keyframes tdh-up{from{opacity:0;filter:blur(8px);transform:translateY(18px) scale(.94);transform-origin:bottom right}to{opacity:1;filter:none;transform:none}}"
     ].join("\\n");var st=document.createElement('style');st.id='tdh-phone-look';st.textContent=css;
     (document.head||document.documentElement).appendChild(st);
+    window.__tdhSetDark=function(d){window.__tdhDark=!!d;var b=document.body;if(!b)return;var has=b.hasAttribute('data-ds-dark-theme');
+    if(d&&!has)b.setAttribute('data-ds-dark-theme','');if(!d&&has)b.removeAttribute('data-ds-dark-theme');document.documentElement.style.colorScheme=d?'dark':'light';
+    if(!window.__tdhDarkMo){window.__tdhDarkMo=new MutationObserver(function(){if(document.body.hasAttribute('data-ds-dark-theme')!==window.__tdhDark)window.__tdhSetDark(window.__tdhDark)});
+    window.__tdhDarkMo.observe(b,{attributes:true,attributeFilter:['data-ds-dark-theme']})}};
+    if(window.__tdhDark!==undefined)window.__tdhSetDark(window.__tdhDark);
     var lastN=-1,tm=0;function rep(){var n=document.querySelectorAll("[data-chat-flow-kind=user],[data-chat-flow-kind=assistant-step]").length;
     if(n!==lastN){lastN=n;try{webkit.messageHandlers.tdh.postMessage({type:'flow',count:n})}catch(e){}}}
     new MutationObserver(function(){clearTimeout(tm);tm=setTimeout(rep,150)}).observe(document.documentElement,{subtree:true,childList:true});setTimeout(rep,400)})();
@@ -516,9 +547,15 @@ struct AIWelcome: View {
 
 /// The desk page's own sky-to-sand wash, behind the page while it loads and around the bars.
 struct DeskBackground: View {
+    @Environment(\.colorScheme) private var scheme
+
     var body: some View {
-        LinearGradient(colors: [Color(red: 0.71, green: 0.81, blue: 0.94), Color(red: 0.86, green: 0.89, blue: 0.95),
-                                Color(red: 0.96, green: 0.87, blue: 0.78)],
+        // Day: Today's sky to peach. Night (company-phone-dark-v1): the same fall, deep — night blue to a dusk plum.
+        LinearGradient(colors: scheme == .dark
+                       ? [Color(red: 0.07, green: 0.10, blue: 0.18), Color(red: 0.08, green: 0.09, blue: 0.14),
+                          Color(red: 0.16, green: 0.11, blue: 0.13)]
+                       : [Color(red: 0.71, green: 0.81, blue: 0.94), Color(red: 0.86, green: 0.89, blue: 0.95),
+                          Color(red: 0.96, green: 0.87, blue: 0.78)],
                        startPoint: .top, endPoint: .bottom)
             .ignoresSafeArea()
     }

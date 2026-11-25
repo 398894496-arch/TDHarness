@@ -87,6 +87,11 @@ struct ChatListPage: View {
             }
         }
         .overlay { menu }
+        .task(id: chat.openRequest) {
+            guard let topic = chat.openRequest else { return }
+            chat.openRequest = nil
+            if path.last != .chat(topic) { path = [.chat(topic)] }
+        }
     }
 
     /// The chats (the user, 2026-11-25: 「聊天界面 左滑 给两个选项 置顶和删除」): pinned ones first with a pin, a swipe
@@ -112,10 +117,10 @@ struct ChatListPage: View {
                         .buttonStyle(RowPress())
                     }
                     // The row's colour under the whole row, so the card stays whole while the tiles show.
-                    .background(pinned ? Color.white.opacity(0.78) : Color.white.opacity(0.55))
+                    .background(pinned ? Color.paper.opacity(0.78) : Color.paper.opacity(0.55))
                     if i < talked.count - 1 {
                         Rectangle().fill(Color.black.opacity(0.08)).frame(height: 0.5).padding(.leading, 78)
-                            .background(Color.white.opacity(0.55))
+                            .background(Color.paper.opacity(0.55))
                     }
                 }
             }
@@ -145,7 +150,7 @@ struct ChatListPage: View {
                     }
                     .frame(width: 140)
                     // Glass a little whiter than the bar's, so the button under it does not show through.
-                    .background(.white.opacity(0.55), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .background(Color.paper.opacity(0.55), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .glass(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .padding(.top, g.safeAreaInsets.top)
                     .padding(.trailing, 16)
@@ -460,7 +465,7 @@ private struct ChatRow: View {
                             .font(.caption2.weight(.bold)).foregroundStyle(.white)
                             .padding(.horizontal, 5).frame(minWidth: 19, minHeight: 19)
                             .background(.red, in: Capsule())
-                            .overlay(Capsule().stroke(.white, lineWidth: 1.5))
+                            .overlay(Capsule().stroke(Color.paper, lineWidth: 1.5))
                             .offset(x: 5, y: -4)
                             .transition(.scale.combined(with: .opacity))
                     }
@@ -627,7 +632,7 @@ struct ChatRoom: View {
                         .textSelection(.enabled)
                         .padding(.horizontal, 14).padding(.vertical, 10)
                         .frosted(RoundedRectangle(cornerRadius: 18, style: .continuous),
-                                 wash: mine ? Color(red: 0.82, green: 0.88, blue: 0.99) : .white, amount: mine ? 0.75 : 0.6)
+                                 wash: mine ? Color.mine : .paper, amount: mine ? 0.75 : 0.6)
                         .opacity(m.pending ? 0.6 : 1)
                 }
                 if m.card == nil {
@@ -652,7 +657,7 @@ struct ChatRoom: View {
                 }
                 .frame(width: imgSize(a).width, height: imgSize(a).height)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.8), lineWidth: 1))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Color.rim.opacity(0.8), lineWidth: 1))
                 .shadow(color: Color(red: 0.12, green: 0.2, blue: 0.35).opacity(0.1), radius: 12, y: 5)
                 .overlay { if opening == m.seq { ProgressView() } }
             }
@@ -763,7 +768,7 @@ private struct VoiceBubble: View {
                 .padding(.horizontal, 14).padding(.vertical, 10)
                 .frame(width: min(230, 110 + CGFloat(secs) * 3), alignment: .leading)
                 .frosted(RoundedRectangle(cornerRadius: 18, style: .continuous),
-                         wash: mine ? Color(red: 0.82, green: 0.88, blue: 0.99) : .white, amount: mine ? 0.75 : 0.6)
+                         wash: mine ? Color.mine : .paper, amount: mine ? 0.75 : 0.6)
             }
             .buttonStyle(PressStyle()).foregroundStyle(Color.ink)
             if !gist.isEmpty || !words.isEmpty {
@@ -928,7 +933,7 @@ struct CallMinutesCard: View {
                                 Spacer(minLength: 0)
                             }
                             .padding(10)
-                            .background(.white.opacity(0.55), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .background(Color.paper.opacity(0.55), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                     }
                 }
