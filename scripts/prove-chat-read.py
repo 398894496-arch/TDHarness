@@ -13,7 +13,7 @@ a chat between the two others):
 - the service's log has counts, never what was said;
 - the answer stays within the budget the desk shows the agent, the older messages left out first.
 
-company-chat-bot-v1: the daily report comes from TDH早报 (tdh-daily), the server's own chat account: it cannot log in
+company-chat-bot-v1: the daily report comes from TDH晚报 (tdh-daily), the server's own chat account: it cannot log in
 with a password or a desk token, its account is made under that name at its first message, which comes in a chat of
 its own; it opens no chat with anyone else, so it is in nobody else's list (prove-people.py: no one can be added under
 its login); an admin's trial to one person goes to them only and is not today's report.
@@ -335,35 +335,35 @@ def main() -> None:
         check(sorted(opened) == sorted(fake.leaves), "every chat opened was left: %s / %s" % (opened, fake.leaves))
         check(fake.writes == [], "nothing marked read, nothing posted: " + json.dumps(fake.writes))
 
-        # company-chat-bot-v1: TDH早报.
+        # company-chat-bot-v1: TDH晚报.
         bot = lambda pw: base64.b64encode(("tdh-daily:" + pw).encode("utf-8")).decode("ascii")
         for pw in ("tdh-daily", "seed-pass-123", TOK["tdh"], "tkt_" + "0" * 40):
             st, r = ask(port, "/tinode-auth/", {"endpoint": "auth", "secret": bot(pw), "addr": "10.0.0.9"})
-            check(r.get("err") == "failed", "TDH早报 does not log in with a password, a token or a made-up ticket: " + json.dumps(r))
+            check(r.get("err") == "failed", "TDH晚报 does not log in with a password, a token or a made-up ticket: " + json.dumps(r))
         (runtime / "daily-report.json").write_text(json.dumps({
             "to": ["tdh"], "packs": [], "gateway": "http://127.0.0.1:9",
             "at": (datetime.now() + timedelta(hours=12)).strftime("%H:%M"), "window_hours": 1}), encoding="utf-8")
-        check("tdh-daily" not in json.loads((runtime / "tinode-links.json").read_text(encoding="utf-8")), "no account for TDH早报 yet")
+        check("tdh-daily" not in json.loads((runtime / "tinode-links.json").read_text(encoding="utf-8")), "no account for TDH晚报 yet")
         writes = len(fake.writes)
         st, r = ask(port, "/company/daily-report", {}, TOK["tdh"])
         check(st == 200 and [x.get("ok") for x in r.get("sent") or []] == [True], "the report goes out: " + json.dumps(r, ensure_ascii=False))
-        check(fake.made == [("tdh-daily", "TDH早报", ["tdh:tdh-daily"])], "TDH早报's account, made at its first message: " + json.dumps(fake.made, ensure_ascii=False))
+        check(fake.made == [("tdh-daily", "TDH晚报", ["tdh:tdh-daily"])], "TDH晚报's account, made at its first message: " + json.dumps(fake.made, ensure_ascii=False))
         botuid = json.loads((runtime / "tinode-links.json").read_text(encoding="utf-8")).get("tdh-daily")
         check(botuid == "NEWTDHDAILY", "its uid is kept: %s" % botuid)
-        check(fake.writes[writes:] == [(botuid, "pub", "usr" + UID["tdh"])], "one message, from TDH早报 to 徐总: " + json.dumps(fake.writes[writes:]))
+        check(fake.writes[writes:] == [(botuid, "pub", "usr" + UID["tdh"])], "one message, from TDH晚报 to 徐总: " + json.dumps(fake.writes[writes:]))
         st, r = ask(port, P + "list", {}, TOK["tdh"])
-        check(st == 200 and r["chats"][0]["name"] == "TDH早报" and r["chats"][0]["unread"] == 1, "徐总 has a chat TDH早报 of its own: " + json.dumps(r, ensure_ascii=False))
-        st, r = ask(port, P + "read", {"chat": "TDH早报"}, TOK["tdh"])
+        check(st == 200 and r["chats"][0]["name"] == "TDH晚报" and r["chats"][0]["unread"] == 1, "徐总 has a chat TDH晚报 of its own: " + json.dumps(r, ensure_ascii=False))
+        st, r = ask(port, P + "read", {"chat": "TDH晚报"}, TOK["tdh"])
         check(r["messages"][0]["from"] == "同事" and "完整日报" in r["messages"][0]["text"], "the message: " + json.dumps(r, ensure_ascii=False))
         st, r = ask(port, P + "list", {}, TOK["lfh"])
-        check("TDH早报" not in [c["name"] for c in r.get("chats") or []], "not in anyone else's list: " + json.dumps(r, ensure_ascii=False))
+        check("TDH晚报" not in [c["name"] for c in r.get("chats") or []], "not in anyone else's list: " + json.dumps(r, ensure_ascii=False))
         time.sleep(1.0)
-        check([t for w, t in fake.subs if w == botuid] == ["usr" + UID["tdh"]], "TDH早报 opened no other chat: " + json.dumps(fake.subs))
+        check([t for w, t in fake.subs if w == botuid] == ["usr" + UID["tdh"]], "TDH晚报 opened no other chat: " + json.dumps(fake.subs))
         # A trial to one person: only to them, and it is not today's report.
         state = (runtime / "daily-report-state.json").read_text(encoding="utf-8")
         st, r = ask(port, "/company/daily-report", {"to": "lfh"}, TOK["tdh"])
         check(st == 200 and [(x["to"], x["ok"]) for x in r.get("sent") or []] == [("lfh", True)], "a trial to lfh: " + json.dumps(r, ensure_ascii=False))
-        check(fake.writes[-1] == (botuid, "pub", "usr" + UID["lfh"]), "from TDH早报 to lfh: " + json.dumps(fake.writes[-1:]))
+        check(fake.writes[-1] == (botuid, "pub", "usr" + UID["lfh"]), "from TDH晚报 to lfh: " + json.dumps(fake.writes[-1:]))
         check((runtime / "daily-report-state.json").read_text(encoding="utf-8") == state, "a trial is not today's report")
         check(ask(port, "/company/daily-report", {"to": "nobody"}, TOK["tdh"])[0] == 400, "a trial to someone not in the roster")
         check(ask(port, "/company/daily-report", {"to": "tdh"}, TOK["lfh"])[0] == 403, "admins only")
