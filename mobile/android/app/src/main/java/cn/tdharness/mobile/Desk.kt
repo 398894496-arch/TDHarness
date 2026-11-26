@@ -93,6 +93,9 @@ object Desk {
     }
 
     private fun makeWeb(ctx: Context, desk: Boolean): WebView = WebView(ctx).apply {
+        // Match-parent, never wrap-content (what a view gets by default inside Compose): a WebView whose height is
+        // wrap-content lays its page out at height 0, and the desk's height:100% layout collapsed to nothing.
+        layoutParams = android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.mediaPlaybackRequiresUserGesture = false
@@ -167,7 +170,10 @@ object Desk {
         fun post(s: String) { main.post { runCatching { take(JSONObject(s)) } } }
 
         @JavascriptInterface
-        fun result(id: String, s: String) { main.post { results.remove(id)?.invoke(s) } }
+        fun result(id: String, s: String) {
+            if (BuildConfig.DEBUG) android.util.Log.d("TDHDesk", "result $id ${s.length}B waiting=${results.containsKey(id)}")
+            main.post { results.remove(id)?.invoke(s) }
+        }
 
         @JavascriptInterface
         fun file(name: String, mime: String, dataUrl: String) {
@@ -290,6 +296,7 @@ object Desk {
     }
 
     fun readArt(path: String, done: (String, String) -> Unit) {
+        if (BuildConfig.DEBUG) android.util.Log.d("TDHDesk", "readArt $path")
         val id = "read" + System.nanoTime()
         results[id] = { s -> runCatching { JSONObject(s) }.getOrNull()?.let { done(it.optString("title"), it.optString("content")) } ?: done("", "") }
         js("tdhPhone.readArtifact(${JSONObject.quote(path)}).then(function (r) { TDHAndroid.result(${JSONObject.quote(id)}, JSON.stringify(r || {})); }, function () { TDHAndroid.result(${JSONObject.quote(id)}, '{}'); })")

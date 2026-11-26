@@ -316,7 +316,11 @@ private fun Main(p: Person, onSignedIn: () -> Unit) {
 @Composable
 private fun Web(view: WebView?, modifier: Modifier) {
     if (view == null) return
-    AndroidView({ (view.parent as? ViewGroup)?.removeView(view); view }, modifier)
+    AndroidView({
+        (view.parent as? ViewGroup)?.removeView(view)
+        view.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        view
+    }, modifier)
 }
 
 @Composable
@@ -429,6 +433,7 @@ private fun Viewer(v: Triple<String, String, String>) {
                 HorizontalDivider()
                 AndroidView({ ctx ->
                     WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                         settings.javaScriptEnabled = true
                         settings.allowFileAccess = false
                         loadDataWithBaseURL(null, v.third.ifEmpty { "<p style='font:16px sans-serif;padding:24px'>这个文档打不开。</p>" }, "text/html", "utf-8", null)

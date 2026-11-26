@@ -62,6 +62,7 @@ class ChatWatch : Service() {
                 Net.call("GET", "/desk-hub/company/chat/unread?since=${maxOf(since, 0)}", token = p.token, timeoutMs = 15000,
                     headers = mapOf("X-TDH-Chat" to "1"))
             }.getOrNull()
+            if (BuildConfig.DEBUG) android.util.Log.d("TDHWatch", "unread ${r?.code} ok=${r?.json?.optBoolean("ok")} live=${r?.json?.optBoolean("live")} seq=${r?.json?.optLong("seq")} since=$since")
             if (r != null && r.code == 200 && r.json.optBoolean("ok")) {
                 val seq = r.json.optLong("seq")
                 val ev = r.json.optJSONArray("events")

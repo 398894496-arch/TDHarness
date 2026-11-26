@@ -8,6 +8,7 @@ class TDHApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Site.load(this)
+        if (BuildConfig.DEBUG) android.webkit.WebView.setWebContentsDebuggingEnabled(true)
         Session.init(this)
         ChatWatch.channels(this)
         // Another network (Wi-Fi in the office, 5G outside): the server is looked for again.

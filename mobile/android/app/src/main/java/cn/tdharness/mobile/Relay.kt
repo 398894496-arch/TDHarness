@@ -72,7 +72,8 @@ object Relay {
     private fun acceptLoop(s: ServerSocket) {
         while (!s.isClosed) {
             val c = try { s.accept() } catch (e: IOException) { break }
-            pool.execute { serve(c) }
+            // Nothing a connection does may end the app (a thread's uncaught exception would).
+            pool.execute { try { serve(c) } catch (e: Throwable) { runCatching { c.close() } } }
         }
     }
 
@@ -112,6 +113,7 @@ object Relay {
             val (head, rest) = readHead(inp) ?: run { c.close(); return }
             val text = String(head, Charsets.UTF_8)
             val first = text.substringBefore("\r\n")
+            if (BuildConfig.DEBUG) android.util.Log.d("TDHRelay", first + " keyed=" + keyed(text))
             if (!keyed(text)) { plain(out, "403 Forbidden"); c.close(); return }
             // The desk's side-panel socket (files the assistant opens beside the conversation) has nothing to show on a
             // phone: answered here as opened, then silent. Answered, not left waiting — a browser opens one WebSocket to an
@@ -146,15 +148,22 @@ object Relay {
                 plain(out, "502 Bad Gateway"); c.close(); return
             }
             if (!Site.names.verify(Site.config.host, up.session)) { up.close(); plain(out, "502 Bad Gateway"); c.close(); return }
-            up.outputStream.write(newHead + rest)
-            up.outputStream.flush()
+            // Both streams taken now: the answer can come and close the connection before the other side starts.
+            val upOut = up.outputStream
+            val upIn = up.inputStream
+            upOut.write(newHead + rest)
+            upOut.flush()
             if (stream != null) streams.incrementAndGet()
             pool.execute {
-                pump(inp, up.outputStream)
-                // The page's side of a live connection is gone: all of it ends (a half-open pair would stay on the server).
-                if (stream != null || upgrade) { runCatching { up.close() }; runCatching { c.close() } }
+                try {
+                    pump(inp, upOut)
+                    // The page's side of a live connection is gone: all of it ends (a half-open pair would stay on the server).
+                    if (stream != null || upgrade) { runCatching { up.close() }; runCatching { c.close() } }
+                } catch (e: Throwable) {
+                    runCatching { up.close() }; runCatching { c.close() }
+                }
             }
-            pump(up.inputStream, out)
+            pump(upIn, out)
             runCatching { c.close() }
             runCatching { up.close() }
             if (stream != null && streams.decrementAndGet() == 0) streamGoneAt = System.currentTimeMillis()
