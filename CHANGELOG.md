@@ -4,6 +4,11 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.26.6
+
+**安卓 AI 页的输入框和底栏不再透字**
+- 用户：「我刚刚看到好像还是有点透哦 语音输入的那个框」。AI 页的对话是网页，App 自己的模糊拍不到它，输入框和底栏原来退成一层很薄的颜色（夜间只有约三成不透明）；网页自己画的底部模糊又要到三分之一处才到全强度，框的上半截几乎没糊，滚过去的字透得出来。现在 AI 页的输入框和底栏用厚的毛玻璃底，网页底部的模糊更早到全强度、更强（20px）；模拟器里 400 字的回答滚到框下，框上方逐渐糊掉，框和底栏里看不到字。安卓包 1.3（2026112605）。
+
 ## 2026.11.26.5
 
 **安卓 App 1.3：页面逐一对齐 iPhone，毛玻璃、图标、头像、语音通话都补上**

@@ -104,7 +104,12 @@ val LocalHaze = compositionLocalOf<dev.chrisbanes.haze.HazeState?> { null }
  */
 @androidx.compose.runtime.Composable
 fun Modifier.liquid(p: Palette, shape: Shape = CircleShape, tint: Color? = null, wash: Float = 0.42f): Modifier {
-    val haze = LocalHaze.current ?: return this.glass(p, shape, tint)
+    // No blur to take (the AI page: a WebView cannot be blurred by the app; the page blurs itself under the bars):
+    // a frosted pane thick enough that words passing under it do not show through (the user, 2026-11-26: 「还是有点透」).
+    val haze = LocalHaze.current ?: return this.shadow(if (p.dark) 6.dp else 14.dp, shape, ambientColor = Color(0x261E3359), spotColor = Color(0x261E3359))
+        .clip(shape)
+        .background(tint ?: if (p.dark) Color(0xE6232733) else Color(0xEBF6F7FB))
+        .border(0.7.dp, Brush.verticalGradient(listOf(p.rim.copy(alpha = if (p.dark) 0.55f else 1f), p.rim.copy(alpha = 0.12f))), shape)
     val base = if (p.dark) Color(0xFF1B1F2A) else Color(0xFFF4F6FB)
     val style = dev.chrisbanes.haze.HazeStyle(
         backgroundColor = base,

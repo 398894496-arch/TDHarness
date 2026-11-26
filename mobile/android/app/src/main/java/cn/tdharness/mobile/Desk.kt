@@ -375,9 +375,9 @@ object Desk {
         val top = if (dark) "18,26,46" else "181,206,240"
         val bot = if (dark) "41,28,33" else "245,222,199"
         js("""(function(){var s=document.getElementById('tdh-edges');if(!s){s=document.createElement('style');s.id='tdh-edges';(document.head||document.documentElement).appendChild(s)}
-s.textContent='html::before,html::after{content:"";position:fixed;left:0;right:0;z-index:2147483000;pointer-events:none;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}'+
+s.textContent='html::before,html::after{content:"";position:fixed;left:0;right:0;z-index:2147483000;pointer-events:none;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}'+
 'html::before{top:0;height:${t + 14}px;background:linear-gradient(rgba($top,.72),rgba($top,.4) 70%,rgba($top,0));-webkit-mask-image:linear-gradient(#000 65%,transparent);mask-image:linear-gradient(#000 65%,transparent)}'+
-'html::after{bottom:0;height:${b + 12}px;background:linear-gradient(rgba($bot,0),rgba($bot,.4) 30%,rgba($bot,.72));-webkit-mask-image:linear-gradient(transparent,#000 35%);mask-image:linear-gradient(transparent,#000 35%)}';})()""")
+'html::after{bottom:0;height:${b + 24}px;background:linear-gradient(rgba($bot,0),rgba($bot,.6) 14%,rgba($bot,.85));-webkit-mask-image:linear-gradient(transparent,#000 14%);mask-image:linear-gradient(transparent,#000 14%)}';})()""")
     }
 
     /** Says it to the assistant in the open conversation (a new one when none is open): true when it went. */
