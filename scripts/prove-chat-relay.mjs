@@ -130,7 +130,8 @@ const site = http.createServer((req, res) => {
 			} else if (kind === "sub" && body.topic === "grpNOPE") {
 				ctrl = { id: body.id, code: 403 };
 			} else if (kind === "pub") {
-				pubs.push(body);
+				// "extra" (the attachments) rides beside "pub", as Tinode reads it.
+				pubs.push(msg.extra === undefined ? body : Object.assign({}, body, { extra: msg.extra }));
 				ctrl = { id: body.id, code: 202 };
 			} else if (kind === "get" && body.topic === "me") {
 				push(sid, { meta: { topic: "me", sub: meSubs } });
