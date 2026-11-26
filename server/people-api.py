@@ -771,9 +771,26 @@ def usage_summary(rows: list) -> dict:
     }
 
 
+HUB_PRESENCE = ROOT / "runtime" / "desk-hub-presence.json"
+
+
+def hub_presence(now: int) -> dict:
+    """company-desk-hub-presence-v1: login -> last second a page of theirs was connected to their desk on this server
+    (desk_hub.js writes it every 15 s). A file older than the heartbeat window says nothing about now."""
+    try:
+        j = json.loads(HUB_PRESENCE.read_text(encoding="utf-8"))
+        at = int(j.get("at") or 0)
+        seen = {str(k): int(v) for k, v in (j.get("online") or {}).items() if int(v) > 0}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {"at": 0, "online": {}}
+    return {"at": at, "online": seen}
+
+
 def floor_rows(spend: dict | None = None) -> list:
     now = int(time.time())
     out = []
+    hub = hub_presence(now)
+    hub_fresh = 0 <= now - hub["at"] <= desk_lease.HEARTBEAT_STALE
     by_login = {row["key"]: row for row in ((spend or {}).get("by_person") or [])}
     for p in public_people():
         login = str(p.get("login") or "")
@@ -785,6 +802,11 @@ def floor_rows(spend: dict | None = None) -> list:
             desk_lease.expire(lease, now)
             hb = int(lease.get("heartbeat_unix") or 0)
             online = desk_lease.is_online(lease, now)
+            # On the server desk there is no seat: a page connected to it is the person being here.
+            seen = hub["online"].get(login, 0)
+            if seen:
+                hb = max(hb, seen)
+                online = online or (hub_fresh and 0 <= now - seen <= desk_lease.HEARTBEAT_STALE)
         out.append({
             "login": login,
             "name": p.get("name") or "",
