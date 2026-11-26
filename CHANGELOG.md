@@ -4,6 +4,15 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.26.5
+
+**安卓 App 1.3：页面逐一对齐 iPhone，毛玻璃、图标、头像、语音通话都补上**
+- 安卓照 iPhone 逐页对齐（`company-android-parity-v1`）：用户：「你对齐iphone的版本！ 什么都别漏！！！！！」「视觉也要对齐哦！」。顶栏和底栏下面滚过去的内容真正模糊（AI 页由网页自己用 `backdrop-filter` 画顶部、底部的毛玻璃边，原生列表页用 Haze），History 页文字不再透到底栏上；图标全部照 iPhone 的 SF Symbols 重画；大标题加搜索；History 有「有新回复」小圆点、左滑归档；Docs 可左右翻页、转发、交给 AI、用其他 App 打开；设置页同 iPhone；输入框打字时发送键从框里分出来，按住说话有声波；「+」面板有相机、最近照片、全部照片、上传文件、选一个文档。AI 页标题不再闪「emp-…」。`mobile/android/PARITY.md` 列出 iPhone 的 20 个部分在安卓上对应哪里。
+- 登录后必须设头像（`company-chat-avatar-v1` 安卓版）：用户：「为什么登录不让设置头像」。聊天名片没有头像就先上传（相册或拍照，取正中正方形），同时写进花名册，电脑端也能看到；设置里可以「更换头像」。登录页换成 iPhone 那套（手机号 → 6 格验证码）。
+- 安卓能打语音电话（`company-phone-call-v1` 安卓版）：用户：「安卓是不是还不能打语音？」。一对一聊天右上角有电话键；通话走公司聊天页本身的通话（和电脑、iPhone 互通，挂断后照常生成纪要），App 自己画全屏通话界面（来电、呼叫中、通话中计时、静音 / 挂断 / 免提），有回铃、来电铃声和震动；App 在后台时来电弹通知。
+- 聊天对齐 iPhone：会话列表是一整张毛玻璃卡片；搜索同时找同事、群和全部聊天记录（命中的字蓝色加粗）；右上角 ≡ 菜单有通讯录（按拼音排）和建群；TDH 助手卡片按种类显示各自的按钮和结果，通话纪要排版，任务卡、文件卡同 iPhone；聊天里的图片、PDF、文本原地打开，可以转发、交给 AI。
+- 横幅和通知：App 开着时，同事消息和 AI 答完从顶部滑下玻璃横幅，点一下直达；App 在后台时通知点开直达那个聊天或那个对话。安卓没有苹果推送，服务器（`people-api`）把每人最近的「AI 答完」留 10 分钟，新加 `/company/ext/chat/ai-events` 供手机来取（`company-android-ai-done-v1`）。
+
 ## 2026.11.26.4
 
 **旧版安卓手机（华为等）上 AI 页打不开、没有历史对话**
