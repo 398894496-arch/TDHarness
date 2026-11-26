@@ -8381,8 +8381,25 @@ window.__ModuleLoader__.load({
 			return artBodyFor(a).then(function (body) { return new File([body.content], artFileName(a, body), { type: "text/html" }); });
 		}
 		// Into the conversation as a file card (the same intake as a file dropped there): then 「做成 PDF」「这里怎么改」.
-		function giveArtifactToAssistant(a) {
-			return artifactAsFile(a).then(function (f) { return landDeskFiles([f]); }).then(function (n) {
+		// company-art-give-new-chat-v1 (the user, 2026-11-26: 「这个功能 我希望电脑端默认打开的是新窗口」): 交给助手 from the
+		// artifact's bar opens a new conversation first and puts the artifact into its composer, not into whatever
+		// conversation was open. A drag into a composer still lands where it is dropped; the phone keeps its own way.
+		function artNewChat() {
+			try { startSessionFn(personalWorkspaceId() || undefined); } catch (err) { return Promise.resolve(false); }
+			return new Promise(function (resolve) {
+				const t0 = Date.now();
+				(function wait() {
+					const open = document.querySelector("[data-dsh-center-col] [data-conversation-scroll] [data-chat-flow-kind]");
+					const input = Array.prototype.some.call(document.querySelectorAll('input[type="file"]'), function (x) { return !x.closest(".cs-desk-file"); });
+					if (!open && input) { setTimeout(function () { resolve(true); }, 150); return; }
+					if (Date.now() - t0 > 4000) { resolve(false); return; }
+					setTimeout(wait, 80);
+				})();
+			});
+		}
+		function giveArtifactToAssistant(a, opts) {
+			const fresh = !!(opts && opts.fresh) && !PHONE;
+			return (fresh ? artNewChat() : Promise.resolve(true)).then(function () { return artifactAsFile(a); }).then(function (f) { return landDeskFiles([f]); }).then(function (n) {
 				if (n) csToast("已放进助手对话框，说说要怎么处理它，比如「做成 PDF」");
 				return n;
 			}, function () { csToast("工件没读出来，稍后再试"); return 0; });
@@ -8761,7 +8778,7 @@ window.__ModuleLoader__.load({
 						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M15 18l-6-6 6-6" }))),
 					React.createElement("span", { className: "cs-art-bar-title", title: "拖进对话框交给助手，或拖到聊天里发给对方", draggable: true,
 						onDragStart: function (e) { artDragStart(e, a); }, onDragEnd: artDragEnd }, (body && body.title) || a.title),
-					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "交给助手", title: "交给助手（放进对话框，再说要怎么改）", onClick: function () { giveArtifactToAssistant(a); } },
+					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "交给助手", title: "交给助手（开一个新对话，工件放进对话框，再说要怎么改）", onClick: function () { giveArtifactToAssistant(a, { fresh: true }); } },
 						icon(["M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z", "M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"])),
 					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "转发", title: "转发到聊天", onClick: function () { fwdHook[1](true); } },
 						icon(["M14 5l7 7-7 7", "M21 12H9a6 6 0 0 0-6 6v1"])),

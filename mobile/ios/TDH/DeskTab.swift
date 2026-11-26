@@ -755,13 +755,21 @@ struct DeskTab: View {
                             .ignoresSafeArea()
                             // Thinking: the app's own drops, right under the question where the answer begins (the user,
                             // 2026-11-26: 「是我们默认的那个动画…出现在这个位置」), over the page's hidden place for them.
+                            // The page measures from the top of the screen (the web view lies under the bars), so the
+                            // drops' layer does too: laid out inside the safe area it began under the title bar, and the
+                            // drops sat about a bar's height below the question (the user, 2026-11-26: 「对话时候那个
+                            // 动画效果 不是应该出现在「我是……」那里吗」).
                             .overlay(alignment: .topLeading) {
-                                if desk.ready && desk.thinking && desk.thinkingAt != .zero {
-                                    LavaDots(width: 48, height: 24)
-                                        .offset(x: desk.thinkingAt.minX, y: desk.thinkingAt.midY - 12)
-                                        .allowsHitTesting(false)
-                                        .transition(.opacity)
+                                ZStack(alignment: .topLeading) {
+                                    if desk.ready && desk.thinking && desk.thinkingAt != .zero {
+                                        LavaDots(width: 48, height: 24)
+                                            .offset(x: desk.thinkingAt.minX, y: desk.thinkingAt.midY - 12)
+                                            .transition(.opacity)
+                                    }
                                 }
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                                .ignoresSafeArea()
+                                .allowsHitTesting(false)
                             }
                             .animation(.easeOut(duration: 0.2), value: desk.thinking)
                             .onAppear { desk.setInsets(top: g.safeAreaInsets.top, bottom: g.safeAreaInsets.bottom) }
