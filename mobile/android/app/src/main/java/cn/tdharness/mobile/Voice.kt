@@ -74,8 +74,13 @@ object Voice {
         return true
     }
 
-    /** The recording as WAV, and how long it was; null when nothing was said (shorter than half a second). */
-    fun finish(): Pair<ByteArray, Int>? {
+    /** A recording: its WAV, how long it was, its waveform (64 bars, 0…255, base64: the chat's voice preview). */
+    class Take(val wav: ByteArray, val ms: Int, val preview: String) {
+        val first get() = wav
+    }
+
+    /** The recording, how long it was; null when nothing was said (shorter than half a second). */
+    fun finish(): Take? {
         wanted = false
         val r = record
         record = null
@@ -86,7 +91,25 @@ object Voice {
         val raw = synchronized(pcm) { pcm.toByteArray() }
         val ms = raw.size * 1000 / (RATE * 2)
         if (ms < 500) return null
-        return wav(raw) to ms
+        return Take(wav(raw), ms, peaks(raw))
+    }
+
+    private fun peaks(pcm: ByteArray): String {
+        val n = pcm.size / 2
+        val bars = ByteArray(64)
+        if (n == 0) return Base64.encodeToString(bars, Base64.NO_WRAP)
+        val bb = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN)
+        val per = maxOf(1, n / 64)
+        var top = 1
+        val raw = IntArray(64)
+        for (b in 0 until 64) {
+            var m = 0
+            val from = b * per
+            for (i in from until minOf(n, from + per)) { val s = kotlin.math.abs(bb.getShort(i * 2).toInt()); if (s > m) m = s }
+            raw[b] = m; if (m > top) top = m
+        }
+        for (b in 0 until 64) bars[b] = (raw[b] * 255 / top).toByte()
+        return Base64.encodeToString(bars, Base64.NO_WRAP)
     }
 
     fun stop() {

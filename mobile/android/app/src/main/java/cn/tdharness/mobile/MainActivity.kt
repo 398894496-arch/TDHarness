@@ -10,6 +10,7 @@ import android.webkit.ValueCallback
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import kotlinx.coroutines.withContext
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -37,6 +38,24 @@ class MainActivity : ComponentActivity() {
             Desk.askFile(name, mime, bytes)
         }
     }
+    // company-android-chat-native-v1: a chat's 「+」: pictures or files into that chat, as this person.
+    private val pickForChat = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        val topic = ChatShell.pickInto
+        if (topic.isEmpty()) return@registerForActivityResult
+        lifecycleScope.launch {
+            for (u in uris.take(9)) {
+                val name = runCatching {
+                    contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                }.getOrNull() ?: "文件"
+                val mime = contentResolver.getType(u) ?: "application/octet-stream"
+                val bytes = withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { contentResolver.openInputStream(u)?.use { it.readBytes() } }.getOrNull() }
+                if (bytes == null) { Desk.say("「$name」没读出来"); continue }
+                if (bytes.size > 50 * 1024 * 1024) { Desk.say("「$name」太大了（超过 50MB）"); continue }
+                Desk.say("正在发送 $name")
+                if (!Chat.sendFile(topic, name, mime, bytes)) Desk.say("「$name」没发出去")
+            }
+        }
+    }
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         pendingMic?.invoke(ok)
         pendingMic = null
@@ -54,6 +73,8 @@ class MainActivity : ComponentActivity() {
         Look.load(this)
         Desk.create(this)
         Desk.pickForAi = { runCatching { pickForAi.launch("*/*") } }
+        Desk.pickForChat = { runCatching { pickForChat.launch("*/*") } }
+        Chat.init(this)
         Desk.chooseFiles = { cb, params ->
             pendingFiles?.onReceiveValue(null)
             pendingFiles = cb
@@ -95,7 +116,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (Session.phase == Phase.SignedIn) Desk.cameBack() else Desk.foreground = true
+        if (Session.phase == Phase.SignedIn) { Desk.cameBack(); Chat.check() } else Desk.foreground = true
     }
 
     override fun onPause() {

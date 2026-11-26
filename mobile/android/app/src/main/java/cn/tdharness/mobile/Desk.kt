@@ -245,9 +245,6 @@ object Desk {
                 flush()
             }
             load()
-            // The chat page too, a moment later (the chat tab then opens at once).
-            delay(2500)
-            openChat()
         }
         startHealing()
     }
@@ -383,8 +380,15 @@ object Desk {
         js("Promise.resolve().then(function () { return $expr; }).then(function (r) { TDHAndroid.result(${JSONObject.quote(id)}, JSON.stringify(r === undefined ? null : r)); }, function (e) { TDHAndroid.result(${JSONObject.quote(id)}, JSON.stringify({ok:false, error:String(e && e.message || e)})); })")
     }
 
-    /** Set by MainActivity: the phone's own picker for 「+」. */
+    /** Set by MainActivity: the phone's own picker for 「+」 (the AI composer, a chat's composer). */
     var pickForAi: (() -> Unit)? = null
+    var pickForChat: (() -> Unit)? = null
+
+    /** A file's bytes, shown by whatever app on the phone opens its kind (a chat's file, a picture). */
+    fun openBytes(ctx: Context, name: String, mime: String, bytes: ByteArray) {
+        val f = File(File(ctx.cacheDir, "files"), safeName(name)).apply { parentFile?.mkdirs(); writeBytes(bytes) }
+        openFile(ctx, f, mime.takeIf { it.isNotBlank() && it != "image/*" })
+    }
     /** Files put into the assistant's composer, to go with the next thing said (their names, for the native composer). */
     var attached by mutableStateOf<List<String>>(emptyList())
 

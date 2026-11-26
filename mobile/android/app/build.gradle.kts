@@ -22,7 +22,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = (project.findProperty("tdhVersionCode") as String?)?.toInt() ?: 1
-        versionName = "1.1"
+        versionName = "1.2"
     }
 
     signingConfigs {
@@ -60,5 +60,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.webkit:webkit:1.12.1")
+    // company-android-chat-native-v1: the chat's WebSocket (Tinode), as the iPhone keeps one open.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }

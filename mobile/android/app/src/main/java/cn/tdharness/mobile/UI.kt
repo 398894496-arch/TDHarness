@@ -80,6 +80,7 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.DriveFileRenameOutline
 import androidx.compose.material.icons.outlined.EditNote
@@ -371,15 +372,15 @@ private fun Main(person: Person, onSignedIn: () -> Unit) {
     LaunchedEffect(person.token) {
         onSignedIn()
         Desk.open(person)
+        Chat.start(person.login, person.token)
     }
     var settings by remember { mutableStateOf(false) }
     val tab = Shell.tab
     LaunchedEffect(tab) {
-        if (tab == Tab.Chat && (Desk.chatState == DeskState.Idle || Desk.chatState == DeskState.Failed) && Desk.state == DeskState.Ready) Desk.openChat()
         if (tab == Tab.Docs) Desk.loadArts()
         Desk.aiVisible = tab == Tab.AI
     }
-    BackHandler(enabled = Shell.viewer != null || tab != Tab.AI) { Shell.back() }
+    BackHandler(enabled = (Shell.viewer != null || tab != Tab.AI) && ChatShell.room.isEmpty()) { Shell.back() }
     val ime = WindowInsets.isImeVisible
     val density = LocalDensity.current
     val topInset = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
@@ -387,18 +388,17 @@ private fun Main(person: Person, onSignedIn: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         // Both pages stay attached (they keep their live connections); each is shown only on its own tab.
         AiPage(person, topInset, tab == Tab.AI)
-        Web(Desk.chatWeb, Modifier.fillMaxSize().padding(top = topInset + BAR.dp, bottom = if (ime) 0.dp else (TABS + 8).dp)
-            .navigationBarsPadding().imePadding(), visible = tab == Tab.Chat)
+        val navInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
         when (tab) {
             Tab.History -> HistoryPage(topInset)
             Tab.Docs -> DocsPage(topInset)
+            Tab.Chat -> ChatListPage(topInset + BAR.dp, navInset + TABS.dp)
             else -> {}
-        }
-        if (tab == Tab.Chat && Desk.chatState != DeskState.Ready) {
-            Cover(Desk.chatState == DeskState.Failed, "聊天没打开") { Desk.retryChat() }
         }
         TopBar(tab, onGear = { settings = true })
         if (!ime) TabBar(Modifier.align(Alignment.BottomCenter))
+        if (ChatShell.room.isNotEmpty()) ChatRoom(ChatShell.room, person)
+        if (ChatShell.contacts) ContactsSheet { ChatShell.contacts = false }
         Toast()
     }
     if (settings) SettingsSheet(person) { settings = false }
@@ -445,7 +445,7 @@ private fun TopBar(tab: Tab, onGear: () -> Unit) {
             when (tab) {
                 Tab.AI, Tab.History -> GlassIcon(Icons.Outlined.EditNote, "新对话") { Desk.newChat(); Shell.tab = Tab.AI }
                 Tab.Docs -> GlassIcon(Icons.Outlined.Refresh, "刷新") { Desk.arts = null; Desk.loadArts() }
-                Tab.Chat -> GlassIcon(Icons.Outlined.Refresh, "刷新") { Desk.chatWeb?.reload() }
+                Tab.Chat -> GlassIcon(Icons.Outlined.Contacts, "通讯录") { ChatShell.contacts = true }
             }
         }
     }
@@ -640,7 +640,7 @@ private fun Composer(person: Person, modifier: Modifier) {
                             if (cancelling || got == null) { if (!cancelling && got == null) Desk.say("说话时间太短"); return@awaitEachGesture }
                             reading = true
                             scope.launch {
-                                val words = Voice.words(got.first, person.token)
+                                val words = Voice.words(got.wav, person.token)
                                 reading = false
                                 when {
                                     words == null -> Desk.say("语音没转成文字，请再试或打字")
@@ -896,14 +896,14 @@ private fun Viewer(a: Art) {
     }
 }
 
-private class Chat(val topic: String, val name: String, val group: Boolean)
+private class FwdChat(val topic: String, val name: String, val group: Boolean)
 
 /** 转发: the chats this person is in, the ones talked with last first; several at once, a word with it. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ForwardSheet(title: String, send: (List<String>, String, (String?) -> Unit) -> Unit, close: () -> Unit) {
     val p = LocalPalette.current
-    var chats by remember { mutableStateOf<List<Chat>?>(null) }
+    var chats by remember { mutableStateOf<List<FwdChat>?>(null) }
     val picked = remember { mutableStateListOf<String>() }
     var note by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
@@ -911,7 +911,7 @@ private fun ForwardSheet(title: String, send: (List<String>, String, (String?) -
     LaunchedEffect(Unit) {
         Desk.ask("window.tdhPhone ? tdhPhone.chats() : {topics:[]}") { s ->
             val a = runCatching { JSONObject(s).optJSONArray("topics") }.getOrNull() ?: JSONArray()
-            chats = (0 until a.length()).map { i -> a.getJSONObject(i).let { Chat(it.optString("topic"), it.optString("name"), it.optBoolean("group")) } }
+            chats = (0 until a.length()).map { i -> a.getJSONObject(i).let { FwdChat(it.optString("topic"), it.optString("name"), it.optBoolean("group")) } }
         }
     }
     ModalBottomSheet(close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = p.ground) {
@@ -1005,6 +1005,7 @@ private fun SettingsSheet(person: Person, close: () -> Unit) {
         out = false
         scope.launch {
             ChatWatch.stop(ctx)
+            Chat.stop()
             Desk.web?.loadUrl("about:blank"); Desk.chatWeb?.loadUrl("about:blank")
             Desk.state = DeskState.Idle; Desk.chatState = DeskState.Idle; Desk.sessions = emptyList(); Desk.arts = null
             Relay.stop()
