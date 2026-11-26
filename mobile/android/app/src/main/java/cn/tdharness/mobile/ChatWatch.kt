@@ -79,12 +79,13 @@ class ChatWatch : Service() {
             }
             // company-android-ai-done-v1: the AI finished an answer (people-api keeps them; the iPhone gets an Apple push).
             val a = runCatching {
-                Net.call("POST", "/company/ext/chat/ai-events", org.json.JSONObject().put("since", maxOf(aiSince, 0)), token = p.token, timeoutMs = 15000)
+                Net.call("POST", "/company/ext/chat/ai-events", org.json.JSONObject().put("since", aiSince), token = p.token, timeoutMs = 15000)
             }.getOrNull()
             if (a != null && a.code == 200 && a.json.optBoolean("ok")) {
                 val seq = a.json.optLong("seq")
                 val ev = a.json.optJSONArray("events")
-                if (aiSince >= 0 && ev != null) for (i in 0 until ev.length()) {
+                if (seq < aiSince) aiSince = seq // the server started again: its count began anew
+                else if (aiSince >= 0 && ev != null) for (i in 0 until ev.length()) {
                     val e = ev.getJSONObject(i)
                     aiDone(e.optString("session"), e.optString("title"), e.optString("preview"), e.optString("reason"))
                 }

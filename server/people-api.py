@@ -2394,12 +2394,16 @@ def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
         sys.stderr.write("people-api push ai-done %s sent=%s\n" % (login, out.get("sent")))
         return 200, out
     if what == "ai-events":
-        # company-android-ai-done-v1: the answers finished since the phone last asked (since 0: only where it stands).
-        since = int(payload.get("since") or 0)
+        # company-android-ai-done-v1: the answers finished since the phone last asked; a phone that has not asked yet
+        # sends since -1 (or nothing) and learns only where it stands.
+        try:
+            since = int(payload.get("since", -1))
+        except (TypeError, ValueError):
+            since = -1
         with _AI_LOCK:
             rows = [e for e in _AI_EVENTS.get(login, []) if e["id"] > since and time.time() - e["at"] < 600]
             top = _AI_NEXT
-        return 200, {"ok": True, "seq": top, "events": rows if since > 0 else []}
+        return 200, {"ok": True, "seq": top, "events": rows if since >= 0 else []}
     if what == "find":
         # company-chat-search-all-v1: the phone's search over all of the person's own chat messages (any age).
         q = str(payload.get("q") or "").strip()
