@@ -4,6 +4,11 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.26.4
+
+**旧版安卓手机（华为等）上 AI 页打不开、没有历史对话**
+- 旧网页内核也能用（`company-old-webview-v1`）：用户的华为手机（VDE-AL00）自带的网页内核是 Chrome 114。工作台页面第一行启动代码就用了 Chrome 119 才有的 `Promise.withResolvers`，后面还有 `AbortSignal.any`、迭代器的 `.some()` / `.find()`、集合运算等，旧内核上启动到第一行就停了：AI 页是电脑端的起始页（「选择一个工作区开始」），历史为空，实时连接每几秒断一次。现在 `desk_hub.js` 在工作台和聊天页的最前面放进 `server/desk-polyfills.js`，旧内核缺什么补什么（新内核原样不动）。手机上已装的安卓包不用重装。
+
 ## 2026.11.26.3
 
 **右栏白天和左栏一样是毛玻璃；工件可以下载，「交给助手」开新对话；同事页重新能看到谁在线；iPhone 思考动画回到回答的位置**
