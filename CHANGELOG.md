@@ -4,6 +4,11 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.26.2
+
+**服务器上的助手跟着新版本更新插件**
+- 服务器工作台（`company-desk-home-refresh-v1`）：每个人在服务器上的配置目录只在第一次建的时候从安装包复制插件，之后发布的新版本都没进去，服务器上的助手一直用的是第一天的侧边栏和公司插件（所以 2026.11.26 的下载修复装好了也没生效）。现在包的版本一变，助手下次启动时插件目录换成新包里的；个人设置、附件、登录信息不动。
+
 ## 2026.11.26
 
 **AI 做的文件不再「无法下载」：卡片上不放下载按钮，点文件夹按钮在自己电脑上打开公司盘里的文件夹；对话里的图片不再裂；安卓 App；iPhone 版送 TestFlight 外部测试**
