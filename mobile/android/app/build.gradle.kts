@@ -22,7 +22,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = (project.findProperty("tdhVersionCode") as String?)?.toInt() ?: 1
-        versionName = "1.0"
+        versionName = "1.1"
     }
 
     signingConfigs {

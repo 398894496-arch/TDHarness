@@ -24,6 +24,19 @@ class MainActivity : ComponentActivity() {
         pendingFiles?.onReceiveValue(uris.toTypedArray())
         pendingFiles = null
     }
+    // company-android-look-v1: 「+」 in the AI composer: pictures or files from the phone, into the assistant's composer.
+    private val pickForAi = registerForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        for (u in uris.take(9)) {
+            val name = runCatching {
+                contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            }.getOrNull() ?: "文件"
+            val mime = contentResolver.getType(u) ?: "application/octet-stream"
+            val bytes = runCatching { contentResolver.openInputStream(u)?.use { it.readBytes() } }.getOrNull()
+            if (bytes == null) { Desk.say("「$name」没读出来"); continue }
+            if (bytes.size > 20 * 1024 * 1024) { Desk.say("「$name」太大了（超过 20MB）"); continue }
+            Desk.askFile(name, mime, bytes)
+        }
+    }
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
         pendingMic?.invoke(ok)
         pendingMic = null
@@ -38,7 +51,9 @@ class MainActivity : ComponentActivity() {
             val rem = intent.getStringExtra("tdhTestRemember")
             if (!dev.isNullOrBlank() && !rem.isNullOrBlank()) Session.seed(dev, rem)
         }
+        Look.load(this)
         Desk.create(this)
+        Desk.pickForAi = { runCatching { pickForAi.launch("*/*") } }
         Desk.chooseFiles = { cb, params ->
             pendingFiles?.onReceiveValue(null)
             pendingFiles = cb

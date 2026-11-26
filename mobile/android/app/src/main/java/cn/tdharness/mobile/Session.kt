@@ -8,7 +8,7 @@ import androidx.compose.runtime.setValue
 import org.json.JSONObject
 import java.util.UUID
 
-class Person(val login: String, val role: String, val deptName: String, val token: String, val serverDesk: Boolean) {
+class Person(val login: String, val role: String, val deptName: String, val token: String, val serverDesk: Boolean, val name: String = "") {
     val roleText: String
         get() = when (role) { "admin" -> "管理员"; "director" -> "主管"; else -> "员工" }
 }
@@ -95,7 +95,7 @@ object Session {
         val p = Person(
             login = j.optString("login"), role = j.optString("role"),
             deptName = j.optString("dept_name").ifEmpty { j.optString("dept") },
-            token = j.optString("gw_token"), serverDesk = j.optBoolean("server_desk"),
+            token = j.optString("gw_token"), serverDesk = j.optBoolean("server_desk"), name = j.optString("name"),
         )
         Diag.token = p.token
         person = p
