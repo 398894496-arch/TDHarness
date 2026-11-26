@@ -57,6 +57,8 @@ object Desk {
     var failed by mutableStateOf("")
     var sessions by mutableStateOf<List<Sess>>(emptyList())
     var current by mutableStateOf("")
+    /** Conversations answered while not looked at (History's dot and badge, as the iPhone's desk.answered). */
+    var answered by mutableStateOf<Set<String>>(emptySet())
     var arts by mutableStateOf<List<Art>?>(null)
     var chatState by mutableStateOf(DeskState.Idle)
 
@@ -161,6 +163,11 @@ object Desk {
                 if (!req.isForMainFrame) return
                 Diag.say(if (desk) "desk" else "chat", "page: ${err.errorCode} ${err.description}")
                 if (desk) fail("工作台没打开，点重试再试一次") else chatState = DeskState.Failed
+            }
+
+            // The chat page answered with an error (its desk still starting): not ready — Calls asks for it again.
+            override fun onReceivedHttpError(view: WebView, req: WebResourceRequest, res: android.webkit.WebResourceResponse) {
+                if (!desk && req.isForMainFrame) { Diag.say("chat", "page: http ${res.statusCode}"); chatState = DeskState.Failed }
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, req: WebResourceRequest): Boolean {
@@ -312,19 +319,30 @@ object Desk {
         current = m.optString("current")
         if (current != was) saidHere = false
         val list = m.optJSONArray("sessions") ?: JSONArray()
+        val before = sessions.filter { it.busy }.map { it.id }.toSet()
         sessions = (0 until list.length()).map { i ->
             val s = list.getJSONObject(i)
             Sess(s.optString("id"), s.optString("title"), s.optLong("updated"), s.optBoolean("busy"))
         }
+        // company-phone-notices-v1: answered while not looked at — History's dot (有新回复) until it is opened.
+        val now = sessions.filter { it.id in before && !it.busy && !(aiVisible && foreground && it.id == current) }.map { it.id }
+        if (now.isNotEmpty()) answered = answered + now
+        if (aiVisible && current in answered) answered = answered - current
     }
 
     val currentTitle: String
-        get() = sessions.firstOrNull { it.id == current }?.title?.takeIf { !it.startsWith("_") && it != "新会话" } ?: "新对话"
+        get() = sessions.firstOrNull { it.id == current }?.title?.let { titleOf(it) } ?: "新对话"
+
+    /** A conversation's name as the person sees it: the desk's own placeholders (「emp-…」, 「新会话」) are 「新对话」. */
+    fun titleOf(t: String): String = t.trim().takeIf { it.isNotEmpty() && !it.startsWith("_") && !it.startsWith("emp-") && it != "新会话" } ?: "新对话"
+
+    fun currentSession(): String = current
 
     fun js(code: String) { web?.evaluateJavascript(code, null) }
 
     fun openSession(id: String) {
         current = id
+        answered = answered - id
         if (state != DeskState.Ready) { pendingOpen = id; return }
         js("if (window.tdhPhone) tdhPhone.open(${JSONObject.quote(id)})")
     }
@@ -335,12 +353,32 @@ object Desk {
     fun setDark(d: Boolean) {
         dark = d
         js("window.__tdhDark=$d; if (window.__tdhSetDark) __tdhSetDark($d)")
+        edges()
     }
 
     /** The app's bars over the page (dp = the page's own pixels): the conversation scrolls beneath them. */
     private var insets = 0 to 0
     fun setInsets(top: Int, bottom: Int) { insets = top to bottom; sendInsets() }
-    private fun sendInsets() { js("if (window.tdhPhone && tdhPhone.insets) tdhPhone.insets(${insets.first}, ${insets.second})") }
+    private fun sendInsets() {
+        js("if (window.tdhPhone && tdhPhone.insets) tdhPhone.insets(${insets.first}, ${insets.second})")
+        edges()
+    }
+
+    /**
+     * The scroll edges under the app's bars, drawn by the page itself (company-android-glass-v1): what scrolls under the
+     * top bar and under the composer and tab bar is blurred and washed with the sky (iOS 26's scroll edge). The app's own
+     * blur cannot take the page (a WebView drawn twice in one frame draws nothing), so the page does it with
+     * backdrop-filter, which the phones' WebViews have.
+     */
+    private fun edges() {
+        val (t, b) = insets
+        val top = if (dark) "18,26,46" else "181,206,240"
+        val bot = if (dark) "41,28,33" else "245,222,199"
+        js("""(function(){var s=document.getElementById('tdh-edges');if(!s){s=document.createElement('style');s.id='tdh-edges';(document.head||document.documentElement).appendChild(s)}
+s.textContent='html::before,html::after{content:"";position:fixed;left:0;right:0;z-index:2147483000;pointer-events:none;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}'+
+'html::before{top:0;height:${t + 14}px;background:linear-gradient(rgba($top,.72),rgba($top,.4) 70%,rgba($top,0));-webkit-mask-image:linear-gradient(#000 65%,transparent);mask-image:linear-gradient(#000 65%,transparent)}'+
+'html::after{bottom:0;height:${b + 12}px;background:linear-gradient(rgba($bot,0),rgba($bot,.4) 30%,rgba($bot,.72));-webkit-mask-image:linear-gradient(transparent,#000 35%);mask-image:linear-gradient(transparent,#000 35%)}';})()""")
+    }
 
     /** Says it to the assistant in the open conversation (a new one when none is open): true when it went. */
     fun send(text: String, done: (Boolean) -> Unit) {

@@ -78,6 +78,10 @@ object Chat {
     var me by mutableStateOf("")
     var pinned by mutableStateOf<List<String>>(emptyList())
     var hidden by mutableStateOf<Map<String, Int>>(emptyMap())
+    /** This person's own chat card (me's public), as it last came. */
+    private var myPub: JSONObject? = null
+    /** company-chat-avatar-v1: the card has no picture; the app asks for one before anything else (as the iPhone). */
+    var needsAvatar by mutableStateOf(false)
     /** The chat on screen: its messages count as read as they come. */
     @Volatile var open = ""
 
@@ -253,7 +257,7 @@ object Chat {
         val topic = meta.optString("topic")
         if (topic == "me") {
             meta.optJSONObject("desc")?.let { desc ->
-                desc.optJSONObject("public")?.let { pub -> people[me] = ChatPerson(pub.optString("fn", "我"), photo(pub, me)) }
+                desc.optJSONObject("public")?.let { pub -> myPub = pub; people[me] = ChatPerson(pub.optString("fn", "我"), photo(pub, me)) }
                 desc.optJSONObject("private")?.let { priv ->
                     pinned = priv.optJSONArray("tpin")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList()
                     topics = sorted(topics)
@@ -481,6 +485,82 @@ object Chat {
         val r = request(JSONObject().put("pub", JSONObject().put("topic", topic).put("noecho", false).put("head", JSONObject().put("mime", "text/x-drafty")).put("content", content))
             .put("extra", JSONObject().put("attachments", JSONArray().put(ref))))
         return r != null && code(r) < 300
+    }
+
+    // ---- the person's own card, groups, search (as the iPhone's ChatRelay / ChatStore) -----------------------------
+
+    /** Whether the person's chat card has a picture: true / false, null when it could not be asked. */
+    suspend fun hasPicture(): Boolean? {
+        repeat(20) { if (connected) return@repeat; delay(500) }
+        if (!connected) return null
+        request(JSONObject().put("get", JSONObject().put("topic", "me").put("what", "desc"))) ?: return null
+        val ph = myPub?.optJSONObject("photo") ?: return false
+        val data = ph.optString("data"); val ref = ph.optString("ref")
+        return data.length > 64 || (ref.length > 4 && ref != "\u2421")
+    }
+
+    /** Looks at the card once signed in: no picture → [needsAvatar] (tried again, as the iPhone does). */
+    fun checkAvatar() {
+        scope.launch {
+            var st: Boolean? = null
+            for (wait in listOf(0L, 3000L, 8000L)) { if (wait > 0) delay(wait); st = hasPicture(); if (st != null) break }
+            needsAvatar = st != true
+            if (st == true) backfillRoster()
+        }
+    }
+
+    /** The picture on the card (256 px JPEG), the rest kept; and the roster's (128 px) so the desks show it too. */
+    suspend fun setAvatar(jpeg: ByteArray): Boolean {
+        if (!connected) return false
+        if (myPub == null) request(JSONObject().put("get", JSONObject().put("topic", "me").put("what", "desc")))
+        val pub = JSONObject((myPub ?: JSONObject()).toString())
+        pub.put("photo", JSONObject().put("data", Base64.encodeToString(jpeg, Base64.NO_WRAP)).put("type", "jpeg"))
+        val r = request(JSONObject().put("set", JSONObject().put("topic", "me").put("desc", JSONObject().put("public", pub)))) ?: return false
+        if (code(r) >= 300) return false
+        myPub = pub
+        people[me] = ChatPerson(pub.optString("fn", "我"), photo(pub, me))
+        if (putRoster(jpeg)) prefs.edit().putBoolean("roster.$login", true).apply()
+        return true
+    }
+
+    private suspend fun backfillRoster() {
+        if (prefs.getBoolean("roster.$login", false)) return
+        val d = myPub?.optJSONObject("photo")?.optString("data")?.takeIf { it.length > 64 } ?: return
+        val jpeg = runCatching { Base64.decode(d, Base64.DEFAULT) }.getOrNull() ?: return
+        if (putRoster(jpeg)) prefs.edit().putBoolean("roster.$login", true).apply()
+    }
+
+    private suspend fun putRoster(jpeg: ByteArray): Boolean = withContext(Dispatchers.IO) {
+        val small = Avatars.square(jpeg, 128, 40 * 1024) ?: return@withContext false
+        val r = runCatching {
+            Net.call("POST", "/company/ext/chat/avatar", JSONObject().put("avatar", "data:image/jpeg;base64," + Base64.encodeToString(small, Base64.NO_WRAP)),
+                token = gwToken, timeoutMs = 20000)
+        }.getOrNull()
+        r?.json?.optBoolean("ok") == true
+    }
+
+    /** 建群: a name and the people in it; the group's topic once made. */
+    suspend fun createGroup(title: String, members: List<String>): String? {
+        val draft = "new" + UUID.randomUUID().toString().replace("-", "").take(10)
+        val r = request(JSONObject().put("sub", JSONObject().put("topic", draft)
+            .put("set", JSONObject().put("desc", JSONObject().put("public", JSONObject().put("fn", title)))))) ?: return null
+        val grp = r.optString("topic")
+        if (code(r) >= 300 || !grp.startsWith("grp")) return null
+        attached.add(grp)
+        for (u in members) request(JSONObject().put("set", JSONObject().put("topic", grp).put("sub", JSONObject().put("user", u))))
+        refreshMe()
+        if (topics.none { it.topic == grp }) topics = listOf(ChatTopic(grp, title, null, true, 0, 0, System.currentTimeMillis())) + topics
+        if (grp !in pinned) hidden = hidden - grp
+        return grp
+    }
+
+    class Hit(val chat: String, val topic: String, val from: String, val text: String, val time: String)
+
+    /** Messages with these words, in all the person's own chats and of any age (the server's search). */
+    suspend fun find(q: String): List<Hit> = withContext(Dispatchers.IO) {
+        val r = runCatching { Net.call("POST", "/company/ext/chat/find", JSONObject().put("q", q), token = gwToken, timeoutMs = 30000) }.getOrNull()
+        val a = r?.json?.optJSONArray("hits") ?: return@withContext emptyList()
+        (0 until a.length()).map { i -> a.getJSONObject(i).let { Hit(it.optString("chat"), it.optString("topic"), it.optString("from"), it.optString("text"), it.optString("time")) } }
     }
 
     /** An answer to TDH 助手's card: the words said, and head tdh_ai_ok. */

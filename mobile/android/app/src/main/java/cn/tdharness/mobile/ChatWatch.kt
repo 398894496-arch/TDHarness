@@ -55,6 +55,7 @@ class ChatWatch : Service() {
 
     private suspend fun watch() {
         var since = -1L
+        var aiSince = -1L
         while (scope.isActive) {
             val p = Session.person
             if (p == null) { stopSelf(); return }
@@ -62,7 +63,6 @@ class ChatWatch : Service() {
                 Net.call("GET", "/desk-hub/company/chat/unread?since=${maxOf(since, 0)}", token = p.token, timeoutMs = 15000,
                     headers = mapOf("X-TDH-Chat" to "1"))
             }.getOrNull()
-            if (BuildConfig.DEBUG) android.util.Log.d("TDHWatch", "unread ${r?.code} ok=${r?.json?.optBoolean("ok")} live=${r?.json?.optBoolean("live")} seq=${r?.json?.optLong("seq")} since=$since")
             if (r != null && r.code == 200 && r.json.optBoolean("ok")) {
                 val seq = r.json.optLong("seq")
                 val ev = r.json.optJSONArray("events")
@@ -72,42 +72,108 @@ class ChatWatch : Service() {
                     for (i in 0 until ev.length()) {
                         val e = ev.getJSONObject(i)
                         since = maxOf(since, e.optLong("id"))
-                        if (!(Desk.foreground && Shell.tab == Tab.Chat)) notifyMessage(e.optString("from"), e.optBoolean("group"), e.optLong("id"))
+                        message(e.optString("from"), e.optBoolean("group"), e.optString("topic"))
                     }
                     since = maxOf(since, seq)
                 }
             }
-            delay(if (Desk.foreground) 15000 else 8000)
+            // company-android-ai-done-v1: the AI finished an answer (people-api keeps them; the iPhone gets an Apple push).
+            val a = runCatching {
+                Net.call("POST", "/company/ext/chat/ai-events", org.json.JSONObject().put("since", maxOf(aiSince, 0)), token = p.token, timeoutMs = 15000)
+            }.getOrNull()
+            if (a != null && a.code == 200 && a.json.optBoolean("ok")) {
+                val seq = a.json.optLong("seq")
+                val ev = a.json.optJSONArray("events")
+                if (aiSince >= 0 && ev != null) for (i in 0 until ev.length()) {
+                    val e = ev.getJSONObject(i)
+                    aiDone(e.optString("session"), e.optString("title"), e.optString("preview"), e.optString("reason"))
+                }
+                aiSince = maxOf(aiSince, seq)
+            }
+            delay(if (inFront) 6000 else 8000)
         }
     }
 
-    private fun notifyMessage(from: String, group: Boolean, id: Long) {
+    /** As the iPhone: on screen, a glass banner (not for the chat already open); away, a notification that opens it. */
+    private fun message(from: String, group: Boolean, topic: String) {
+        val text = if (group) "群里有新消息" else "发来一条新消息"
+        if (inFront) {
+            if (Shell.tab == Tab.Chat && (ChatShell.room == topic || ChatShell.room.isEmpty())) return
+            Notices.show(from.ifEmpty { "新消息" }, text, Notice.Kind.Chat) { Shell.tab = Tab.Chat; if (topic.isNotEmpty()) ChatShell.room = topic }
+            return
+        }
+        post(from.hashCode(), CH_MSG, from.ifEmpty { "新消息" }, text, open(this, "topic", topic))
+    }
+
+    private fun aiDone(session: String, title: String, preview: String, reason: String) {
+        val head = when (reason) { "error" -> "回答没完成"; "ask" -> "AI 在等你确认"; else -> "AI 已回复" }
+        val name = title.takeIf { it.isNotBlank() && !it.startsWith("emp-") } ?: "新对话"
+        val body = preview.ifBlank { name }
+        if (session.isNotEmpty() && !(inFront && Shell.tab == Tab.AI && Desk.currentSession() == session)) Desk.answered = Desk.answered + session
+        if (inFront) {
+            if (Shell.tab == Tab.AI && (session.isEmpty() || Desk.currentSession() == session)) return
+            Notices.show("$head · $name", body, Notice.Kind.AI) { Shell.tab = Tab.AI; if (session.isNotEmpty()) Desk.openSession(session) }
+            return
+        }
+        post(("ai" + session).hashCode(), CH_AI, "$head · $name", body, open(this, "session", session))
+    }
+
+    private fun post(id: Int, ch: String, title: String, text: String, tap: PendingIntent) {
         if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return
-        val n = NotificationCompat.Builder(this, CH_MSG)
+        val n = NotificationCompat.Builder(this, ch)
             .setSmallIcon(R.drawable.ic_notify)
-            .setContentTitle(from.ifEmpty { "新消息" })
-            .setContentText(if (group) "群里有新消息" else "发来一条新消息")
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(Notification.CATEGORY_MESSAGE)
-            .setContentIntent(openApp(this, "chat"))
+            .setContentIntent(tap)
             .build()
-        runCatching { NotificationManagerCompat.from(this).notify(from.hashCode(), n) }
+        runCatching { NotificationManagerCompat.from(this).notify(id, n) }
     }
 
     companion object {
         const val CH_WATCH = "watch"
         const val CH_MSG = "messages"
+        const val CH_AI = "answers"
+
+        /** The app is on screen (MainActivity onResume/onPause): banners instead of notifications. */
+        @Volatile var inFront = false
 
         fun channels(ctx: Context) {
             val nm = ctx.getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(NotificationChannel(CH_WATCH, "保持接收消息", NotificationManager.IMPORTANCE_MIN).apply { setShowBadge(false) })
             nm.createNotificationChannel(NotificationChannel(CH_MSG, "聊天消息", NotificationManager.IMPORTANCE_HIGH))
+            nm.createNotificationChannel(NotificationChannel(CH_AI, "AI 回复", NotificationManager.IMPORTANCE_HIGH))
         }
+
+        /** Opens the app at one chat (topic) or one conversation (session). */
+        fun open(ctx: Context, key: String, value: String): PendingIntent =
+            PendingIntent.getActivity(ctx, (key + value).hashCode(), Intent(ctx, MainActivity::class.java).putExtra(key, value)
+                .putExtra("tab", if (key == "topic") "chat" else "ai").addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         fun openApp(ctx: Context, tab: String): PendingIntent =
             PendingIntent.getActivity(ctx, tab.hashCode(), Intent(ctx, MainActivity::class.java).putExtra("tab", tab)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+        /** A colleague calls while the app is away: a notification that brings the call screen up. */
+        fun ringing(ctx: Context, from: String) {
+            if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return
+            val n = NotificationCompat.Builder(ctx, CH_MSG)
+                .setSmallIcon(R.drawable.ic_notify)
+                .setContentTitle(from)
+                .setContentText("邀请你语音通话")
+                .setAutoCancel(true)
+                .setTimeoutAfter(45_000)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(Notification.CATEGORY_CALL)
+                .setContentIntent(openApp(ctx, "call"))
+                .setFullScreenIntent(openApp(ctx, "call"), true)
+                .build()
+            runCatching { NotificationManagerCompat.from(ctx).notify(7, n) }
+        }
 
         fun start(ctx: Context) {
             runCatching { ctx.startForegroundService(Intent(ctx, ChatWatch::class.java)) }

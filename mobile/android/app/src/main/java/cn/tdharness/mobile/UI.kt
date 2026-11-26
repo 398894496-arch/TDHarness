@@ -1,37 +1,48 @@
 package cn.tdharness.mobile
 
-// company-android-look-v1 (the user, 2026-11-26: 「安卓只是功能一样吗 为什么UI完全不一样」「重做并修连接」): the iPhone's app
-// on Android — History · AI · Chat · Docs on a floating glass bar, the gear and 新对话 on glass at the top, the
-// conversation under them, the greeting and its four cards on a new conversation, the Today-style composer (「+」 ·
-// 按住说话 / typing · keyboard), the drops while it thinks, History's cards with a swipe, Docs' cards, the settings
-// sheet. Mirrors mobile/ios/TDH (TDHApp, DeskTab, PhonePages, PhoneParts, PhoneShell, LoginView).
+// company-android-parity-v1 (the user, 2026-11-26: 「你对齐iphone的版本！ 什么都别漏！！！！！」「视觉也要对齐哦！」): the iPhone's
+// app on Android, page for page (mobile/ios/TDH: TDHApp, DeskTab, PhonePages, PhoneParts, PhoneShell) — History · AI ·
+// Chat · Docs on a floating glass tab bar; the gear and the page's button on glass circles; real frosted glass (what lies
+// under a bar blurred), the content fading under the bars as iOS's scroll edges do; large titles with their search;
+// the greeting and its four cards; the composer (「+」 · 按住说话 · the keyboard; typing: the send drop beside it); the
+// 「+」 sheet; History's cards (进行中 · 有新回复 · 正在看的对话) with their swipe; Docs and the pager; 转发; 设置.
 
-import android.Manifest
 import android.app.Activity
-import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.net.Uri
 import android.view.HapticFeedbackConstants
 import android.view.ViewGroup
 import android.webkit.WebView
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,13 +53,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
@@ -62,7 +71,13 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -70,68 +85,51 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.BarChart
-import androidx.compose.material.icons.outlined.ChatBubbleOutline
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.ChevronRight
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Contacts
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.DriveFileRenameOutline
-import androidx.compose.material.icons.outlined.EditNote
-import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.Keyboard
-import androidx.compose.material.icons.outlined.MarkEmailRead
-import androidx.compose.material.icons.outlined.Mic
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Shortcut
-import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -139,34 +137,45 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
-import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.haze
+import dev.chrisbanes.haze.hazeChild
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
-enum class Tab(val label: String, val icon: ImageVector) {
-    History("History", Icons.Outlined.History), AI("AI", Icons.Outlined.AutoAwesome),
-    Chat("Chat", Icons.Outlined.ChatBubbleOutline), Docs("Docs", Icons.Outlined.Description),
-}
+enum class Tab(val label: String) { History("History"), AI("AI"), Chat("Chat"), Docs("Docs") }
+
+private fun Tab.icon(): ImageVector = when (this) { Tab.History -> Sf.history; Tab.AI -> Sf.sparkles; Tab.Chat -> Sf.bubblesFill; Tab.Docs -> Sf.docFill }
 
 object Shell {
     var tab by mutableStateOf(Tab.AI)
-    var viewer by mutableStateOf<Art?>(null)
+    /** Docs' pager: the list it pages through and where it opened. */
+    var viewer by mutableStateOf<Pair<List<Art>, Int>?>(null)
+    var settings by mutableStateOf(false)
 
     /** The back key: true when it was used here. */
     fun back(): Boolean {
+        if (settings) { settings = false; return true }
         if (viewer != null) { viewer = null; return true }
-        if (tab == Tab.Chat && Desk.chatWeb?.canGoBack() == true) { Desk.chatWeb?.goBack(); return true }
+        if (ChatShell.back()) return true
         if (tab != Tab.AI) { tab = Tab.AI; return true }
         return false
     }
 }
 
-private const val BAR = 56          // the top bar under the status bar, dp
-private const val TABS = 64         // the floating tab bar, dp (with its margin)
+/** The bars' sizes (dp): the row of glass buttons under the status bar, the floating tab bar with its margins. */
+const val BAR = 60
+const val TABS = 74
 
 @Composable
 fun Root(onSignedIn: () -> Unit) {
@@ -190,6 +199,7 @@ fun Root(onSignedIn: () -> Unit) {
                     Phase.SignedOut -> Login()
                     Phase.SignedIn -> Session.person?.let { Main(it, onSignedIn) } ?: Login()
                 }
+                LayerHost()
             }
         }
     }
@@ -204,209 +214,295 @@ private fun OfflineScreen() {
         Spacer(Modifier.height(20.dp))
         Text(Session.problem.ifEmpty { "暂时连不上服务器" }, color = p.ink, fontSize = 16.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(20.dp))
-        PillButton("重试") { scope.launch { Net.forget(); Session.resume() } }
+        Capsule("重试", prominent = false) { scope.launch { Net.forget(); Session.resume() } }
     }
 }
 
-// ---- parts ---------------------------------------------------------------------------------------------------------
+/**
+ * A full-screen layer over the app (sheets, the pager, settings, the avatar): drawn by [LayerHost] at the top of the app's
+ * own window, so the system bars' room, the keyboard and the back key work as on the pages (a dialog window lost the
+ * navigation bar's room). The bars' blur is off inside one.
+ */
+class Layer(val id: Long) {
+    var close by mutableStateOf<() -> Unit>({})
+    var back by mutableStateOf(true)
+    var content by mutableStateOf<@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit>({})
+}
+
+object Layers {
+    val list = mutableStateListOf<Layer>()
+    private var n = 0L
+    fun make() = Layer(++n)
+}
 
 @Composable
-fun PillButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, busy: Boolean = false, prominent: Boolean = true, onClick: () -> Unit) {
-    val p = LocalPalette.current
-    val bg = if (prominent) p.ink.copy(alpha = if (enabled) 1f else 0.3f) else Color.Transparent
-    Box(
-        modifier.height(50.dp).then(if (prominent) Modifier.clip(CircleShape).background(bg) else Modifier.glass(p, CircleShape))
-            .press(onClick, enabled && !busy).padding(horizontal = 22.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = if (prominent) p.ground else p.ink, strokeWidth = 2.dp)
-        else Text(text, color = if (prominent) (if (p.dark) Color(0xFF14171F) else Color.White) else p.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+fun FullScreen(close: () -> Unit, back: Boolean = true, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+    val layer = remember { Layers.make() }
+    layer.close = close
+    layer.back = back
+    layer.content = content
+    androidx.compose.runtime.DisposableEffect(layer) {
+        Layers.list.add(layer)
+        onDispose { Layers.list.remove(layer) }
     }
 }
 
 @Composable
-private fun GlassIcon(icon: ImageVector, label: String, size: Int = 44, onClick: () -> Unit) {
+fun LayerHost() {
+    Layers.list.toList().forEach { l ->
+        androidx.compose.runtime.key(l.id) {
+            CompositionLocalProvider(LocalHaze provides null) {
+                Box(Modifier.fillMaxSize().zIndex(20f).clickable(remember { MutableInteractionSource() }, null) {}) { l.content(this) }
+            }
+        }
+    }
+    BackHandler(Layers.list.isNotEmpty()) { Layers.list.lastOrNull()?.let { if (it.back) it.close() } }
+}
+
+// ---- parts -----------------------------------------------------------------------------------------------------------
+
+/** A capsule button: prominent (accent, white words) or on glass. */
+@Composable
+fun Capsule(text: String, modifier: Modifier = Modifier, icon: ImageVector? = null, prominent: Boolean = true, enabled: Boolean = true,
+            busy: Boolean = false, tint: Color? = null, onClick: () -> Unit) {
     val p = LocalPalette.current
-    Box(Modifier.size(size.dp).glass(p).press(onClick), contentAlignment = Alignment.Center) {
+    val fill = tint ?: p.accent
+    Row(modifier.height(48.dp).then(if (prominent) Modifier.clip(CircleShape).background(fill.copy(alpha = if (enabled) 1f else 0.4f)) else Modifier.liquid(p))
+        .press(onClick, enabled && !busy).padding(horizontal = 20.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+        if (busy) CircularProgressIndicator(Modifier.size(18.dp), color = if (prominent) Color.White else p.ink, strokeWidth = 2.dp)
+        else {
+            if (icon != null) { Icon(icon, null, tint = if (prominent) Color.White else p.ink, modifier = Modifier.size(19.dp)); Spacer(Modifier.width(7.dp)) }
+            Text(text, color = if (prominent) Color.White else p.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
+    }
+}
+
+/** A round glass button of the bars (the gear, 新对话, the menu, back). */
+@Composable
+fun GlassCircle(icon: ImageVector, label: String, size: Dp = 44.dp, onClick: () -> Unit) {
+    val p = LocalPalette.current
+    Box(Modifier.size(size).liquid(p).press(onClick), contentAlignment = Alignment.Center) {
         Icon(icon, label, tint = p.ink, modifier = Modifier.size(21.dp))
     }
+}
+
+/**
+ * The scroll edge (iOS 26): what scrolls under the top bar or the tab bar blurs more the nearer it is to the edge, and
+ * a wash of the page's own ground keeps words there from showing through (the user, 2026-11-26: 「字母重叠了」).
+ */
+@Composable
+fun EdgeBlur(top: Boolean, height: Dp, modifier: Modifier = Modifier) {
+    val p = LocalPalette.current
+    val haze = LocalHaze.current
+    val ground = if (top) p.sky.first() else p.sky.last()
+    val fade = if (top) Brush.verticalGradient(listOf(Color.Black, Color.Black.copy(alpha = 0.85f), Color.Transparent))
+    else Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f), Color.Black))
+    Box(modifier.fillMaxWidth().height(height)
+        .then(if (haze != null) Modifier.hazeChild(haze, HazeStyle(ground, listOf(HazeTint(ground.copy(alpha = 0.55f))), 18.dp, 0f, HazeTint(ground.copy(alpha = 0.9f)))) { mask = fade }
+        else Modifier)
+        .background(if (top) Brush.verticalGradient(listOf(ground.copy(alpha = 0.7f), ground.copy(alpha = 0.35f), Color.Transparent))
+        else Brush.verticalGradient(listOf(Color.Transparent, ground.copy(alpha = 0.35f), ground.copy(alpha = 0.7f)))))
+}
+
+/** The page's own row at the top: the gear (or back) at the left, the title in the middle, the page's buttons at the right. */
+@Composable
+fun TopRow(title: String, titleAlpha: Float = 1f, leading: @Composable () -> Unit, trailing: @Composable () -> Unit = {}) {
+    val p = LocalPalette.current
+    Box(Modifier.fillMaxWidth().statusBarsPadding().height(BAR.dp).padding(horizontal = 16.dp).zIndex(5f)) {
+        Box(Modifier.align(Alignment.CenterStart)) { leading() }
+        AnimatedContent(title, Modifier.align(Alignment.Center).widthIn(max = 220.dp).alpha(titleAlpha),
+            transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(180)) }, label = "title") { t ->
+            Text(t, color = p.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Row(Modifier.align(Alignment.CenterEnd), horizontalArrangement = Arrangement.spacedBy(10.dp)) { trailing() }
+    }
+}
+
+/** A large title (34, bold) and the page's search under it, as iOS's navigation bar draws them. */
+@Composable
+fun LargeTitle(title: String) {
+    val p = LocalPalette.current
+    Text(title, color = p.ink, fontSize = 34.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 8.dp))
+}
+
+@Composable
+fun SearchField(query: String, onChange: (String) -> Unit, prompt: String, modifier: Modifier = Modifier) {
+    val p = LocalPalette.current
+    Row(modifier.fillMaxWidth().height(42.dp).clip(CircleShape).background(p.ink.copy(alpha = if (p.dark) 0.10f else 0.06f))
+        .padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Sf.search, null, tint = p.ink2, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(7.dp))
+        Box(Modifier.weight(1f)) {
+            if (query.isEmpty()) Text(prompt, color = p.ink3, fontSize = 16.sp, maxLines = 1)
+            BasicTextField(query, onChange, singleLine = true, textStyle = TextStyle(color = p.ink, fontSize = 16.sp), cursorBrush = SolidColor(p.accent),
+                modifier = Modifier.fillMaxWidth())
+        }
+        if (query.isNotEmpty()) Box(Modifier.size(22.dp).clip(CircleShape).background(p.ink3.copy(alpha = 0.6f)).clickable { onChange("") }, contentAlignment = Alignment.Center) {
+            Icon(Sf.xmark, "清除", tint = p.ground, modifier = Modifier.size(12.dp))
+        }
+    }
+}
+
+/** How far a list with a large title has scrolled past it: the small title in the top row shows from then on. */
+@Composable
+fun titleShown(state: LazyListState): Float {
+    val past by remember { derivedStateOf { state.firstVisibleItemIndex > 0 || state.firstVisibleItemScrollOffset > 70 } }
+    return animateFloatAsState(if (past) 1f else 0f, tween(180), label = "title").value
 }
 
 @Composable
 private fun Toast() {
     val p = LocalPalette.current
     val t = Desk.toast
-    AnimatedVisibility(t != null, enter = fadeIn() + slideInVertically { -it / 2 }, exit = fadeOut(), modifier = Modifier.fillMaxWidth()) {
-        Box(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 64.dp), contentAlignment = Alignment.TopCenter) {
-            Text(t ?: "", color = Color.White, fontSize = 14.sp,
-                modifier = Modifier.clip(CircleShape).background(Color(0xE01E2434)).padding(horizontal = 18.dp, vertical = 11.dp))
-        }
-    }
-}
-
-// ---- sign-in -------------------------------------------------------------------------------------------------------
-
-@Composable
-private fun Field(value: String, onChange: (String) -> Unit, hint: String, modifier: Modifier = Modifier, keyboard: KeyboardType = KeyboardType.Text,
-                  password: Boolean = false, prefix: String = "") {
-    val p = LocalPalette.current
-    Row(modifier.height(54.dp).fillMaxWidth().frosted(p, CircleShape).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (prefix.isNotEmpty()) { Text(prefix, color = p.ink2, fontSize = 17.sp); Spacer(Modifier.width(10.dp)) }
-        Box(Modifier.weight(1f)) {
-            if (value.isEmpty()) Text(hint, color = p.ink3, fontSize = 17.sp)
-            BasicTextField(value, onChange, singleLine = true, textStyle = TextStyle(color = p.ink, fontSize = 17.sp), cursorBrush = SolidColor(p.accent),
-                keyboardOptions = KeyboardOptions(keyboardType = keyboard), modifier = Modifier.fillMaxWidth(),
-                visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None)
+    var last by remember { mutableStateOf("") }
+    if (t != null) last = t
+    AnimatedVisibility(t != null, enter = fadeIn() + slideInVertically { -it / 2 }, exit = fadeOut(), modifier = Modifier.fillMaxWidth().zIndex(7f)) {
+        Box(Modifier.fillMaxWidth().statusBarsPadding().padding(top = BAR.dp + 6.dp), contentAlignment = Alignment.TopCenter) {
+            Text(last, color = p.ink, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 24.dp).liquid(p, wash = 0.6f).padding(horizontal = 16.dp, vertical = 10.dp))
         }
     }
 }
 
 @Composable
-private fun Login() {
+fun Empty(title: String, detail: String, icon: ImageVector, modifier: Modifier) {
     val p = LocalPalette.current
-    val scope = rememberCoroutineScope()
-    var phone by remember { mutableStateOf(Session.lastPhone) }
-    var code by remember { mutableStateOf("") }
-    var user by remember { mutableStateOf("") }
-    var pw by remember { mutableStateOf("") }
-    var agreed by remember { mutableStateOf(false) }
-    var byPassword by remember { mutableStateOf(false) }
-    var wait by remember { mutableIntStateOf(0) }
-    var busy by remember { mutableStateOf(false) }
-    var note by remember { mutableStateOf(Session.problem) }
-    var legal by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(wait) { if (wait > 0) { delay(1000); wait -= 1 } }
-    val phoneOk = Regex("^1[3-9]\\d{9}$").matches(phone)
-
-    Column(
-        Modifier.fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(Modifier.height(64.dp))
-        LavaDots(if (busy) 88.dp else 70.dp, if (busy) 45.dp else 36.dp)
-        Spacer(Modifier.height(14.dp))
-        Text("Beta", color = p.ink2, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.glass(p, CircleShape).padding(horizontal = 12.dp, vertical = 4.dp))
-        Spacer(Modifier.height(22.dp))
-        Text(if (byPassword) "账号密码登录" else "手机号登录", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = p.ink)
+    Column(modifier.padding(40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(icon, null, tint = p.ink3, modifier = Modifier.size(44.dp))
+        Spacer(Modifier.height(12.dp))
+        Text(title, color = p.ink, fontSize = 21.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
-        Text(if (byPassword) "公司给你的登录名和密码" else "公司花名册里登记的手机号", fontSize = 13.sp, color = p.ink2)
-        Spacer(Modifier.height(30.dp))
-        if (byPassword) {
-            Field(user, { user = it.trim() }, "登录名")
-            Spacer(Modifier.height(12.dp))
-            Field(pw, { pw = it }, "密码", keyboard = KeyboardType.Password, password = true)
-        } else {
-            Field(phone, { phone = it.filter(Char::isDigit).take(11) }, "手机号", keyboard = KeyboardType.Phone, prefix = "+86")
-            Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Field(code, { code = it.filter(Char::isDigit).take(6) }, "验证码", Modifier.weight(1f), keyboard = KeyboardType.NumberPassword)
-                Spacer(Modifier.width(10.dp))
-                PillButton(if (wait > 0) "${wait}s" else "获取验证码", Modifier.height(54.dp), enabled = phoneOk && wait == 0 && !busy, prominent = false) {
-                    if (!agreed) { note = "请先阅读并同意服务协议和隐私政策"; return@PillButton }
-                    busy = true; note = ""
-                    scope.launch { val r = Session.sendCode(phone); busy = false; if (r == null) wait = 60 else note = r }
-                }
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(22.dp).clip(CircleShape).then(if (agreed) Modifier.background(p.ink) else Modifier.border(1.5.dp, p.ink3, CircleShape))
-                .clickable { agreed = !agreed }, contentAlignment = Alignment.Center) {
-                if (agreed) Icon(Icons.Outlined.Check, null, tint = p.ground, modifier = Modifier.size(15.dp))
-            }
-            Spacer(Modifier.width(8.dp))
-            Text("已阅读并同意", fontSize = 13.sp, color = p.ink2)
-            Text("《服务协议》", fontSize = 13.sp, color = p.accent, modifier = Modifier.clickable { legal = "terms" })
-            Text("和", fontSize = 13.sp, color = p.ink2)
-            Text("《隐私政策》", fontSize = 13.sp, color = p.accent, modifier = Modifier.clickable { legal = "privacy" })
-        }
-        if (note.isNotEmpty()) Text(note, color = p.red, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp), textAlign = TextAlign.Center)
-        Spacer(Modifier.height(18.dp))
-        PillButton("登录", Modifier.fillMaxWidth().height(54.dp), busy = busy,
-            enabled = if (byPassword) user.isNotEmpty() && pw.isNotEmpty() else phoneOk && code.length == 6) {
-            if (!agreed) { note = "请先阅读并同意服务协议和隐私政策"; return@PillButton }
-            busy = true; note = ""
-            scope.launch {
-                val r = if (byPassword) Session.signInPassword(user, pw) else Session.signInSms(phone, code)
-                busy = false
-                if (r != null) note = r
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        Text(if (byPassword) "用手机号验证码登录" else "用账号密码登录", fontSize = 14.sp, color = p.ink2,
-            modifier = Modifier.clickable { byPassword = !byPassword; note = "" }.padding(8.dp))
-        Spacer(Modifier.height(24.dp))
+        Text(detail, color = p.ink2, fontSize = 15.sp, textAlign = TextAlign.Center)
     }
-    legal?.let { Legal(it) { legal = null } }
 }
 
+/** iOS's confirmation: a sheet from the bottom, the question, the red action, 取消 apart. */
 @Composable
-private fun Legal(name: String, close: () -> Unit) {
+fun Confirm(title: String, detail: String, action: String, cancel: () -> Unit, go: () -> Unit) {
     val p = LocalPalette.current
-    val ctx = LocalContext.current
-    val text = remember(name) { runCatching { ctx.assets.open("legal/$name.txt").bufferedReader().use { it.readText() } }.getOrDefault("") }
-    val title = when (name) { "terms" -> "服务协议"; "privacy" -> "隐私政策"; else -> "免责声明" }
-    Dialog(close, DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize()) {
-            DeskBackground()
-            Column(Modifier.systemBarsPadding()) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    GlassIcon(Icons.Outlined.Close, "关闭", onClick = close)
-                    Spacer(Modifier.width(12.dp))
-                    Text(title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = p.ink)
+    FullScreen(cancel) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)).clickable(remember { MutableInteractionSource() }, null, onClick = cancel))
+        var on by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { on = true }
+        AnimatedVisibility(on, Modifier.align(Alignment.BottomCenter), enter = slideInVertically(spring(dampingRatio = 0.85f, stiffness = 500f)) { it } + fadeIn()) {
+            Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp)) {
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(p.paper.copy(alpha = 0.96f))) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(title, color = p.ink2, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+                        if (detail.isNotEmpty()) Text(detail, color = p.ink2, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    Box(Modifier.fillMaxWidth().height(0.5.dp).background(p.ink.copy(alpha = 0.12f)))
+                    Box(Modifier.fillMaxWidth().height(56.dp).clickable(onClick = go), contentAlignment = Alignment.Center) {
+                        Text(action, color = p.red, fontSize = 19.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 16.dp))
+                    }
                 }
-                Text(text, Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).frosted(p).padding(20.dp),
-                    fontSize = 15.sp, color = p.ink, lineHeight = 25.sp)
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.fillMaxWidth().height(56.dp).clip(RoundedCornerShape(16.dp)).background(p.paper.copy(alpha = 0.98f)).clickable(onClick = cancel),
+                    contentAlignment = Alignment.Center) { Text("取消", color = p.ink, fontSize = 19.sp, fontWeight = FontWeight.SemiBold) }
             }
         }
     }
 }
 
-// ---- the app -------------------------------------------------------------------------------------------------------
+// ---- the app -----------------------------------------------------------------------------------------------------------
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun Main(person: Person, onSignedIn: () -> Unit) {
-    val p = LocalPalette.current
+    val ctx = LocalContext.current
     LaunchedEffect(person.token) {
         onSignedIn()
         Desk.open(person)
         Chat.start(person.login, person.token)
+        Chat.checkAvatar()
+        Calls.start(ctx)
     }
-    var settings by remember { mutableStateOf(false) }
     val tab = Shell.tab
     LaunchedEffect(tab) {
-        if (tab == Tab.Docs) Desk.loadArts()
+        if (tab == Tab.Docs && Desk.arts == null) Desk.loadArts()
         Desk.aiVisible = tab == Tab.AI
+        if (tab == Tab.AI) Desk.answered = Desk.answered - Desk.currentSession()
     }
-    BackHandler(enabled = (Shell.viewer != null || tab != Tab.AI) && ChatShell.room.isEmpty()) { Shell.back() }
+    // A layer on top (a sheet, the pager) takes the back key itself (LayerHost).
+    BackHandler(enabled = Layers.list.isEmpty() && (tab != Tab.AI || ChatShell.open())) { Shell.back() }
     val ime = WindowInsets.isImeVisible
+    val haze = remember { HazeState() }
     val density = LocalDensity.current
     val topInset = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
+    val navInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+    var plus by remember { mutableStateOf(false) }
 
-    Box(Modifier.fillMaxSize()) {
-        // Both pages stay attached (they keep their live connections); each is shown only on its own tab.
-        AiPage(person, topInset, tab == Tab.AI)
-        val navInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
-        when (tab) {
-            Tab.History -> HistoryPage(topInset)
-            Tab.Docs -> DocsPage(topInset)
-            Tab.Chat -> ChatListPage(topInset + BAR.dp, navInset + TABS.dp)
-            else -> {}
+    // On AI the page draws its own frosted edges (the WebView stays out of the app's blur), so the bars there are glass.
+    CompositionLocalProvider(LocalHaze provides if (tab == Tab.AI) null else haze) {
+        Box(Modifier.fillMaxSize()) {
+            // What the bars blur: the pages (both kept attached: the AI page keeps its live connection).
+            // The AI page's own conversation is a WebView: drawn twice in a frame (once for the blur) it draws nothing,
+            // so it stays out of what the bars blur and draws its own scroll edges (Desk.edges).
+            DeskBackground()
+            AiPage(person, topInset, navInset, tab == Tab.AI)
+            Box(Modifier.fillMaxSize().then(if (tab == Tab.AI) Modifier else Modifier.haze(haze))) {
+                if (tab != Tab.AI) DeskBackground()
+                when (tab) {
+                    Tab.History -> HistoryPage()
+                    Tab.Docs -> DocsPage()
+                    Tab.Chat -> ChatListPage()
+                    else -> {}
+                }
+            }
+            if (tab != Tab.AI) {
+                EdgeBlur(true, topInset + BAR.dp + 14.dp, Modifier.align(Alignment.TopCenter))
+                EdgeBlur(false, navInset + TABS.dp, Modifier.align(Alignment.BottomCenter))
+            }
+            // The page's own bar.
+            when (tab) {
+                Tab.AI -> TopRow(Desk.currentTitle, leading = { GlassCircle(Sf.gear, "设置") { Shell.settings = true } }) {
+                    GlassCircle(Sf.newChat, "新对话") { Desk.newChat() }
+                }
+                Tab.History -> TopRow("History", PageTitle.history, { GlassCircle(Sf.gear, "设置") { Shell.settings = true } }) {
+                    GlassCircle(Sf.newChat, "新对话") { Desk.newChat(); Shell.tab = Tab.AI }
+                }
+                Tab.Docs -> TopRow("Docs", PageTitle.docs, { GlassCircle(Sf.gear, "设置") { Shell.settings = true } })
+                Tab.Chat -> TopRow("Chat", PageTitle.chat, { GlassCircle(Sf.gear, "设置") { Shell.settings = true } }) {
+                    GlassCircle(Sf.menu, "更多") { ChatShell.menu = true }
+                }
+            }
+            if (tab == Tab.AI && Desk.state == DeskState.Ready) {
+                PhoneComposer(
+                    Modifier.align(Alignment.BottomCenter).imePadding().navigationBarsPadding().padding(start = 16.dp, end = 16.dp, bottom = if (ime) 8.dp else (TABS + 4).dp),
+                    attached = Desk.attached, detach = { Desk.detach(it) }, plus = { plus = true }, token = person.token,
+                ) { text -> send(text) }
+            }
+            if (!ime) TabBar(Modifier.align(Alignment.BottomCenter))
+            if (tab == Tab.Chat) ChatMenu()
+            ChatOverlays(person)
+            // Hidden, but in the window: the chat page that carries the calls (a page outside one stops its sound).
+            Web(Desk.chatWeb, Modifier.size(1.dp).alpha(0.01f))
+            BannerHost()
+            Toast()
+            Calls.call?.let { CallScreen(it) }
         }
-        TopBar(tab, onGear = { settings = true })
-        if (!ime) TabBar(Modifier.align(Alignment.BottomCenter))
-        if (ChatShell.room.isNotEmpty()) ChatRoom(ChatShell.room, person)
-        if (ChatShell.contacts) ContactsSheet { ChatShell.contacts = false }
-        Toast()
     }
-    if (settings) SettingsSheet(person) { settings = false }
-    Shell.viewer?.let { Viewer(it) }
+    if (plus) PlusSheet(withDocs = true, close = { plus = false }) { pick ->
+        when (pick) {
+            is PlusPick.File -> Desk.askFile(pick.f.name, pick.f.mime, pick.f.bytes)
+            is PlusPick.Doc -> { Desk.ask("window.tdhPhone && tdhPhone.askArtifact ? tdhPhone.askArtifact(${JSONObject.quote(pick.a.path)}) : {ok:false}") { s ->
+                if (runCatching { JSONObject(s).optBoolean("ok") }.getOrDefault(true)) Desk.attached = Desk.attached + pick.a.title else Desk.say("没放进去，稍后再试")
+            } }
+        }
+    }
+    if (Shell.settings) SettingsSheet(person) { Shell.settings = false }
+    Shell.viewer?.let { (list, at) -> ArtifactPager(list, at) }
+    if (Chat.needsAvatar) FullScreen({}, back = false) { AvatarSetup() }
+}
+
+/** How far each page with a large title has scrolled (its small title fades in at the top row). */
+object PageTitle {
+    var history by mutableStateOf(0f)
+    var docs by mutableStateOf(0f)
+    var chat by mutableStateOf(0f)
 }
 
 @Composable
-private fun Web(view: WebView?, modifier: Modifier, visible: Boolean = true) {
+fun Web(view: WebView?, modifier: Modifier, visible: Boolean = true) {
     if (view == null) return
     AndroidView({
         (view.parent as? ViewGroup)?.removeView(view)
@@ -416,53 +512,19 @@ private fun Web(view: WebView?, modifier: Modifier, visible: Boolean = true) {
 }
 
 @Composable
-private fun Cover(failed: Boolean, why: String, retry: () -> Unit) {
-    val p = LocalPalette.current
-    Box(Modifier.fillMaxSize().zIndex(2f), contentAlignment = Alignment.Center) {
-        if (failed) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-                Text(why, color = p.ink2, fontSize = 14.sp, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(16.dp))
-                PillButton("重试", prominent = false, onClick = retry)
-            }
-        } else LavaDots(96.dp, 48.dp)
-    }
-}
-
-@Composable
-private fun TopBar(tab: Tab, onGear: () -> Unit) {
-    val p = LocalPalette.current
-    val title = when (tab) { Tab.AI -> Desk.currentTitle; Tab.History -> "History"; Tab.Chat -> "Chat"; Tab.Docs -> "Docs" }
-    val big = tab != Tab.AI
-    Box(Modifier.fillMaxWidth().zIndex(3f)
-        .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(p.sky[0], p.sky[0].copy(alpha = 0.85f), p.sky[0].copy(alpha = 0f))))
-        .statusBarsPadding().height(BAR.dp).padding(horizontal = 12.dp)) {
-        GlassIcon(Icons.Outlined.Settings, "设置", onClick = onGear)
-        Text(title, Modifier.align(if (big) Alignment.CenterStart else Alignment.Center).padding(start = if (big) 58.dp else 0.dp).widthIn(max = 220.dp),
-            color = p.ink, fontSize = if (big) 26.sp else 16.sp, fontWeight = if (big) FontWeight.Bold else FontWeight.SemiBold,
-            maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Box(Modifier.align(Alignment.CenterEnd)) {
-            when (tab) {
-                Tab.AI, Tab.History -> GlassIcon(Icons.Outlined.EditNote, "新对话") { Desk.newChat(); Shell.tab = Tab.AI }
-                Tab.Docs -> GlassIcon(Icons.Outlined.Refresh, "刷新") { Desk.arts = null; Desk.loadArts() }
-                Tab.Chat -> GlassIcon(Icons.Outlined.Contacts, "通讯录") { ChatShell.contacts = true }
-            }
-        }
-    }
-}
-
-@Composable
 private fun TabBar(modifier: Modifier) {
     val p = LocalPalette.current
     val view = LocalView.current
-    Box(modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 6.dp).zIndex(3f)) {
-        BoxWithConstraints(Modifier.fillMaxWidth().height(60.dp).glass(p, CircleShape).padding(5.dp)) {
+    val unread = Chat.topics.filter { Chat.shows(it) }.sumOf { it.unread }
+    Box(modifier.navigationBarsPadding().padding(start = 22.dp, end = 22.dp, bottom = 8.dp).zIndex(6f)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().height(62.dp).liquid(p, wash = 0.34f).padding(4.dp)) {
             val w = maxWidth / Tab.entries.size
-            val at by animateDpAsState(w * Shell.tab.ordinal, spring(dampingRatio = 0.78f, stiffness = 420f), label = "thumb")
-            Box(Modifier.offset(x = at).width(w).fillMaxHeight().clip(CircleShape).background(p.ink.copy(alpha = if (p.dark) 0.14f else 0.09f)))
+            val at by animateDpAsState(w * Shell.tab.ordinal, spring(dampingRatio = 0.75f, stiffness = 380f), label = "thumb")
+            Box(Modifier.offset(x = at).width(w).fillMaxHeight().clip(CircleShape).background(p.ink.copy(alpha = if (p.dark) 0.13f else 0.08f)))
             Row(Modifier.fillMaxSize()) {
                 Tab.entries.forEach { t ->
                     val on = Shell.tab == t
+                    val badge = when (t) { Tab.History -> Desk.answered.size; Tab.Chat -> unread; else -> 0 }
                     Column(
                         Modifier.weight(1f).fillMaxHeight().clickable(remember { MutableInteractionSource() }, null) {
                             if (Shell.tab != t) view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -470,8 +532,15 @@ private fun TabBar(modifier: Modifier) {
                         },
                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
                     ) {
-                        Icon(t.icon, t.label, tint = if (on) p.ink else p.ink2, modifier = Modifier.size(22.dp))
-                        Text(t.label, color = if (on) p.ink else p.ink2, fontSize = 10.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium)
+                        Box {
+                            val s by animateFloatAsState(if (on) 1.08f else 1f, spring(dampingRatio = 0.5f, stiffness = 600f), label = "tab")
+                            Icon(t.icon(), t.label, tint = if (on) p.ink else p.ink.copy(alpha = 0.72f), modifier = Modifier.size(25.dp).scale(s))
+                            if (badge > 0) Text(if (badge > 99) "99+" else "$badge", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.TopEnd).offset(10.dp, (-5).dp).clip(CircleShape)
+                                    .background(p.red).widthIn(min = 18.dp).padding(horizontal = 5.dp, vertical = 1.dp))
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Text(t.label, color = if (on) p.ink else p.ink.copy(alpha = 0.72f), fontSize = 10.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium)
                     }
                 }
             }
@@ -479,37 +548,35 @@ private fun TabBar(modifier: Modifier) {
     }
 }
 
-// ---- AI --------------------------------------------------------------------------------------------------------------
+// ---- AI ---------------------------------------------------------------------------------------------------------------
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AiPage(person: Person, topInset: androidx.compose.ui.unit.Dp, shown: Boolean) {
-    val p = LocalPalette.current
+private fun AiPage(person: Person, topInset: Dp, navInset: Dp, shown: Boolean) {
     val ime = WindowInsets.isImeVisible
-    val density = LocalDensity.current
-    val navInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
     // What lies over the page at its bottom: the composer and, unless typing, the tab bar.
-    val composerH = 64
-    val bottom = composerH + (if (ime) 0 else TABS + 8)
+    val bottom = 64 + (if (ime) 0 else TABS + 4)
     LaunchedEffect(topInset, bottom, navInset) { Desk.setInsets((topInset.value + BAR).roundToInt(), (bottom + navInset.value).roundToInt()) }
     Box(Modifier.fillMaxSize().imePadding()) {
-        Web(Desk.web, Modifier.fillMaxSize(), visible = shown)
+        Web(Desk.web, Modifier.fillMaxSize().alpha(if (Desk.state == DeskState.Ready) 1f else 0f), visible = shown)
         if (!shown) return@Box
         // Thinking: the drops right under the question, where the answer begins (the page keeps their room).
         val at = Desk.thinkingAt
-        if (Desk.state == DeskState.Ready && Desk.thinking && at[1] > 0f) {
+        AnimatedVisibility(Desk.state == DeskState.Ready && Desk.thinking && at[1] > 0f, enter = fadeIn(tween(200)), exit = fadeOut(tween(200))) {
             LavaDots(48.dp, 24.dp, Modifier.offset(at[0].dp, (at[1] + at[3] / 2 - 12).dp))
         }
         if (Desk.state == DeskState.Ready) {
-            AnimatedVisibility(Desk.welcome, enter = fadeIn(), exit = fadeOut()) {
-                AIWelcome(person.name, Modifier.padding(top = topInset + BAR.dp)) { text -> send(text) }
+            val w = Desk.welcome
+            Box(Modifier.alpha(animateFloatAsState(if (w) 1f else 0f, tween(180), label = "welcome").value)) {
+                if (w) AIWelcome(Chat.people[Chat.me]?.name ?: person.name, Modifier.padding(top = topInset + BAR.dp)) { text -> send(text) }
             }
-        } else {
-            Cover(Desk.state == DeskState.Failed, Desk.failed.ifEmpty { "工作台没打开" }) { Desk.state = DeskState.Idle; Desk.open(person) }
-        }
-        if (Desk.state == DeskState.Ready) {
-            Composer(person, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (ime) 6.dp else (TABS + 8).dp))
-        }
+        } else if (Desk.state == DeskState.Failed) {
+            Column(Modifier.align(Alignment.Center).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(Desk.failed.ifEmpty { "工作台没打开" }, color = LocalPalette.current.ink2, fontSize = 14.sp, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(14.dp))
+                Capsule("重试", prominent = false) { Desk.state = DeskState.Idle; Desk.open(person) }
+            }
+        } else LavaDots(96.dp, 48.dp, Modifier.align(Alignment.Center))
     }
 }
 
@@ -519,200 +586,386 @@ private fun send(text: String) {
 
 private class Idea(val icon: ImageVector, val tint: Color, val title: String, val detail: String, val prompt: String)
 
-private val ideas = listOf(
-    Idea(Icons.Outlined.MarkEmailRead, Color(0xFF0A84FF), "整理邮件", "挑出要回的，其余归档", "帮我整理今天的邮件，挑出需要我回复的，其余的归档。"),
-    Idea(Icons.Outlined.Description, Color(0xFFFF453A), "做报价单", "按模板排版，直接出 PDF", "帮我做一份报价单，排好版后导出成 PDF。需要的信息你先问我。"),
-    Idea(Icons.Outlined.BarChart, Color(0xFF30D158), "查车间产量", "本月产量合格率，对比上月", "汇总本月各车间的产量和合格率，和上个月对比一下。"),
-    Idea(Icons.Outlined.DriveFileRenameOutline, Color(0xFFBF5AF2), "回复客户", "帮你起草，语气得体", "帮我起草一封给客户的回复邮件，语气正式、要点清楚。内容你先问我。"),
-)
+private val ideas by lazy {
+    listOf(
+        Idea(Sf.envelope, Color(0xFF0A84FF), "整理邮件", "挑出要回的，其余归档", "帮我整理今天的邮件，挑出需要我回复的，其余的归档。"),
+        Idea(Sf.docRich, Color(0xFFFF3B30), "做报价单", "按模板排版，直接出 PDF", "帮我做一份报价单，排好版后导出成 PDF。需要的信息你先问我。"),
+        Idea(Sf.chart, Color(0xFF34C759), "查车间产量", "本月产量合格率，对比上月", "汇总本月各车间的产量和合格率，和上个月对比一下。"),
+        Idea(Sf.newChat, Color(0xFFAF52DE), "回复客户", "帮你起草，语气得体", "帮我起草一封给客户的回复邮件，语气正式、要点清楚。内容你先问我。"),
+    )
+}
 
+/** A new conversation: the greeting by the time of day and the person's name, one question, four things to tap. */
 @Composable
 private fun AIWelcome(name: String, modifier: Modifier, ask: (String) -> Unit) {
     val p = LocalPalette.current
     val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
     val part = when { h < 5 -> "夜深了"; h < 11 -> "早上好"; h < 13 -> "中午好"; h < 18 -> "下午好"; else -> "晚上好" }
-    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Spacer(Modifier.height(48.dp))
-        Text(if (name.isEmpty()) part else "$part，$name", Modifier.fillMaxWidth().rise(0), color = p.ink, fontSize = 28.sp,
+    Column(modifier.fillMaxWidth()) {
+        Spacer(Modifier.height(72.dp))
+        Text(if (name.isEmpty()) part else "$part，$name", Modifier.fillMaxWidth().padding(horizontal = 24.dp).rise(0), color = p.ink, fontSize = 28.sp,
             fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
-        Text("今天先帮你处理点什么？", Modifier.fillMaxWidth().rise(1), color = p.ink2, fontSize = 16.sp, textAlign = TextAlign.Center)
+        Text("今天先帮你处理点什么？", Modifier.fillMaxWidth().rise(1), color = p.ink2, fontSize = 17.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(28.dp))
-        ideas.chunked(2).forEachIndexed { r, row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                row.forEachIndexed { c, idea ->
-                    Column(Modifier.weight(1f).heightIn(min = 118.dp).rise(2 + r * 2 + c).frosted(p).press({ ask(idea.prompt) }).padding(14.dp)) {
-                        Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(idea.tint.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
-                            Icon(idea.icon, null, tint = idea.tint, modifier = Modifier.size(19.dp))
+        Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            ideas.chunked(2).forEachIndexed { r, row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    row.forEachIndexed { c, idea ->
+                        Column(Modifier.weight(1f).heightIn(min = 118.dp).rise(2 + r * 2 + c).frosted(p).press({ ask(idea.prompt) }).padding(14.dp)) {
+                            Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(idea.tint.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
+                                Icon(idea.icon, null, tint = idea.tint, modifier = Modifier.size(19.dp))
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Text(idea.title, color = p.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(3.dp))
+                            Text(idea.detail, color = p.ink2, fontSize = 12.sp, maxLines = 2)
                         }
-                        Spacer(Modifier.height(10.dp))
-                        Text(idea.title, color = p.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(3.dp))
-                        Text(idea.detail, color = p.ink2, fontSize = 12.sp, maxLines = 2)
                     }
                 }
             }
-            Spacer(Modifier.height(10.dp))
         }
     }
 }
 
-/** The Today-style composer: 「+」 · 按住说话 (or the words being typed) · the keyboard (or send). */
+// ---- the composer (PhoneComposer) ----------------------------------------------------------------------------------------
+
+/**
+ * 「+」 · 按住说话 (or the words being typed) · the keyboard (or the waveform back). Holding: the voice as a wave above
+ * the field, slide up to cancel. Typing with words: the send drop comes out beside the field. [onVoice] given, holding
+ * records a voice message (the chat) instead of turning speech into words (AI).
+ */
 @Composable
-private fun Composer(person: Person, modifier: Modifier) {
+fun PhoneComposer(
+    modifier: Modifier, placeholder: String = "有什么需要我做的?", attached: List<String> = emptyList(), detach: ((String) -> Unit)? = null,
+    plus: () -> Unit, token: String, onVoice: ((Voice.Take) -> Unit)? = null, onSend: (String) -> Unit,
+) {
     val p = LocalPalette.current
-    val ctx = LocalContext.current
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     var typing by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
     var holding by remember { mutableStateOf(false) }
-    var cancelling by remember { mutableStateOf(false) }
+    var cancel by remember { mutableStateOf(false) }
     var reading by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     LaunchedEffect(typing) { if (typing) runCatching { focus.requestFocus() } }
+    LaunchedEffect(note) { if (note.isNotEmpty()) { delay(2400); note = "" } }
+    fun submit() {
+        val t = text.trim()
+        if (t.isEmpty() && attached.isEmpty()) return
+        text = ""
+        onSend(t)
+    }
+    val canSend = typing && text.isNotBlank()
 
-    fun micGranted() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        // Holding: the panel over the composer, the voice's level, how to cancel.
-        AnimatedVisibility(holding, enter = fadeIn() + scaleIn(initialScale = 0.92f), exit = fadeOut() + scaleOut(targetScale = 0.95f)) {
-            Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).frosted(p, RoundedCornerShape(24.dp)).padding(vertical = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally) {
-                Bars(Voice.level, if (cancelling) p.red else p.accent)
-                Spacer(Modifier.height(10.dp))
-                Text(if (cancelling) "松手取消" else "松手发送，上滑取消", color = if (cancelling) p.red else p.ink2, fontSize = 13.sp)
+    Box(modifier.fillMaxWidth().zIndex(5f)) {
+        // Above the field, taking no room: the wave while holding, or a word on what went wrong.
+        Box(Modifier.align(Alignment.TopCenter).offset(y = (-8).dp).graphicsLayer { translationY = -size.height }) {
+            AnimatedVisibility(holding, enter = fadeIn() + scaleIn(initialScale = 0.92f), exit = fadeOut() + scaleOut(targetScale = 0.95f)) {
+                HoldWave(cancel, Voice.level, if (onVoice != null) Voice.seconds else null)
+            }
+            AnimatedVisibility(!holding && (note.isNotEmpty() || reading), enter = fadeIn() + slideInVertically { it / 2 }, exit = fadeOut()) {
+                Text(if (reading) "正在识别…" else note, color = p.ink2, fontSize = 13.sp, modifier = Modifier.liquid(p).padding(horizontal = 14.dp, vertical = 8.dp))
             }
         }
-        // What goes with the next thing said: the files put in, each with its ×.
-        if (Desk.attached.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Desk.attached.take(3).forEach { n ->
-                Row(Modifier.glass(p, CircleShape).clickable { Desk.detach(n) }.padding(start = 12.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Text(n, color = p.ink, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 140.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Icon(Icons.Outlined.Close, "移除", tint = p.ink2, modifier = Modifier.size(14.dp))
-                }
-            }
-            if (Desk.attached.size > 3) Text("等 ${Desk.attached.size} 个", color = p.ink2, fontSize = 13.sp, modifier = Modifier.align(Alignment.CenterVertically))
-        }
-        Row(Modifier.fillMaxWidth().heightIn(min = 54.dp).frosted(p, RoundedCornerShape(27.dp)).padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).clip(CircleShape).clickable { Desk.pickForAi?.invoke() }, contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.Add, "添加", tint = p.ink, modifier = Modifier.size(24.dp))
-            }
-            if (typing) {
-                Box(Modifier.weight(1f).padding(vertical = 14.dp)) {
-                    if (text.isEmpty()) Text("有什么需要我做的?", color = p.ink3, fontSize = 16.sp)
-                    BasicTextField(text, { text = it }, Modifier.fillMaxWidth().focusRequester(focus).heightIn(max = 120.dp),
-                        textStyle = TextStyle(color = p.ink, fontSize = 16.sp), cursorBrush = SolidColor(p.accent),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { val t = text.trim(); if (t.isNotEmpty()) { send(t); text = "" } }))
-                }
-                val can = text.isNotBlank()
-                Box(Modifier.size(42.dp).clip(CircleShape).background(if (can) p.ink else Color.Transparent)
-                    .clickable { if (can) { send(text.trim()); text = "" } else typing = false }, contentAlignment = Alignment.Center) {
-                    Icon(if (can) Icons.AutoMirrored.Outlined.Send else Icons.Outlined.GraphicEq, if (can) "发送" else "按住说话",
-                        tint = if (can) p.ground else p.ink, modifier = Modifier.size(20.dp))
-                }
-            } else {
-                Box(
-                    Modifier.weight(1f).height(54.dp).pointerInput(Unit) {
-                        awaitEachGesture {
-                            val down = awaitFirstDown()
-                            if (reading) return@awaitEachGesture
-                            if (!micGranted()) {
-                                Desk.askMic?.invoke { ok -> if (!ok) Desk.say("要在手机设置里允许 TDH 使用麦克风") }
-                                return@awaitEachGesture
-                            }
-                            if (!Voice.start(scope)) { Desk.say("麦克风没打开"); return@awaitEachGesture }
-                            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                            holding = true; cancelling = false
-                            val y0 = down.position.y
-                            while (true) {
-                                val e = awaitPointerEvent()
-                                val c = e.changes.firstOrNull { it.id == down.id } ?: break
-                                cancelling = y0 - c.position.y > 80.dp.toPx()
-                                if (!c.pressed) break
-                            }
-                            holding = false
-                            val got = Voice.finish()
-                            if (cancelling || got == null) { if (!cancelling && got == null) Desk.say("说话时间太短"); return@awaitEachGesture }
-                            reading = true
-                            scope.launch {
-                                val words = Voice.words(got.wav, person.token)
-                                reading = false
-                                when {
-                                    words == null -> Desk.say("语音没转成文字，请再试或打字")
-                                    words.isEmpty() -> Desk.say("没听清，请再说一次")
-                                    else -> send(words)
+        Row(verticalAlignment = Alignment.Bottom) {
+            Column(Modifier.weight(1f).liquid(p, RoundedCornerShape(26.dp), wash = 0.36f)) {
+                if (attached.isNotEmpty()) LazyRow(Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(attached, key = { it }) { n ->
+                        Row(Modifier.animateItem().clip(CircleShape).background(p.ink.copy(alpha = 0.06f)).padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Sf.paperclip, null, tint = p.ink, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(n, color = p.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
+                            if (detach != null) {
+                                Spacer(Modifier.width(6.dp))
+                                Box(Modifier.size(16.dp).clip(CircleShape).background(p.ink3).clickable { detach(n) }, contentAlignment = Alignment.Center) {
+                                    Icon(Sf.xmark, "移除 $n", tint = p.ground, modifier = Modifier.size(10.dp))
                                 }
                             }
                         }
-                    },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(if (reading) "正在识别…" else if (holding) "松手发送" else "按住说话", color = p.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
-                Box(Modifier.size(42.dp).clip(CircleShape).clickable { typing = true }, contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Keyboard, "打字", tint = p.ink, modifier = Modifier.size(22.dp))
+                Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = plus), contentAlignment = Alignment.Center) {
+                        Icon(Sf.plus, "添加", tint = p.ink, modifier = Modifier.size(22.dp))
+                    }
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        if (typing) {
+                            if (text.isEmpty()) Text(placeholder, color = p.ink3, fontSize = 17.sp, modifier = Modifier.padding(vertical = 9.dp))
+                            BasicTextField(text, { text = it }, Modifier.fillMaxWidth().focusRequester(focus).padding(vertical = 9.dp).heightIn(max = 130.dp),
+                                textStyle = TextStyle(color = p.ink, fontSize = 17.sp), cursorBrush = SolidColor(p.accent), maxLines = 5,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { submit() }))
+                        } else {
+                            val s by animateFloatAsState(if (holding) 0.97f else 1f, spring(dampingRatio = 0.86f, stiffness = 800f), label = "hold")
+                            Box(Modifier.fillMaxWidth().height(40.dp).scale(s).pointerInput(onVoice != null) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown()
+                                    if (reading) return@awaitEachGesture
+                                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                    if (!Voice.granted(view.context)) {
+                                        Desk.askMic?.invoke { ok -> if (!ok) note = "要在手机设置里允许 TDH 使用麦克风" }
+                                        return@awaitEachGesture
+                                    }
+                                    if (!Voice.start(scope)) { note = "麦克风没打开"; return@awaitEachGesture }
+                                    holding = true; cancel = false
+                                    val y0 = down.position.y
+                                    while (true) {
+                                        val e = awaitPointerEvent()
+                                        val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                                        val now = y0 - c.position.y > 60.dp.toPx()
+                                        if (now != cancel) { cancel = now; view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                                        if (!c.pressed) break
+                                    }
+                                    holding = false
+                                    val got = Voice.finish()
+                                    if (cancel) { cancel = false; return@awaitEachGesture }
+                                    if (got == null) { note = "说话时间太短"; return@awaitEachGesture }
+                                    view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                    if (onVoice != null) { onVoice(got); return@awaitEachGesture }
+                                    reading = true
+                                    scope.launch {
+                                        val words = Voice.words(got.wav, token)
+                                        reading = false
+                                        when {
+                                            words == null -> note = "语音没转成文字，请再试或打字"
+                                            words.isEmpty() -> note = "没听清，再说一次"
+                                            else -> onSend(words)
+                                        }
+                                    }
+                                }
+                            }, contentAlignment = Alignment.Center) {
+                                Text(if (holding) (if (cancel) "松开手指，取消发送" else "松手发送，上滑取消") else "按住说话",
+                                    color = if (holding) p.ink2 else p.ink, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                    Box(Modifier.size(40.dp).clip(CircleShape).clickable { typing = !typing }, contentAlignment = Alignment.Center) {
+                        AnimatedContent(typing, transitionSpec = { (fadeIn() + scaleIn(initialScale = 0.6f)) togetherWith (fadeOut() + scaleOut(targetScale = 0.6f)) }, label = "kb") { t ->
+                            Icon(if (t) Sf.waveform else Sf.keyboard, if (t) "按住说话" else "打字", tint = p.ink, modifier = Modifier.size(23.dp))
+                        }
+                    }
+                }
+            }
+            // The send drop, out of the field while there are words (and back into it when emptied).
+            AnimatedVisibility(canSend, enter = fadeIn() + scaleIn(initialScale = 0.3f, transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)),
+                exit = fadeOut() + scaleOut(targetScale = 0.3f, transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f))) {
+                Box(Modifier.padding(start = 8.dp).size(52.dp).clip(CircleShape).background(p.ink).press({ submit() }), contentAlignment = Alignment.Center) {
+                    Icon(Sf.arrowUp, "发送", tint = p.ground, modifier = Modifier.size(22.dp))
                 }
             }
         }
     }
 }
 
-/** The voice's level as bars (the newest on the right). */
+/** Holding to talk: a wave above the field (red once slid up to cancel), how long so far for a voice message. */
 @Composable
-private fun Bars(level: Float, color: Color) {
-    val history = remember { mutableStateListOf<Float>().apply { repeat(28) { add(0.06f) } } }
-    LaunchedEffect(level) { history.removeAt(0); history.add(maxOf(0.06f, level)) }
-    Row(Modifier.height(36.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        history.forEach { v ->
-            val h by animateFloatAsState(v, spring(dampingRatio = 0.7f, stiffness = 900f), label = "bar")
-            Box(Modifier.width(3.dp).height((4 + 32 * h).dp).clip(CircleShape).background(color))
+private fun HoldWave(cancel: Boolean, level: Float, seconds: Int?) {
+    val p = LocalPalette.current
+    val inf = rememberInfiniteTransition(label = "wave")
+    val t by inf.animateFloat(0f, 200f, infiniteRepeatable(tween(200_000, easing = androidx.compose.animation.core.LinearEasing)), label = "t")
+    Column(Modifier.fillMaxWidth().liquid(p, RoundedCornerShape(24.dp), wash = 0.5f).padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (seconds != null && !cancel) {
+            Text("%d:%02d".format(seconds / 60, seconds % 60) + if (seconds >= Voice.MAX_SECONDS - 10) "  还能说 ${Voice.MAX_SECONDS - seconds} 秒" else "",
+                color = p.ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(10.dp))
+        }
+        Row(Modifier.height(36.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            for (i in 0 until 28) {
+                val wob = abs(sin(t * 5 + i * 0.55)) * (0.5 + 0.5 * sin(i * 0.9))
+                Box(Modifier.width(3.dp).height((5 + (8 + 26 * level) * wob).dp).clip(CircleShape)
+                    .background(if (cancel) p.red.copy(alpha = 0.7f) else p.ink.copy(alpha = 0.7f)))
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(if (cancel) "松开手指，取消发送" else "松手发送，上滑取消", color = if (cancel) p.red else p.ink2, fontSize = 13.sp)
+    }
+}
+
+// ---- the 「+」 sheet ---------------------------------------------------------------------------------------------------
+
+sealed class PlusPick {
+    class File(val f: Picked) : PlusPick()
+    class Doc(val a: Art) : PlusPick()
+}
+
+/** 「+」: the camera and the latest photos to tap, 全部照片, a file, or one of the Docs. */
+@Composable
+fun PlusSheet(withDocs: Boolean, close: () -> Unit, picked: (PlusPick) -> Unit) {
+    val p = LocalPalette.current
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var recent by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    val thumbs = remember { mutableStateMapOf<Uri, ImageBitmap>() }
+    var docs by remember { mutableStateOf(false) }
+    fun give(x: PlusPick) { close(); picked(x) }
+    LaunchedEffect(Unit) {
+        Pick.askMedia?.invoke { ok ->
+            if (!ok) return@invoke
+            scope.launch {
+                val l = withContext(Dispatchers.IO) { Media.recent(ctx) }
+                recent = l
+                for (u in l) withContext(Dispatchers.IO) { Media.thumb(ctx, u) }?.let { thumbs[u] = it.asImageBitmap() }
+            }
+        }
+    }
+    Sheet(close, "添加到对话", leading = { SheetX(close) }, trailing = {
+        Text("全部照片", color = p.ink, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.clip(CircleShape)
+            .clickable { Pick.photos?.invoke(9) { l -> if (l.isNotEmpty()) { close(); l.forEach { picked(PlusPick.File(it)) } } } }.padding(horizontal = 10.dp, vertical = 6.dp))
+    }, half = true) {
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                Box(Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)).background(p.ink2.copy(alpha = 0.12f))
+                    .press({ Pick.camera?.invoke { c -> if (c != null) give(PlusPick.File(c)) } }), contentAlignment = Alignment.Center) {
+                    Icon(Sf.camera, "拍照", tint = p.ink, modifier = Modifier.size(28.dp))
+                }
+            }
+            items(recent, key = { it.toString() }) { u ->
+                Box(Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)).background(p.ink2.copy(alpha = 0.1f)).press({
+                    scope.launch { withContext(Dispatchers.IO) { Media.photo(ctx, u) }?.let { give(PlusPick.File(it)) } }
+                })) { thumbs[u]?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
+            }
+            if (recent.isEmpty()) item {
+                Column(Modifier.size(84.dp).clip(RoundedCornerShape(16.dp)).background(p.ink2.copy(alpha = 0.12f))
+                    .press({ Pick.photos?.invoke(9) { l -> if (l.isNotEmpty()) { close(); l.forEach { picked(PlusPick.File(it)) } } } }),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Icon(Sf.photos, null, tint = p.ink, modifier = Modifier.size(26.dp))
+                    Text("照片", color = p.ink, fontSize = 12.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(p.paper)) {
+            SheetRow(Sf.folder, "上传文件") { Pick.files?.invoke { l -> if (l.isNotEmpty()) { close(); l.forEach { picked(PlusPick.File(it)) } } } }
+            if (withDocs) {
+                Box(Modifier.padding(start = 52.dp).fillMaxWidth().height(0.5.dp).background(p.ink.copy(alpha = 0.12f)))
+                SheetRow(Sf.doc, "选一个文档", "从 Docs") { docs = true }
+            }
+        }
+    }
+    if (docs) DocPickSheet({ docs = false }) { a -> docs = false; give(PlusPick.Doc(a)) }
+}
+
+@Composable
+fun SheetRow(icon: ImageVector, title: String, value: String? = null, onClick: () -> Unit) {
+    val p = LocalPalette.current
+    Row(Modifier.fillMaxWidth().height(52.dp).clickable(onClick = onClick).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = p.ink, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(title, color = p.ink, fontSize = 17.sp, modifier = Modifier.weight(1f))
+        if (value != null) { Text(value, color = p.ink2, fontSize = 17.sp); Spacer(Modifier.width(8.dp)) }
+        Icon(Sf.chevronRight, null, tint = p.ink3, modifier = Modifier.size(14.dp))
+    }
+}
+
+/** One of the Docs, for the 「+」 sheet. */
+@Composable
+private fun DocPickSheet(close: () -> Unit, picked: (Art) -> Unit) {
+    val p = LocalPalette.current
+    LaunchedEffect(Unit) { if (Desk.arts == null) Desk.loadArts() }
+    val rows = Desk.arts?.sortedByDescending { it.updated }
+    Sheet(close, "选一个文档", leading = { SheetX(close) }) {
+        when {
+            rows == null -> Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { LavaDots() }
+            rows.isEmpty() -> Empty("还没有文档", "", Sf.doc, Modifier.fillMaxWidth())
+            else -> LazyColumn(Modifier.padding(horizontal = 16.dp).clip(RoundedCornerShape(18.dp)).background(p.paper)) {
+                items(rows, key = { it.path }) { a ->
+                    Row(Modifier.fillMaxWidth().clickable { picked(a) }.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        DocIcon(a, 36.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(a.title, color = p.ink, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(chatWhen(a.updated), color = p.ink2, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
-// ---- History ---------------------------------------------------------------------------------------------------------
+/** A sheet from the bottom, as iOS draws one: the grabber, ×, the title, the page's button; [half] stops halfway first. */
+@Composable
+fun Sheet(close: () -> Unit, title: String, leading: @Composable () -> Unit = {}, trailing: @Composable () -> Unit = {}, half: Boolean = false,
+          content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    val p = LocalPalette.current
+    FullScreen(close) {
+        var on by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { on = true }
+        val shade by animateFloatAsState(if (on) 0.28f else 0f, tween(250), label = "shade")
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = shade)).clickable(remember { MutableInteractionSource() }, null, onClick = close))
+        val drag = remember { Animatable(0f) }
+        val scope = rememberCoroutineScope()
+        AnimatedVisibility(on, Modifier.align(Alignment.BottomCenter), enter = slideInVertically(spring(dampingRatio = 0.9f, stiffness = 420f)) { it }) {
+            Column(Modifier.fillMaxWidth().then(if (half) Modifier.heightIn(max = 520.dp) else Modifier.statusBarsPadding().padding(top = 10.dp).fillMaxHeight())
+                .offset { IntOffset(0, drag.value.coerceAtLeast(0f).roundToInt()) }
+                .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)).background(p.ground).imePadding().navigationBarsPadding()) {
+                Column(Modifier.fillMaxWidth().pointerInput(Unit) {
+                    detectVerticalDragGestures(onDragEnd = {
+                        scope.launch { if (drag.value > 120.dp.toPx()) close() else drag.animateTo(0f, spring(dampingRatio = 0.8f)) }
+                    }) { _, d -> scope.launch { drag.snapTo((drag.value + d).coerceAtLeast(0f)) } }
+                }) {
+                    Box(Modifier.padding(top = 6.dp).align(Alignment.CenterHorizontally).size(36.dp, 5.dp).clip(CircleShape).background(p.ink3.copy(alpha = 0.6f)))
+                    Box(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp)) {
+                        Box(Modifier.align(Alignment.CenterStart)) { leading() }
+                        Text(title, Modifier.align(Alignment.Center).widthIn(max = 220.dp), color = p.ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Box(Modifier.align(Alignment.CenterEnd)) { trailing() }
+                    }
+                }
+                content()
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+    }
+}
 
 @Composable
-private fun HistoryPage(topInset: androidx.compose.ui.unit.Dp) {
+fun SheetX(close: () -> Unit) {
     val p = LocalPalette.current
+    Box(Modifier.size(36.dp).clip(CircleShape).background(p.ink.copy(alpha = 0.07f)).clickable(onClick = close), contentAlignment = Alignment.Center) {
+        Icon(Sf.xmark, "关闭", tint = p.ink, modifier = Modifier.size(17.dp))
+    }
+}
+
+// ---- History -----------------------------------------------------------------------------------------------------------
+
+@Composable
+private fun HistoryPage() {
+    val p = LocalPalette.current
+    var query by remember { mutableStateOf("") }
     var openRow by remember { mutableStateOf<String?>(null) }
     var deleting by remember { mutableStateOf<Sess?>(null) }
-    val rows = Desk.sessions.filter { it.title != "新会话" && !it.title.startsWith("_") }
+    val q = query.trim()
+    val all = Desk.sessions.filter { !it.title.startsWith("_") && (it.title.isNotBlank() && it.title != "新会话" || it.busy) }
+    val rows = if (q.isEmpty()) all else all.filter { Desk.titleOf(it.title).contains(q, true) }
+    val state = rememberLazyListState()
+    val shownTitle = titleShown(state)
+    SideEffect { PageTitle.history = shownTitle }
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = topInset + BAR.dp + 8.dp, bottom = (TABS + 40).dp),
+        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = statusTop() + BAR.dp, bottom = navBottom() + TABS.dp + 30.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item(key = "title") { LargeTitle("History") }
+            item(key = "search") { SearchField(query, { query = it }, "搜索过往对话", Modifier.padding(bottom = 4.dp)) }
             listOf("今天", "最近一周", "更早").forEach { g ->
                 val list = rows.filter { dayGroup(it.updated) == g }
                 if (list.isNotEmpty()) {
                     item(key = "g-$g") { Text(g, color = p.ink2, fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp, top = 8.dp)) }
-                    items(list, key = { it.id }) { s ->
+                    itemsIndexed(list, key = { _, s -> s.id }) { i, s ->
                         val actions = buildList {
-                            if (Desk.canArchive) add(Triple("归档", Color(0xFF5B8DEF)) {
+                            if (Desk.canArchive) add(SwipeAction("归档", Tone.Sky) {
                                 Desk.archive(s.id) { ok -> Desk.say(if (ok) "已归档，电脑上「已归档」里还能找到" else "没归档成功，稍后再试") }
                             })
-                            if (Desk.canRemove) add(Triple("删除", Color(0xFFE5484D)) { deleting = s })
+                            if (Desk.canRemove) add(SwipeAction("删除", Tone.Rose) { deleting = s })
                         }
-                        SwipeRow(s.id, openRow, { openRow = it }, actions, Modifier.animateItem()) {
-                            Column(Modifier.fillMaxWidth().clickable {
-                                if (openRow != null) { openRow = null; return@clickable }
+                        val on = s.id == Desk.current
+                        SwipeRow(s.id, openRow, { openRow = it }, actions,
+                            Modifier.animateItem().rise(i).frosted(p).then(if (on) Modifier.border(1.5.dp, p.ink.copy(alpha = 0.18f), RoundedCornerShape(22.dp)) else Modifier)) {
+                            HistoryCard(s, on, s.id in Desk.answered) {
+                                if (openRow != null) { openRow = null; return@HistoryCard }
                                 Desk.openSession(s.id); Shell.tab = Tab.AI
-                            }.padding(horizontal = 14.dp, vertical = 15.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(s.title, Modifier.weight(1f), color = p.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(chatWhen(s.updated), color = p.ink3, fontSize = 13.sp)
-                                }
-                                when {
-                                    s.busy -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                                        Box(Modifier.size(6.dp).clip(CircleShape).background(p.accent)); Spacer(Modifier.width(5.dp))
-                                        Text("进行中", color = p.accent, fontSize = 14.sp)
-                                    }
-                                    s.id == Desk.current -> Text("正在看的对话", color = p.ink2, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
-                                }
                             }
                         }
                     }
@@ -720,238 +973,358 @@ private fun HistoryPage(topInset: androidx.compose.ui.unit.Dp) {
             }
         }
         when {
-            Desk.state != DeskState.Ready -> Box(Modifier.align(Alignment.Center)) { if (Desk.state == DeskState.Failed) Text(Desk.failed, color = p.ink2) else LavaDots(96.dp, 48.dp) }
-            rows.isEmpty() -> Empty("还没有对话", "在 AI 里说第一句话，电脑上的对话也会出现在这里", Modifier.align(Alignment.Center))
+            Desk.state != DeskState.Ready -> Box(Modifier.align(Alignment.Center)) {
+                if (Desk.state == DeskState.Failed) Text(Desk.failed, color = p.ink2, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(24.dp))
+                else LavaDots(96.dp, 48.dp)
+            }
+            rows.isEmpty() -> Empty(if (q.isEmpty()) "还没有对话" else "没找到", if (q.isEmpty()) "在 AI 里说第一句话，电脑上的对话也会出现在这里" else "换个词试试",
+                if (q.isEmpty()) Sf.history else Sf.search, Modifier.align(Alignment.Center))
         }
     }
     deleting?.let { s ->
-        Confirm("删除这个对话？", "删除后电脑上也看不到了，不能恢复。只想收起来就用「归档」。", "删除「${s.title}」", { deleting = null }) {
-            Desk.remove(s.id) { ok -> Desk.say(if (ok) "已删除" else "没删掉，稍后再试") }
+        Confirm("删除这个对话？", "删除后电脑上也看不到了，不能恢复。只想收起来就用「归档」。", "删除「${Desk.titleOf(s.title)}」", { deleting = null }) {
             deleting = null
+            Desk.remove(s.id) { ok -> Desk.say(if (ok) "已删除" else "没删掉，稍后再试") }
         }
     }
 }
 
-/** A card that opens to the left onto its actions (归档 · 删除); one open at a time. */
 @Composable
-private fun SwipeRow(id: String, open: String?, setOpen: (String?) -> Unit, actions: List<Triple<String, Color, () -> Unit>>,
-                     modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+private fun HistoryCard(s: Sess, on: Boolean, fresh: Boolean, onClick: () -> Unit) {
     val p = LocalPalette.current
+    val source = remember { MutableInteractionSource() }
+    val down by source.collectIsPressedAsState()
+    Column(Modifier.fillMaxWidth().alpha(if (down) 0.55f else 1f).clickable(source, null, onClick = onClick).padding(horizontal = 14.dp, vertical = 15.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (fresh) { Box(Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF7594E6))); Spacer(Modifier.width(6.dp)) }
+            Text(Desk.titleOf(s.title), Modifier.weight(1f), color = p.ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.width(8.dp))
+            Text(chatWhen(s.updated), color = p.ink3, fontSize = 13.sp)
+        }
+        when {
+            s.busy -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                val inf = rememberInfiniteTransition(label = "busy")
+                val o by inf.animateFloat(0.3f, 1f, infiniteRepeatable(tween(800), RepeatMode.Reverse), label = "o")
+                Box(Modifier.size(6.dp).scale(o).alpha(o).clip(CircleShape).background(Color(0xFF0A84FF)))
+                Spacer(Modifier.width(5.dp))
+                Text("进行中", color = Color(0xFF0A84FF), fontSize = 15.sp)
+            }
+            fresh -> Text("有新回复", color = Color(0xFF6685DB), fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp))
+            on -> Text("正在看的对话", color = p.ink2, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp))
+        }
+    }
+}
+
+// ---- the swipe (company-phone-swipe-v1): the row slides, flat gradient blocks of its height under it -----------------------
+
+enum class Tone(val light: Color, val deep: Color) {
+    Sky(Color(0xFFA8C7FA), Color(0xFF7594E6)), Rose(Color(0xFFF2A3B8), Color(0xFFE06B85))
+}
+
+class SwipeAction(val title: String, val tone: Tone, val act: () -> Unit)
+
+/** One row open at a time; a spring, and a rubber band past the end. The card's own frame goes on [modifier]. */
+@Composable
+fun SwipeRow(id: String, open: String?, setOpen: (String?) -> Unit, actions: List<SwipeAction>, modifier: Modifier = Modifier,
+             tile: Dp = 76.dp, content: @Composable () -> Unit) {
     val density = LocalDensity.current
-    val tile = 76.dp
     val full = with(density) { (tile * actions.size).toPx() }
     val x = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(open) { if (open != id && x.value != 0f) x.animateTo(0f, spring(dampingRatio = 0.85f)) }
-    Box(modifier.fillMaxWidth().frosted(p)) {
-        if (actions.isNotEmpty()) Row(Modifier.align(Alignment.CenterEnd).fillMaxHeight()) {
-            actions.forEach { (label, color, act) ->
-                Box(Modifier.width(tile).fillMaxHeight().background(color).clickable { setOpen(null); act() }, contentAlignment = Alignment.Center) {
-                    Text(label, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    LaunchedEffect(open) { if (open != id && x.value != 0f) x.animateTo(0f, spring(dampingRatio = 0.82f, stiffness = 420f)) }
+    Box(modifier.fillMaxWidth()) {
+        if (actions.isNotEmpty() && x.value < 0f) Row(Modifier.matchParentSize(), horizontalArrangement = Arrangement.End) {
+            actions.forEach { a ->
+                Box(Modifier.width(tile).fillMaxHeight().background(Brush.verticalGradient(listOf(a.tone.light, a.tone.deep)))
+                    .clickable { setOpen(null); a.act() }, contentAlignment = Alignment.Center) {
+                    Text(a.title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
-        Box(Modifier.offset { IntOffset(x.value.roundToInt(), 0) }
-            .background(cardGround(p))
-            .pointerInput(actions.size) {
-                if (actions.isEmpty()) return@pointerInput
-                detectHorizontalDragGestures(
-                    onDragEnd = { scope.launch { val o = x.value < -full / 2; x.animateTo(if (o) -full else 0f, spring(dampingRatio = 0.8f)); setOpen(if (o) id else null) } },
-                ) { _, d -> scope.launch { x.snapTo((x.value + d).coerceIn(-full * 1.1f, 0f)) } }
-            }) { content() }
-    }
-}
-
-/** The card's own ground under the words while it slides over its actions. */
-private fun cardGround(p: Palette) = androidx.compose.ui.graphics.Brush.verticalGradient(listOf(
-    if (p.dark) Color(0xFF262B37) else Color(0xFFF7F9FD), if (p.dark) Color(0xFF232733) else Color(0xFFF3F5FA)))
-
-@Composable
-private fun Empty(title: String, detail: String, modifier: Modifier) {
-    val p = LocalPalette.current
-    Column(modifier.padding(40.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(title, color = p.ink, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(6.dp))
-        Text(detail, color = p.ink2, fontSize = 14.sp, textAlign = TextAlign.Center)
-    }
-}
-
-@Composable
-private fun Confirm(title: String, detail: String, action: String, cancel: () -> Unit, go: () -> Unit) {
-    val p = LocalPalette.current
-    Dialog(cancel) {
-        Column(Modifier.fillMaxWidth().frosted(p, RoundedCornerShape(26.dp), 0.92f).padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(title, color = p.ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-            Text(detail, color = p.ink2, fontSize = 14.sp, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(18.dp))
-            Box(Modifier.fillMaxWidth().height(48.dp).clip(CircleShape).background(p.red).press(go), contentAlignment = Alignment.Center) {
-                Text(action, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 16.dp))
+        Box(Modifier.offset { IntOffset(x.value.roundToInt(), 0) }.pointerInput(actions.size) {
+            if (actions.isEmpty()) return@pointerInput
+            detectHorizontalDragGestures(
+                onDragStart = { if (open != null && open != id) setOpen(null) },
+                onDragEnd = { scope.launch { val o = x.value < -full / 2; x.animateTo(if (o) -full else 0f, spring(dampingRatio = 0.82f, stiffness = 420f)); setOpen(if (o) id else null) } },
+            ) { _, d ->
+                scope.launch {
+                    val n = x.value + d
+                    x.snapTo(if (n < -full) -full + (n + full) * 0.3f else n.coerceAtMost(0f))
+                }
             }
-            Spacer(Modifier.height(8.dp))
-            Text("取消", color = p.ink, fontSize = 15.sp, modifier = Modifier.clickable(onClick = cancel).padding(10.dp))
-        }
+        }) { content() }
     }
 }
 
-// ---- Docs ------------------------------------------------------------------------------------------------------------
+// ---- Docs -----------------------------------------------------------------------------------------------------------------
 
 @Composable
-private fun DocIcon(a: Art) {
+fun DocIcon(a: Art, size: Dp = 44.dp) {
     val t = (a.title + " " + a.path).lowercase()
     val (icon, tint) = when {
-        "xls" in t || "csv" in t || "表" in t -> Icons.Outlined.TableChart to Color(0xFF30D158)
-        "报价" in t || "pdf" in t -> Icons.Outlined.Description to Color(0xFFFF453A)
-        "图" in t || "png" in t || "jpg" in t -> Icons.Outlined.BarChart to Color(0xFFFF9F0A)
-        else -> Icons.Outlined.Description to Color(0xFF0A84FF)
+        "pdf" in t || "报价" in t -> Sf.docRich to Color(0xFFFF3B30)
+        "xls" in t || "csv" in t || "sheet" in t || "表" in t || "预算" in t -> Sf.table to Color(0xFF34C759)
+        "chart" in t || "产量" in t || "统计" in t || "简报" in t || "看板" in t -> Sf.chart to Color(0xFF0A84FF)
+        "ppt" in t || "slide" in t -> Sf.slides to Color(0xFFFF9500)
+        else -> Sf.doc to Color(0xFFAF52DE)
     }
-    Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(tint.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(21.dp))
+    Box(Modifier.size(size).clip(RoundedCornerShape(size * 0.27f)).background(tint.copy(alpha = 0.12f)), contentAlignment = Alignment.Center) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(size * 0.5f))
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DocsPage(topInset: androidx.compose.ui.unit.Dp) {
+private fun DocsPage() {
     val p = LocalPalette.current
+    var query by remember { mutableStateOf("") }
+    var refreshing by remember { mutableStateOf(false) }
+    val q = query.trim()
     val arts = Desk.arts?.sortedByDescending { it.updated }
-    Box(Modifier.fillMaxSize()) {
-        if (arts != null) LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = topInset + BAR.dp + 8.dp, bottom = (TABS + 40).dp),
+    val shown = arts?.let { l -> if (q.isEmpty()) l else l.filter { it.title.contains(q, true) } }
+    LaunchedEffect(Desk.arts) { refreshing = false }
+    LaunchedEffect(Desk.state) { if (Desk.state == DeskState.Ready && Desk.arts == null) Desk.loadArts() }
+    val state = rememberLazyListState()
+    val shownTitle = titleShown(state)
+    SideEffect { PageTitle.docs = shownTitle }
+    PullToRefreshBox(refreshing, { refreshing = true; Desk.loadArts() }, Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = statusTop() + BAR.dp, bottom = navBottom() + TABS.dp + 30.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            listOf("今天", "最近一周", "更早").forEach { g ->
-                val list = arts.filter { dayGroup(it.updated) == g }
+            item(key = "title") { LargeTitle("Docs") }
+            item(key = "search") { SearchField(query, { query = it }, "搜索文档", Modifier.padding(bottom = 4.dp)) }
+            if (shown != null) listOf("今天", "最近一周", "更早").forEach { g ->
+                val list = shown.filter { dayGroup(it.updated) == g }
                 if (list.isNotEmpty()) {
                     item(key = "g-$g") { Text(g, color = p.ink2, fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp, top = 6.dp)) }
-                    items(list, key = { it.path }) { a ->
-                        Row(Modifier.fillMaxWidth().animateItem().frosted(p).press({ Shell.viewer = a }).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    itemsIndexed(list, key = { _, a -> a.path }) { i, a ->
+                        Row(Modifier.fillMaxWidth().animateItem().rise(i).frosted(p).press({ Shell.viewer = shown to shown.indexOf(a) }).padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
                             DocIcon(a)
                             Spacer(Modifier.width(14.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(a.title, color = p.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(a.title, color = p.ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Spacer(Modifier.height(3.dp))
                                 Text(chatWhen(a.updated), color = p.ink2, fontSize = 13.sp)
                             }
-                            Icon(Icons.Outlined.ChevronRight, null, tint = p.ink3)
+                            Icon(Sf.chevronRight, null, tint = p.ink3, modifier = Modifier.size(14.dp))
                         }
                     }
                 }
             }
         }
         when {
-            arts == null -> Box(Modifier.align(Alignment.Center)) { LavaDots(96.dp, 48.dp) }
-            arts.isEmpty() -> Empty("还没有文档", "让 AI 写报告、做表格，做好的文件会出现在这里", Modifier.align(Alignment.Center))
+            shown == null -> LavaDots(96.dp, 48.dp, Modifier.align(Alignment.Center))
+            shown.isEmpty() -> Empty(if (q.isEmpty()) "还没有文档" else "没找到", if (q.isEmpty()) "让 AI 写报告、做表格，做好的文件会出现在这里" else "换个词试试",
+                if (q.isEmpty()) Sf.doc else Sf.search, Modifier.align(Alignment.Center))
         }
     }
 }
 
-/** One document full screen: its page on a card, 转发 and 交给 AI under it. */
 @Composable
-private fun Viewer(a: Art) {
+fun statusTop(): Dp = with(LocalDensity.current) { WindowInsets.statusBars.getTop(this).toDp() }
+
+@Composable
+fun navBottom(): Dp = with(LocalDensity.current) { WindowInsets.navigationBars.getBottom(this).toDp() }
+
+/** One document full screen; swipe for the next or the one before. Below it: 转发 and 交给 AI; the menu: 用其他 App 打开. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ArtifactPager(items: List<Art>, start: Int) {
     val p = LocalPalette.current
-    var html by remember(a.path) { mutableStateOf<String?>(null) }
-    var title by remember(a.path) { mutableStateOf(a.title) }
+    val ctx = LocalContext.current
+    val pager = rememberPagerState(start.coerceIn(0, maxOf(0, items.size - 1))) { items.size }
+    val pages = remember { mutableStateMapOf<String, Pair<String, String>>() }
     var forwarding by remember { mutableStateOf(false) }
-    LaunchedEffect(a.path) { Desk.readArt(a.path) { t, h -> html = h; if (t.isNotEmpty()) title = t } }
-    Dialog({ Shell.viewer = null }, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        Box(Modifier.fillMaxSize()) {
-            DeskBackground()
-            Column(Modifier.fillMaxSize().systemBarsPadding()) {
-                Row(Modifier.fillMaxWidth().height(BAR.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    GlassIcon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") { Shell.viewer = null }
-                    Text(title, Modifier.weight(1f).padding(horizontal = 12.dp), color = p.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-                    Spacer(Modifier.width(44.dp))
-                }
-                Box(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp).clip(RoundedCornerShape(22.dp)).background(Color.White)) {
-                    val h = html
+    var menu by remember { mutableStateOf(false) }
+    val item = items.getOrNull(pager.currentPage) ?: return
+    val title = pages[item.path]?.first?.ifEmpty { null } ?: item.title
+    fun ask() {
+        Desk.askArt(item.path); Shell.viewer = null; Shell.tab = Tab.AI
+        Desk.say("已放进 AI 对话框，说说要怎么处理，比如「做成 PDF」")
+    }
+    FullScreen({ Shell.viewer = null }) {
+        DeskBackground()
+        Column(Modifier.fillMaxSize()) {
+            TopRow(title, leading = { GlassCircle(Sf.chevronLeft, "返回") { Shell.viewer = null } }) {
+                GlassCircle(Sf.ellipsis, "更多") { menu = true }
+            }
+            HorizontalPager(pager, Modifier.weight(1f).fillMaxWidth(), beyondViewportPageCount = 1) { i ->
+                val a = items[i]
+                LaunchedEffect(a.path) { if (pages[a.path] == null) Desk.readArt(a.path) { t, h -> pages[a.path] = t to h } }
+                Box(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(22.dp)).background(Color.White)) {
+                    val h = pages[a.path]?.second
                     if (h == null) LavaDots(84.dp, 42.dp, Modifier.align(Alignment.Center))
-                    else AndroidView({ ctx ->
-                        WebView(ctx).apply {
+                    else AndroidView({ c ->
+                        WebView(c).apply {
                             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                             settings.javaScriptEnabled = true
                             settings.allowFileAccess = false
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
                             loadDataWithBaseURL(null, h.ifEmpty { "<p style='font:16px sans-serif;padding:24px'>这个文档没有读出来。</p>" }, "text/html", "utf-8", null)
                         }
                     }, Modifier.fillMaxSize())
                 }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PillButton("转发", Modifier.weight(1f), prominent = false) { forwarding = true }
-                    Box(Modifier.weight(1f).height(50.dp).clip(CircleShape).background(Color(0xFF4573ED)).press({
-                        Desk.askArt(a.path); Shell.viewer = null; Shell.tab = Tab.AI; Desk.say("已放进 AI 对话框，说说要怎么处理，比如「做成 PDF」")
-                    }), contentAlignment = Alignment.Center) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("交给 AI", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        }
+            }
+            Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (items.size > 1) { Text("${pager.currentPage + 1} / ${items.size}", color = p.ink2, fontSize = 12.sp); Spacer(Modifier.height(10.dp)) }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Capsule("转发", Modifier.weight(1f), icon = Sf.forward, prominent = false) { forwarding = true }
+                    Capsule("交给 AI", Modifier.weight(1f), icon = Sf.sparkles, tint = Color(0xFF4573ED)) { ask() }
+                }
+            }
+        }
+        if (menu) Menu({ menu = false }, listOf(
+            MenuItem("转发到聊天", Sf.forward) { forwarding = true },
+            MenuItem("交给 AI", Sf.sparkles) { ask() },
+            MenuItem("用其他 App 打开", Sf.share) {
+                val h = pages[item.path]?.second ?: return@MenuItem Desk.say("文档还没读出来，稍等")
+                Desk.openBytes(ctx, title.replace("/", "-") + ".html", "text/html", h.toByteArray())
+            },
+        ))
+        if (forwarding) ForwardSheet(title, { topics, note, done ->
+            Desk.ask("window.tdhPhone ? tdhPhone.forwardArtifact(${JSONObject.quote(item.path)}, ${JSONArray(topics)}, ${JSONObject.quote(note)}) : {ok:false, error:'not-ready'}") { s ->
+                val j = runCatching { JSONObject(s) }.getOrDefault(JSONObject())
+                done(if (j.optBoolean("ok")) null else j.optString("error").ifEmpty { "没转发成功" })
+            }
+        }) { forwarding = false }
+    }
+}
+
+class MenuItem(val title: String, val icon: ImageVector, val act: () -> Unit)
+
+/** A glass menu out of the top-right button (as iOS's Menu swells out of it). */
+@Composable
+fun Menu(close: () -> Unit, items: List<MenuItem>, width: Dp = 220.dp) {
+    val p = LocalPalette.current
+    Box(Modifier.fillMaxSize().zIndex(9f).clickable(remember { MutableInteractionSource() }, null, onClick = close)) {
+        var on by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { on = true }
+        AnimatedVisibility(on, Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 8.dp, end = 16.dp),
+            enter = scaleIn(spring(dampingRatio = 0.8f, stiffness = 500f), initialScale = 0.25f, transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 0f)) + fadeIn()) {
+            Column(Modifier.width(width).clip(RoundedCornerShape(20.dp)).background(p.paper.copy(alpha = 0.95f))
+                .border(0.6.dp, p.rim.copy(alpha = 0.6f), RoundedCornerShape(20.dp))) {
+                items.forEachIndexed { i, m ->
+                    if (i > 0) Box(Modifier.padding(horizontal = 12.dp).fillMaxWidth().height(0.5.dp).background(p.ink.copy(alpha = 0.12f)))
+                    Row(Modifier.fillMaxWidth().height(46.dp).clickable { close(); m.act() }.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(m.title, color = p.ink, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                        Icon(m.icon, null, tint = p.ink, modifier = Modifier.size(18.dp))
                     }
                 }
             }
-            if (forwarding) ForwardSheet(title, { topics, note, done ->
-                Desk.ask("window.tdhPhone ? tdhPhone.forwardArtifact(${JSONObject.quote(a.path)}, ${JSONArray(topics)}, ${JSONObject.quote(note)}) : {ok:false, error:'not-ready'}") { s ->
-                    val j = runCatching { JSONObject(s) }.getOrDefault(JSONObject())
-                    done(if (j.optBoolean("ok")) null else j.optString("error").ifEmpty { "没转发成功" })
-                }
-            }) { forwarding = false }
         }
     }
 }
 
+// ---- 转发 (ForwardPicker) ----------------------------------------------------------------------------------------------
+
 private class FwdChat(val topic: String, val name: String, val group: Boolean)
 
-/** 转发: the chats this person is in, the ones talked with last first; several at once, a word with it. */
-@OptIn(ExperimentalMaterial3Api::class)
+/** 转发: the chats this person is in (the last talked with first: 最近聊天 then 全部), several at once, a word with it. */
 @Composable
-private fun ForwardSheet(title: String, send: (List<String>, String, (String?) -> Unit) -> Unit, close: () -> Unit) {
+fun ForwardSheet(title: String, send: (List<String>, String, (String?) -> Unit) -> Unit, close: () -> Unit) {
     val p = LocalPalette.current
+    val view = LocalView.current
     var chats by remember { mutableStateOf<List<FwdChat>?>(null) }
     val picked = remember { mutableStateListOf<String>() }
+    var query by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
-        Desk.ask("window.tdhPhone ? tdhPhone.chats() : {topics:[]}") { s ->
+        // The chats as the app has them (the last talked with first), the page's list where the app has none yet.
+        val mine = Chat.topics.filter { Chat.shows(it) || it.group }.sortedByDescending { it.touched }.map { FwdChat(it.topic, it.name, it.group) }
+        if (mine.isNotEmpty()) chats = mine
+        else Desk.ask("window.tdhPhone ? tdhPhone.chats() : {topics:[]}") { s ->
             val a = runCatching { JSONObject(s).optJSONArray("topics") }.getOrNull() ?: JSONArray()
             chats = (0 until a.length()).map { i -> a.getJSONObject(i).let { FwdChat(it.optString("topic"), it.optString("name"), it.optBoolean("group")) } }
         }
     }
-    ModalBottomSheet(close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = p.ground) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("转发「$title」", Modifier.weight(1f), color = p.ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (sending) "发送中…" else if (picked.size > 1) "发送(${picked.size})" else "发送",
-                    color = if (picked.isEmpty() || sending) p.ink3 else p.accent, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.clickable(enabled = picked.isNotEmpty() && !sending) {
-                        sending = true; error = ""
-                        send(picked.toList(), note.trim()) { e -> sending = false; if (e == null) { Desk.say("已转发"); close() } else error = "转发没成功：$e" }
-                    }.padding(8.dp))
-            }
-            Spacer(Modifier.height(8.dp))
-            val list = chats
-            if (list == null) Box(Modifier.fillMaxWidth().height(160.dp), contentAlignment = Alignment.Center) { LavaDots() }
-            else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp).frosted(p)) {
-                items(list, key = { it.topic }) { c ->
-                    val on = c.topic in picked
-                    Row(Modifier.fillMaxWidth().clickable { if (on) picked.remove(c.topic) else picked.add(c.topic) }.padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Avatar(c.name, 36.dp)
-                        Spacer(Modifier.width(12.dp))
-                        Text(c.name, Modifier.weight(1f), color = p.ink, fontSize = 15.sp, maxLines = 1)
-                        Box(Modifier.size(22.dp).clip(CircleShape).then(if (on) Modifier.background(p.accent) else Modifier.border(1.5.dp, p.ink3, CircleShape)),
-                            contentAlignment = Alignment.Center) { if (on) Icon(Icons.Outlined.Check, null, tint = Color.White, modifier = Modifier.size(15.dp)) }
-                    }
+    fun go() {
+        if (picked.isEmpty() || sending) return
+        sending = true; error = ""
+        val ids = picked.toList()
+        send(ids, note.trim()) { e ->
+            sending = false
+            if (e != null) { error = "转发没成功：$e"; return@send }
+            val names = ids.mapNotNull { id -> chats?.firstOrNull { it.topic == id }?.name }
+            val who = if (names.size > 3) names.take(3).joinToString("、") + " 等 ${names.size} 个" else names.joinToString("、")
+            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+            Desk.say("已转发给 $who")
+            close()
+        }
+    }
+    Sheet(close, "转发「$title」", leading = { SheetX(close) }, trailing = {
+        Text(if (sending) "发送中…" else if (picked.size > 1) "发送(${picked.size})" else "发送", color = if (picked.isEmpty() || sending) p.ink3 else p.accent,
+            fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(CircleShape).clickable(enabled = picked.isNotEmpty() && !sending) { go() }.padding(8.dp))
+    }) {
+        SearchField(query, { query = it }, "搜索同事或群", Modifier.padding(horizontal = 16.dp))
+        Spacer(Modifier.height(8.dp))
+        val list = chats
+        val q = query.trim()
+        if (picked.isNotEmpty()) LazyRow(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(picked.toList(), key = { it }) { id ->
+                Row(Modifier.animateItem().clip(CircleShape).background(p.accent.copy(alpha = 0.12f)).clickable { picked.remove(id) }.padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(list?.firstOrNull { it.topic == id }?.name ?: id, color = p.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.width(4.dp))
+                    Icon(Sf.xmark, null, tint = p.ink, modifier = Modifier.size(10.dp))
                 }
             }
-            if (error.isNotEmpty()) Text(error, color = p.red, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-            Spacer(Modifier.height(10.dp))
-            Field(note, { note = it }, "留言（可不填）")
-            Spacer(Modifier.height(12.dp))
+        }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            when {
+                list == null -> Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) { LavaDots(); Text("正在取聊天列表…", color = p.ink2, fontSize = 13.sp) }
+                list.isEmpty() -> Empty("还没有聊天", "先在「聊天」里找同事说句话", Sf.bubbles, Modifier.align(Alignment.Center))
+                else -> LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
+                    fun section(head: String, rows: List<FwdChat>) {
+                        if (rows.isEmpty()) return
+                        item(key = "h-$head") { Text(head, color = p.ink2, fontSize = 13.sp, modifier = Modifier.padding(start = 14.dp, top = 14.dp, bottom = 6.dp)) }
+                        itemsIndexed(rows, key = { _, c -> head + c.topic }) { i, c ->
+                            val on = c.topic in picked
+                            val shape = RoundedCornerShape(topStart = if (i == 0) 12.dp else 0.dp, topEnd = if (i == 0) 12.dp else 0.dp,
+                                bottomStart = if (i == rows.size - 1) 12.dp else 0.dp, bottomEnd = if (i == rows.size - 1) 12.dp else 0.dp)
+                            Row(Modifier.fillMaxWidth().clip(shape).background(p.paper).clickable {
+                                error = ""
+                                if (on) picked.remove(c.topic) else picked.add(c.topic)
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(36.dp).clip(RoundedCornerShape(if (c.group) 11.dp else 18.dp)).background(nameColor(c.name)), contentAlignment = Alignment.Center) {
+                                    Text(initials(c.name), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Text(c.name, color = p.ink, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
+                                if (c.group) { Spacer(Modifier.width(6.dp)); GroupTag() }
+                                Spacer(Modifier.weight(1f))
+                                Icon(if (on) Sf.checkCircle else Sf.circle, null, tint = if (on) p.accent else p.ink3.copy(alpha = 0.6f), modifier = Modifier.size(24.dp))
+                            }
+                        }
+                    }
+                    if (q.isEmpty()) { section("最近聊天", list.take(5)); section("全部", list.drop(5)) }
+                    else section("搜索结果", list.filter { it.name.contains(q, true) })
+                }
+            }
+        }
+        if (error.isNotEmpty()) Text(error, color = p.red, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth().height(46.dp).clip(CircleShape).background(p.paper).padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                if (note.isEmpty()) Text("留言（可不填）", color = p.ink3, fontSize = 16.sp)
+                BasicTextField(note, { note = it }, singleLine = true, textStyle = TextStyle(color = p.ink, fontSize = 16.sp), cursorBrush = SolidColor(p.accent),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send), keyboardActions = KeyboardActions(onSend = { go() }), modifier = Modifier.fillMaxWidth())
+            }
         }
     }
 }
 
-// ---- settings ----------------------------------------------------------------------------------------------------------
+@Composable
+fun GroupTag() {
+    val p = LocalPalette.current
+    Text("群", color = p.ink2, fontSize = 11.sp, modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(p.ink.copy(alpha = 0.06f)).padding(horizontal = 6.dp, vertical = 2.dp))
+}
 
-@OptIn(ExperimentalMaterial3Api::class)
+// ---- 设置 (PhoneSettings) ----------------------------------------------------------------------------------------------
+
 @Composable
 private fun SettingsSheet(person: Person, close: () -> Unit) {
     val p = LocalPalette.current
@@ -959,75 +1332,102 @@ private fun SettingsSheet(person: Person, close: () -> Unit) {
     val scope = rememberCoroutineScope()
     var legal by remember { mutableStateOf<String?>(null) }
     var out by remember { mutableStateOf(false) }
-    ModalBottomSheet(close, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = p.ground) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 20.dp)) {
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Avatar(person.name.ifEmpty { person.login }, 76.dp)
+    var avatar by remember { mutableStateOf(false) }
+    val me = Chat.people[Chat.me]
+    val name = me?.name?.takeIf { it.isNotEmpty() && it != "我" } ?: person.name.ifEmpty { person.login }
+    Sheet(close, "设置", trailing = { SheetX(close) }) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Avatar(name, 76.dp, me?.photo)
                 Spacer(Modifier.height(8.dp))
-                Text(person.name.ifEmpty { person.login }, color = p.ink, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-                Text(listOf(person.deptName, person.roleText).filter { it.isNotEmpty() }.joinToString(" · "), color = p.ink2, fontSize = 14.sp)
+                Text(name, color = p.ink, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                Text(listOf(person.deptName, person.roleText).filter { it.isNotEmpty() }.joinToString(" · "), color = p.ink2, fontSize = 15.sp)
             }
-            Section("账号") {
-                Line("部门", person.deptName.ifEmpty { "—" }); Line("角色", person.roleText); Line("登录名", person.login)
+            Group("账号") {
+                LabelRow(Sf.personCircle, "更换头像", chevron = false) { avatar = true }
+                if (person.deptName.isNotEmpty()) { Divider(); LabelRow(Sf.building, "部门", person.deptName) }
+                if (person.roleText.isNotEmpty()) { Divider(); LabelRow(Sf.personKey, "角色", person.roleText) }
+                if (person.login.isNotEmpty()) { Divider(); LabelRow(Sf.at, "登录名", person.login) }
             }
-            Section("外观") {
-                Row(Modifier.fillMaxWidth().padding(6.dp).clip(CircleShape).background(p.ink.copy(alpha = 0.06f)).padding(3.dp)) {
-                    Appearance.entries.forEach { a ->
-                        val on = Look.appearance == a
-                        Box(Modifier.weight(1f).height(36.dp).clip(CircleShape).background(if (on) p.paper else Color.Transparent)
-                            .clickable { Look.set(ctx, a) }, contentAlignment = Alignment.Center) {
-                            Text(a.label, color = if (on) p.ink else p.ink2, fontSize = 14.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal)
-                        }
+            Text("外观", color = p.ink2, fontSize = 13.sp, modifier = Modifier.padding(start = 16.dp, top = 22.dp, bottom = 6.dp))
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(p.ink.copy(alpha = 0.07f)).padding(2.dp)) {
+                Appearance.entries.forEach { a ->
+                    val on = Look.appearance == a
+                    Box(Modifier.weight(1f).height(32.dp).clip(RoundedCornerShape(8.dp)).background(if (on) p.paper else Color.Transparent)
+                        .clickable { Look.set(ctx, a) }, contentAlignment = Alignment.Center) {
+                        Text(a.label, color = p.ink, fontSize = 13.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium)
                     }
                 }
             }
-            Section("通用") {
-                Line("公司服务器", if (Desk.state == DeskState.Ready) "已连接" else "正在连接")
-                Line("关于 TDH", BuildConfig.VERSION_NAME + " Beta")
+            Group("通用") {
+                LabelRow(Sf.server, "公司服务器", if (Net.base != null) "已连接" else "未连接")
+                Divider()
+                LabelRow(Sf.bubbles, "聊天", if (Chat.connected) "已连接" else "正在连接")
+                Divider()
+                LabelRow(Sf.info, "关于 TDH", BuildConfig.VERSION_NAME + " Beta")
             }
-            Section("关于") {
-                listOf("terms" to "服务协议", "privacy" to "隐私政策", "disclaimer" to "免责声明").forEach { (k, t) ->
-                    Row(Modifier.fillMaxWidth().clickable { legal = k }.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(t, Modifier.weight(1f), color = p.ink, fontSize = 15.sp)
-                        Icon(Icons.Outlined.ChevronRight, null, tint = p.ink3)
-                    }
+            Group("关于") {
+                listOf(Triple("terms", "服务协议", Sf.doc), Triple("privacy", "隐私政策", Sf.hand), Triple("disclaimer", "免责声明", Sf.shield)).forEachIndexed { i, (k, t, ic) ->
+                    if (i > 0) Divider()
+                    LabelRow(ic, t, chevron = true) { legal = k }
                 }
             }
-            Spacer(Modifier.height(18.dp))
-            Box(Modifier.fillMaxWidth().height(50.dp).frosted(p, RoundedCornerShape(16.dp)).clickable { out = true }, contentAlignment = Alignment.Center) {
-                Text("退出登录", color = p.red, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(22.dp))
+            Box(Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(12.dp)).background(p.paper).clickable { out = true }, contentAlignment = Alignment.Center) {
+                Text("退出登录", color = p.red, fontSize = 17.sp)
             }
-            Text("退出后这台手机不再保持登录，下次要重新用手机号验证码登录。", color = p.ink2, fontSize = 12.sp, modifier = Modifier.padding(8.dp))
+            Text("退出后这台手机不再保持登录，下次要重新用手机号验证码登录。", color = p.ink2, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            Spacer(Modifier.height(20.dp))
         }
     }
-    legal?.let { Legal(it) { legal = null } }
-    if (out) Confirm("退出登录？", "退出后要重新登录才能用。", "退出登录", { out = false }) {
+    legal?.let { LegalPage(it) { legal = null } }
+    if (avatar) AvatarSetup(again = true) { avatar = false }
+    if (out) Confirm("退出登录？", "", "退出登录", { out = false }) {
         out = false
-        scope.launch {
-            ChatWatch.stop(ctx)
-            Chat.stop()
-            Desk.web?.loadUrl("about:blank"); Desk.chatWeb?.loadUrl("about:blank")
-            Desk.state = DeskState.Idle; Desk.chatState = DeskState.Idle; Desk.sessions = emptyList(); Desk.arts = null
-            Relay.stop()
-            Session.signOut()
-            close()
-        }
+        close()
+        scope.launch { signOutAll(ctx) }
     }
 }
 
 @Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
+private fun Group(title: String, content: @Composable () -> Unit) {
     val p = LocalPalette.current
     Text(title, color = p.ink2, fontSize = 13.sp, modifier = Modifier.padding(start = 16.dp, top = 22.dp, bottom = 6.dp))
-    Column(Modifier.fillMaxWidth().frosted(p, RoundedCornerShape(16.dp)).animateContentSize()) { content() }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(p.paper)) { content() }
 }
 
 @Composable
-private fun Line(k: String, v: String) {
+private fun Divider() {
     val p = LocalPalette.current
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
-        Text(k, color = p.ink, fontSize = 15.sp, modifier = Modifier.weight(1f))
-        Text(v, color = p.ink2, fontSize = 15.sp)
+    Box(Modifier.padding(start = 54.dp).fillMaxWidth().height(0.5.dp).background(p.ink.copy(alpha = 0.12f)))
+}
+
+@Composable
+private fun LabelRow(icon: ImageVector, title: String, value: String? = null, chevron: Boolean = false, onClick: (() -> Unit)? = null) {
+    val p = LocalPalette.current
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = p.ink, modifier = Modifier.size(21.dp))
+        Spacer(Modifier.width(16.dp))
+        Text(title, color = p.ink, fontSize = 17.sp, modifier = Modifier.weight(1f))
+        if (value != null) Text(value, color = p.ink2, fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+        if (chevron) { Spacer(Modifier.width(6.dp)); Icon(Sf.chevronRight, null, tint = p.ink3, modifier = Modifier.size(14.dp)) }
     }
 }
 
+/** 服务协议 · 隐私政策 · 免责声明, full screen. */
+@Composable
+fun LegalPage(name: String, close: () -> Unit) {
+    val p = LocalPalette.current
+    val ctx = LocalContext.current
+    val text = remember(name) { runCatching { ctx.assets.open("legal/$name.txt").bufferedReader().use { it.readText() } }.getOrDefault("") }
+    val title = when (name) { "terms" -> "服务协议"; "privacy" -> "隐私政策"; else -> "免责声明" }
+    FullScreen(close) {
+        DeskBackground()
+        Column(Modifier.fillMaxSize()) {
+            TopRow(title, leading = { GlassCircle(Sf.chevronLeft, "返回", onClick = close) })
+            Text(text, Modifier.weight(1f).verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp).frosted(p).padding(20.dp),
+                fontSize = 15.sp, color = p.ink, lineHeight = 25.sp)
+        }
+    }
+}

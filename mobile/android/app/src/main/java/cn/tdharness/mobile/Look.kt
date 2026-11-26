@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import dev.chrisbanes.haze.hazeChild
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -92,6 +93,31 @@ class Palette(val dark: Boolean) {
 }
 
 val LocalPalette = compositionLocalOf { Palette(true) }
+
+/** What the bars blur (company-android-glass-v1): the pages under them register as its source. */
+val LocalHaze = compositionLocalOf<dev.chrisbanes.haze.HazeState?> { null }
+
+/**
+ * Real glass (company-android-glass-v1, the user 2026-11-26: 「安卓的毛玻璃效果 是不是不行」「玻璃那个画面质感真的不够好看」):
+ * what lies under the bar blurred (Haze; a plain wash where the phone cannot blur), a wash of paper over it, the bright
+ * rim fading down and a soft shadow — the iPhone's .glass / .frosted over content.
+ */
+@androidx.compose.runtime.Composable
+fun Modifier.liquid(p: Palette, shape: Shape = CircleShape, tint: Color? = null, wash: Float = 0.42f): Modifier {
+    val haze = LocalHaze.current ?: return this.glass(p, shape, tint)
+    val base = if (p.dark) Color(0xFF1B1F2A) else Color(0xFFF4F6FB)
+    val style = dev.chrisbanes.haze.HazeStyle(
+        backgroundColor = base,
+        tints = listOf(dev.chrisbanes.haze.HazeTint(tint ?: if (p.dark) Color(0xFF2A2F3C).copy(alpha = wash) else Color.White.copy(alpha = wash + 0.08f))),
+        blurRadius = 26.dp,
+        noiseFactor = 0.06f,
+        fallbackTint = dev.chrisbanes.haze.HazeTint(if (p.dark) Color(0xF0222631) else Color(0xF2F6F8FC)),
+    )
+    return this.shadow(if (p.dark) 6.dp else 14.dp, shape, ambientColor = Color(0x261E3359), spotColor = Color(0x261E3359))
+        .clip(shape)
+        .hazeChild(haze, style)
+        .border(0.7.dp, Brush.verticalGradient(listOf(p.rim.copy(alpha = if (p.dark) 0.55f else 1f), p.rim.copy(alpha = 0.12f))), shape)
+}
 
 /** The page behind everything: day's sky to apricot, night's blue to plum. */
 @Composable

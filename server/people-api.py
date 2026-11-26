@@ -2281,6 +2281,11 @@ def _chat_login(login: str, ua: str):
     return lp, ""
 
 
+_AI_LOCK = threading.Lock()
+_AI_EVENTS: dict = {}
+_AI_NEXT = 0
+
+
 def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
     """company-chat-read-v1 (server/chat_read.py): `login`'s own chats for their agent. what: list | read | search.
     The log has the counts, never what was said."""
@@ -2378,8 +2383,23 @@ def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
         # company-phone-push-v1: the desk's kernel finished a turn of this person's conversation (company-shell).
         out = push.ai_done(TOKEN_STORE.parent, push.config(TOKEN_STORE.parent), login, str(payload.get("session") or ""),
                            str(payload.get("title") or ""), str(payload.get("preview") or ""), str(payload.get("reason") or ""))
+        # company-android-ai-done-v1: an Android phone has no Apple push; its watch asks for these (ai-events).
+        with _AI_LOCK:
+            global _AI_NEXT
+            _AI_NEXT += 1
+            q = _AI_EVENTS.setdefault(login, [])
+            q.append({"id": _AI_NEXT, "session": str(payload.get("session") or "")[:120], "title": str(payload.get("title") or "")[:80],
+                      "preview": str(payload.get("preview") or "")[:160], "reason": str(payload.get("reason") or "")[:20], "at": int(time.time())})
+            del q[:-20]
         sys.stderr.write("people-api push ai-done %s sent=%s\n" % (login, out.get("sent")))
         return 200, out
+    if what == "ai-events":
+        # company-android-ai-done-v1: the answers finished since the phone last asked (since 0: only where it stands).
+        since = int(payload.get("since") or 0)
+        with _AI_LOCK:
+            rows = [e for e in _AI_EVENTS.get(login, []) if e["id"] > since and time.time() - e["at"] < 600]
+            top = _AI_NEXT
+        return 200, {"ok": True, "seq": top, "events": rows if since > 0 else []}
     if what == "find":
         # company-chat-search-all-v1: the phone's search over all of the person's own chat messages (any age).
         q = str(payload.get("q") or "").strip()
