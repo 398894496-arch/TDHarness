@@ -83,7 +83,7 @@ fun BannerHost() {
         delay(4000)
         if (Notices.current?.id == b.id) Notices.current = null
     }
-    AnimatedVisibility(b != null, Modifier.fillMaxWidth().zIndex(8f),
+    AnimatedVisibility(b != null, Modifier.fillMaxWidth().zIndex(32f),
         enter = slideInVertically(spring(dampingRatio = 0.8f, stiffness = 380f)) { -it * 2 } + fadeIn(),
         exit = slideOutVertically { -it * 2 } + fadeOut()) {
         if (shown == null) return@AnimatedVisibility

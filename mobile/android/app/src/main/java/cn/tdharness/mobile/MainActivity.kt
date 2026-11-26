@@ -69,7 +69,15 @@ object Media {
         Picked(photoName(), "image/jpeg", jpeg)
     }.getOrNull()
 
-    fun photoName() = "照片-" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.CHINA).format(java.util.Date()) + ".jpg"
+    private var lastStamp = ""
+    private var sameSecond = 0
+
+    /** 照片-20261126-0301.jpg, and -2, -3… for more in the same second (several picked at once). */
+    @Synchronized fun photoName(): String {
+        val s = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.CHINA).format(java.util.Date())
+        if (s == lastStamp) sameSecond += 1 else { lastStamp = s; sameSecond = 1 }
+        return "照片-" + s + (if (sameSecond > 1) "-$sameSecond" else "") + ".jpg"
+    }
 }
 
 class MainActivity : ComponentActivity() {

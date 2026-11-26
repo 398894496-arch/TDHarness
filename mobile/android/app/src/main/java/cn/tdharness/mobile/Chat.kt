@@ -80,6 +80,8 @@ object Chat {
     var hidden by mutableStateOf<Map<String, Int>>(emptyMap())
     /** This person's own chat card (me's public), as it last came. */
     private var myPub: JSONObject? = null
+    /** Pending messages' own numbers, from the top down (never a number a pending message still on screen has). */
+    private var pendingSeq = Int.MAX_VALUE
     /** company-chat-avatar-v1: the card has no picture; the app asks for one before anything else (as the iPhone). */
     var needsAvatar by mutableStateOf(false)
     /** The chat on screen: its messages count as read as they come. */
@@ -131,7 +133,7 @@ object Chat {
         socket = null
         waiting.values.forEach { it.complete(null) }
         waiting.clear()
-        topics = emptyList(); messages.clear(); people.clear(); attached.clear(); loaded = false; me = ""
+        topics = emptyList(); messages.clear(); people.clear(); attached.clear(); loaded = false; me = ""; myPub = null
         loopJob?.cancel()
     }
 
@@ -446,7 +448,7 @@ object Chat {
     suspend fun sendText(topic: String, text: String): Boolean {
         val t = text.trim()
         if (t.isEmpty()) return true
-        messages[topic] = (messages[topic] ?: emptyList()) + ChatMessage(Int.MAX_VALUE - (messages[topic]?.size ?: 0), me, System.currentTimeMillis(), t, emptyList(), pending = true)
+        messages[topic] = (messages[topic] ?: emptyList()) + ChatMessage(--pendingSeq, me, System.currentTimeMillis(), t, emptyList(), pending = true)
         attach(topic, 1)
         val r = request(JSONObject().put("pub", JSONObject().put("topic", topic).put("noecho", false).put("content", t)))
         if (r == null || code(r) >= 300) { messages[topic] = (messages[topic] ?: emptyList()).filterNot { it.pending && it.text == t }; return false }
@@ -512,8 +514,10 @@ object Chat {
     /** The picture on the card (256 px JPEG), the rest kept; and the roster's (128 px) so the desks show it too. */
     suspend fun setAvatar(jpeg: ByteArray): Boolean {
         if (!connected) return false
-        if (myPub == null) request(JSONObject().put("get", JSONObject().put("topic", "me").put("what", "desc")))
-        val pub = JSONObject((myPub ?: JSONObject()).toString())
+        // The card as it is now, read on this connection; without it, writing would leave the card without its name.
+        myPub = null
+        request(JSONObject().put("get", JSONObject().put("topic", "me").put("what", "desc")))
+        val pub = JSONObject((myPub ?: return false).toString())
         pub.put("photo", JSONObject().put("data", Base64.encodeToString(jpeg, Base64.NO_WRAP)).put("type", "jpeg"))
         val r = request(JSONObject().put("set", JSONObject().put("topic", "me").put("desc", JSONObject().put("public", pub)))) ?: return false
         if (code(r) >= 300) return false

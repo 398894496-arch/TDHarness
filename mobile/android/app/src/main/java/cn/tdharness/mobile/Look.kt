@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import dev.chrisbanes.haze.haze
 import dev.chrisbanes.haze.hazeChild
 import kotlin.math.abs
 import kotlin.math.cos
@@ -122,6 +123,19 @@ fun Modifier.liquid(p: Palette, shape: Shape = CircleShape, tint: Color? = null,
         .clip(shape)
         .hazeChild(haze, style)
         .border(0.7.dp, Brush.verticalGradient(listOf(p.rim.copy(alpha = if (p.dark) 0.55f else 1f), p.rim.copy(alpha = 0.12f))), shape)
+}
+
+/**
+ * What the bars blur (company-android-glass-v1). Haze forbids a glass pane inside the very content it blurs (it
+ * throws: 「Layout nodes using Modifier.haze and Modifier.hazeChild can not be descendants of each other」 — the
+ * chat crashed on opening a real chat, its 「查看更早的消息」 and call lines being glass), so everything inside a
+ * source draws its glass without the blur.
+ */
+@Composable
+fun HazeSource(state: dev.chrisbanes.haze.HazeState?, modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+    Box(if (state != null) modifier.haze(state) else modifier) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalHaze provides null) { content() }
+    }
 }
 
 /** The page behind everything: day's sky to apricot, night's blue to plum. */

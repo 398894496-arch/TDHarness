@@ -200,6 +200,7 @@ fun Root(onSignedIn: () -> Unit) {
                     Phase.SignedIn -> Session.person?.let { Main(it, onSignedIn) } ?: Login()
                 }
                 LayerHost()
+                if (Session.phase == Phase.SignedIn) TopOverlays()
             }
         }
     }
@@ -245,6 +246,24 @@ fun FullScreen(close: () -> Unit, back: Boolean = true, content: @Composable and
         Layers.list.add(layer)
         onDispose { Layers.list.remove(layer) }
     }
+}
+
+/** The app's own blur source (the pages under the bars), one for the app. */
+object Glass { val main = HazeState() }
+
+/**
+ * Over everything, the layers too (the iPhone's banners and call screen sit above its sheets): a colleague's call,
+ * the banners, the toast. Their glass blurs the pages only where the pages are what lies under them — not over a chat
+ * room, 通讯录, a layer or the AI page (whose WebView the app cannot blur) — else it would show the hidden list.
+ */
+@Composable
+fun TopOverlays() {
+    val covered = Layers.list.isNotEmpty() || ChatShell.room.isNotEmpty() || ChatShell.contacts || Shell.tab == Tab.AI
+    CompositionLocalProvider(LocalHaze provides if (covered) null else Glass.main) {
+        BannerHost()
+        Toast()
+    }
+    Calls.call?.let { c -> CompositionLocalProvider(LocalHaze provides null) { CallScreen(c) } }
 }
 
 @Composable
@@ -356,7 +375,7 @@ private fun Toast() {
     val t = Desk.toast
     var last by remember { mutableStateOf("") }
     if (t != null) last = t
-    AnimatedVisibility(t != null, enter = fadeIn() + slideInVertically { -it / 2 }, exit = fadeOut(), modifier = Modifier.fillMaxWidth().zIndex(7f)) {
+    AnimatedVisibility(t != null, enter = fadeIn() + slideInVertically { -it / 2 }, exit = fadeOut(), modifier = Modifier.fillMaxWidth().zIndex(30f)) {
         Box(Modifier.fillMaxWidth().statusBarsPadding().padding(top = BAR.dp + 6.dp), contentAlignment = Alignment.TopCenter) {
             Text(last, color = p.ink, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 24.dp).liquid(p, wash = 0.6f).padding(horizontal = 16.dp, vertical = 10.dp))
         }
@@ -425,7 +444,7 @@ private fun Main(person: Person, onSignedIn: () -> Unit) {
     // A layer on top (a sheet, the pager) takes the back key itself (LayerHost).
     BackHandler(enabled = Layers.list.isEmpty() && (tab != Tab.AI || ChatShell.open())) { Shell.back() }
     val ime = WindowInsets.isImeVisible
-    val haze = remember { HazeState() }
+    val haze = Glass.main
     val density = LocalDensity.current
     val topInset = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
     val navInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
@@ -439,7 +458,7 @@ private fun Main(person: Person, onSignedIn: () -> Unit) {
             // so it stays out of what the bars blur and draws its own scroll edges (Desk.edges).
             DeskBackground()
             AiPage(person, topInset, navInset, tab == Tab.AI)
-            Box(Modifier.fillMaxSize().then(if (tab == Tab.AI) Modifier else Modifier.haze(haze))) {
+            HazeSource(if (tab == Tab.AI) null else haze, Modifier.fillMaxSize()) {
                 if (tab != Tab.AI) DeskBackground()
                 when (tab) {
                     Tab.History -> HistoryPage()
@@ -476,9 +495,6 @@ private fun Main(person: Person, onSignedIn: () -> Unit) {
             ChatOverlays(person)
             // Hidden, but in the window: the chat page that carries the calls (a page outside one stops its sound).
             Web(Desk.chatWeb, Modifier.size(1.dp).alpha(0.01f))
-            BannerHost()
-            Toast()
-            Calls.call?.let { CallScreen(it) }
         }
     }
     if (plus) PlusSheet(withDocs = true, close = { plus = false }) { pick ->
@@ -672,9 +688,10 @@ fun PhoneComposer(
         }
         Row(verticalAlignment = Alignment.Bottom) {
             Column(Modifier.weight(1f).liquid(p, RoundedCornerShape(26.dp), wash = 0.36f)) {
+                // By place, not by name: two attachments can share a name (the same doc twice).
                 if (attached.isNotEmpty()) LazyRow(Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(attached, key = { it }) { n ->
-                        Row(Modifier.animateItem().clip(CircleShape).background(p.ink.copy(alpha = 0.06f)).padding(horizontal = 10.dp, vertical = 6.dp),
+                    itemsIndexed(attached) { _, n ->
+                        Row(Modifier.clip(CircleShape).background(p.ink.copy(alpha = 0.06f)).padding(horizontal = 10.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically) {
                             Icon(Sf.paperclip, null, tint = p.ink, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
@@ -1385,7 +1402,8 @@ private fun SettingsSheet(person: Person, close: () -> Unit) {
     if (out) Confirm("退出登录？", "", "退出登录", { out = false }) {
         out = false
         close()
-        scope.launch { signOutAll(ctx) }
+        // Not in this sheet's scope: closing the sheet cancels it.
+        AppScope.launch { signOutAll(ctx) }
     }
 }
 

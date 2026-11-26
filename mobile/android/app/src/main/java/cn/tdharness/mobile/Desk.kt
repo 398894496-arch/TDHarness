@@ -328,6 +328,8 @@ object Desk {
         val now = sessions.filter { it.id in before && !it.busy && !(aiVisible && foreground && it.id == current) }.map { it.id }
         if (now.isNotEmpty()) answered = answered + now
         if (aiVisible && current in answered) answered = answered - current
+        // Gone from the list (archived, deleted on the computer): no dot, no badge.
+        if (sessions.isNotEmpty() && answered.any { id -> sessions.none { it.id == id } }) answered = answered.filterTo(HashSet()) { id -> sessions.any { it.id == id } }
     }
 
     val currentTitle: String

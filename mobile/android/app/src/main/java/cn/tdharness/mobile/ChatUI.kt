@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -106,6 +107,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.text.Collator
 import java.text.SimpleDateFormat
@@ -366,7 +369,7 @@ private fun ContactsPage() {
     val groups = all.filter { it.group }.sortedWith { a, b -> zh.compare(a.name, b.name) }
     val people = all.filter { !it.group }.sortedWith { a, b -> zh.compare(a.name, b.name) }
     Page { haze ->
-        Box(Modifier.fillMaxSize().haze(haze)) {
+        HazeSource(haze, Modifier.fillMaxSize()) {
             DeskBackground()
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = statusTop() + BAR.dp + 58.dp, bottom = navBottom() + 40.dp)) {
                 fun block(title: String, list: List<ChatTopic>) {
@@ -508,7 +511,7 @@ private fun ChatRoom(topic: String, person: Person) {
 
     Page { haze ->
         Box(Modifier.fillMaxSize().imePadding()) {
-            Box(Modifier.fillMaxSize().haze(haze)) {
+            HazeSource(haze, Modifier.fillMaxSize()) {
                 DeskBackground()
                 LazyColumn(Modifier.fillMaxSize(), state = state, reverseLayout = true,
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = statusTop() + BAR.dp + 8.dp, bottom = (if (ime) 0.dp else navBottom()) + 76.dp),
@@ -550,12 +553,13 @@ private fun ChatRoom(topic: String, person: Person) {
             }
             PhoneComposer(Modifier.align(Alignment.BottomCenter).then(if (ime) Modifier else Modifier.navigationBarsPadding()).padding(start = 14.dp, end = 14.dp, bottom = 6.dp),
                 placeholder = "发消息…", plus = { plus = true }, token = person.token,
-                onVoice = { v -> scope.launch { if (!Chat.sendVoice(topic, v.wav, v.ms, v.preview)) Desk.say("语音没发出去，检查一下网络") } },
-            ) { text -> if (text.isNotEmpty()) scope.launch { if (!Chat.sendText(topic, text)) Desk.say("没发出去，检查一下网络") } }
+                onVoice = { v -> AppScope.launch { if (!Chat.sendVoice(topic, v.wav, v.ms, v.preview)) Desk.say("语音没发出去，检查一下网络") } },
+            ) { text -> if (text.isNotEmpty()) AppScope.launch { if (!Chat.sendText(topic, text)) Desk.say("没发出去，检查一下网络") } }
         }
     }
     if (plus) PlusSheet(withDocs = true, close = { plus = false }) { pick ->
-        scope.launch {
+        // Not the room's scope: a file on its way still goes when the person leaves the chat.
+        AppScope.launch {
             when (pick) {
                 is PlusPick.File -> {
                     val f = pick.f
@@ -1104,7 +1108,7 @@ private fun ChatFileSheet(f: ChatFile, close: () -> Unit) {
             MenuItem("用其他 App 打开", Sf.share) { Desk.openBytes(ctx, f.name, f.mime, f.data) },
         ))
         if (forwarding) ForwardSheet(f.name, { topics, note, done ->
-            scope.launch {
+            AppScope.launch {
                 var ok = true
                 for (t in topics) {
                     if (!Chat.sendFile(t, f.name, f.mime, f.data)) ok = false
@@ -1116,29 +1120,53 @@ private fun ChatFileSheet(f: ChatFile, close: () -> Unit) {
     }
 }
 
-/** A PDF's pages as pictures, one under another. */
+/** A PDF's pages as pictures, one under another, each drawn when it comes on screen (a long report held whole ran out of memory). */
 @Composable
 private fun PdfPages(f: ChatFile) {
+    val p = LocalPalette.current
     val ctx = LocalContext.current
-    val pages = remember(f) { mutableStateListOf<ImageBitmap>() }
-    var failed by remember(f) { mutableStateOf(false) }
-    LaunchedEffect(f) {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val file = File(ctx.cacheDir, "view.pdf").apply { writeBytes(f.data) }
-                PdfRenderer(ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)).use { r ->
-                    for (i in 0 until minOf(r.pageCount, 60)) r.openPage(i).use { pg ->
-                        val w = 1200; val h = (w * pg.height / maxOf(1, pg.width))
-                        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.WHITE) }
-                        pg.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        withContext(Dispatchers.Main) { pages.add(bmp.asImageBitmap()) }
-                    }
-                }
-            }.onFailure { failed = true }
+    val lock = remember { Mutex() }
+    val doc = remember(f) {
+        runCatching {
+            val file = File(ctx.cacheDir, "view-${System.identityHashCode(f)}.pdf").apply { writeBytes(f.data) }
+            PdfRenderer(ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) to file
+        }.getOrNull()
+    }
+    DisposableEffect(doc) {
+        onDispose {
+            // Closed once no page is being drawn (the renderer allows one page at a time).
+            doc?.let { (r, file) -> Thread { kotlinx.coroutines.runBlocking { lock.withLock { runCatching { r.close() } } }; file.delete() }.start() }
         }
     }
-    if (failed) Text("这个 PDF 打不开，试试「用其他 App 打开」", color = LocalPalette.current.ink2, modifier = Modifier.padding(32.dp))
+    if (doc == null) {
+        Text("这个 PDF 打不开，试试「用其他 App 打开」", color = p.ink2, modifier = Modifier.padding(32.dp))
+        return
+    }
+    val r = doc.first
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(pages.size) { i -> Image(pages[i], null, Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.FillWidth) }
+        items(r.pageCount) { i ->
+            var page by remember(i) { mutableStateOf<ImageBitmap?>(null) }
+            var ratio by remember(i) { mutableFloatStateOf(1.414f) }
+            LaunchedEffect(i) {
+                page = withContext(Dispatchers.IO) {
+                    lock.withLock {
+                        runCatching {
+                            r.openPage(i).use { pg ->
+                                val w = 1000
+                                val h = maxOf(1, w * pg.height / maxOf(1, pg.width))
+                                ratio = h / w.toFloat()
+                                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.WHITE) }
+                                pg.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                bmp.asImageBitmap()
+                            }
+                        }.getOrNull()
+                    }
+                }
+            }
+            Box(Modifier.fillMaxWidth().aspectRatio(1f / ratio).clip(RoundedCornerShape(10.dp)).background(Color.White), contentAlignment = Alignment.Center) {
+                page?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillWidth) }
+                    ?: CircularProgressIndicator(Modifier.size(20.dp), color = Color.Gray, strokeWidth = 2.dp)
+            }
+        }
     }
 }

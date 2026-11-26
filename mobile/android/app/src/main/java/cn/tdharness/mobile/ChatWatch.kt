@@ -20,6 +20,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * New chat messages while the app is not on screen. Phones sold in China have no Google push, and each maker's own
@@ -72,7 +73,7 @@ class ChatWatch : Service() {
                     for (i in 0 until ev.length()) {
                         val e = ev.getJSONObject(i)
                         since = maxOf(since, e.optLong("id"))
-                        message(e.optString("from"), e.optBoolean("group"), e.optString("topic"))
+                        withContext(Dispatchers.Main) { message(e.optString("from"), e.optBoolean("group"), e.optString("topic")) }
                     }
                     since = maxOf(since, seq)
                 }
@@ -84,12 +85,14 @@ class ChatWatch : Service() {
             if (a != null && a.code == 200 && a.json.optBoolean("ok")) {
                 val seq = a.json.optLong("seq")
                 val ev = a.json.optJSONArray("events")
-                if (seq < aiSince) aiSince = seq // the server started again: its count began anew
-                else if (aiSince >= 0 && ev != null) for (i in 0 until ev.length()) {
-                    val e = ev.getJSONObject(i)
-                    aiDone(e.optString("session"), e.optString("title"), e.optString("preview"), e.optString("reason"))
+                if (seq < aiSince) aiSince = 0 // the server started again: everything it has now is new
+                else {
+                    if (aiSince >= 0 && ev != null) for (i in 0 until ev.length()) {
+                        val e = ev.getJSONObject(i)
+                        withContext(Dispatchers.Main) { aiDone(e.optString("session"), e.optString("title"), e.optString("preview"), e.optString("reason")) }
+                    }
+                    aiSince = maxOf(aiSince, seq)
                 }
-                aiSince = maxOf(aiSince, seq)
             }
             delay(if (inFront) 6000 else 8000)
         }
