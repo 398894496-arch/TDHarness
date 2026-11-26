@@ -344,6 +344,30 @@ function prepareHome(w) {
     fs.mkdirSync(base, { recursive: true });
     fs.cpSync(path.join(CFG.pack, "home"), home, { recursive: true });
   }
+  // company-desk-home-refresh-v1 (2026-11-26): the person's home was copied from the pack once, the first time, and never
+  // again, so every published fix to the desk's plugins (profiles/web/node_modules) stopped at the pack: the server desks
+  // ran the plugins of their first day (the sidebar of 2026-10-07; 「无法下载」). On a new pack its plugins, their
+  // package.json and the overlay template replace the person's (the overlay is rewritten below as on every start); the
+  // person's own things there (cordis.yml, the attachments, the sign-in) stay.
+  const packMark = path.basename(path.dirname(CFG.pack));
+  const markFile = path.join(home, ".pack-mark");
+  let hadMark = "";
+  try { hadMark = fs.readFileSync(markFile, "utf8").trim(); } catch {}
+  if (hadMark !== packMark) {
+    const src = path.join(CFG.pack, "home", "profiles", "web");
+    const dst = path.join(home, "profiles", "web");
+    if (fs.existsSync(path.join(src, "node_modules"))) {
+      const old = path.join(dst, "node_modules.old-" + Date.now().toString(36));
+      try { fs.renameSync(path.join(dst, "node_modules"), old); } catch {}
+      fs.cpSync(path.join(src, "node_modules"), path.join(dst, "node_modules"), { recursive: true });
+      fs.rmSync(old, { recursive: true, force: true });
+    }
+    for (const f of ["package.json", "overlay.yml"]) {
+      if (fs.existsSync(path.join(src, f))) fs.copyFileSync(path.join(src, f), path.join(dst, f));
+    }
+    fs.writeFileSync(markFile, packMark);
+    log("HOME_REFRESHED", w.login, (hadMark || "-") + "->" + packMark);
+  }
   // The overlay: the chats where the computers keep them, the company skills on this server's own disk.
   const ov = path.join(home, "profiles", "web", "overlay.yml");
   let t = fs.readFileSync(ov, "utf8");
