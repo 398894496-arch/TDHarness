@@ -4,6 +4,12 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.26.3
+
+**右栏白天和左栏一样是毛玻璃；工件可以下载**
+- 右栏（今天 · 聊天 · 工件）白天的背景（`company-dock-glass-light-v1`）：用户：「工件界面里 白天的皮肤背景改成跟其他一样」。原来白天是一张自己的天蓝到杏色渐变卡片，和左栏、中间不一样；现在和左栏一样是半透明的白色毛玻璃，透出整页的浅色背景。夜间不变。
+- 工件详情顶栏加「下载」（`company-art-download-v1`）：用户：「工件界面增加一个下载按钮」。在「转发」和「全屏」之间，存成工件原来的文件（名字和公司盘上的一样，一般是 `.html`），用浏览器打开就能看。
+
 ## 2026.11.26.2
 
 **服务器上的助手跟着新版本更新插件；下载按钮回来，和文件夹按钮并排**

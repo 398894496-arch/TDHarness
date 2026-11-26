@@ -487,6 +487,11 @@ window.__ModuleLoader__.load({
 			"}",
 			".cs-look-dock { top: 10px !important; right: 10px !important; bottom: 10px !important; border-radius: 24px; overflow: hidden; border: 1px solid var(--look-glass-line) !important;",
 			"  background: linear-gradient(180deg, var(--look-sky) 0%, var(--look-mist) 40%, var(--look-peach) 100%) !important; box-shadow: var(--look-shadow); }",
+			// company-dock-glass-light-v1 (the user, 2026-11-26: 「工件界面里 白天的皮肤背景改成跟其他一样」): by day the right column is
+			// the left column's frosted glass over the page's own wash, not a sky-to-apricot card of its own. Night as it was.
+			"body:not([data-ds-dark-theme]) .cs-look-dock { background: linear-gradient(180deg, rgba(255,255,255,.52), rgba(255,255,255,.34)) !important;",
+			"  border: 1px solid rgba(255,255,255,.7) !important; box-shadow: 0 1px 1px rgba(255,255,255,.6) inset, 0 10px 34px rgba(40,70,120,.10);",
+			"  backdrop-filter: blur(36px) saturate(190%); -webkit-backdrop-filter: blur(36px) saturate(190%); }",
 			".cs-dock-head { flex: none; display: flex; justify-content: center; padding: 12px 12px 6px; }",
 			".cs-dock-seg { position: relative; display: flex; gap: 2px; padding: 4px; border-radius: 22px; background: rgba(255,255,255,.55); border: 1px solid rgba(255,255,255,.7);",
 			"  box-shadow: 0 4px 18px rgba(40,70,120,.10); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }",
@@ -8760,6 +8765,9 @@ window.__ModuleLoader__.load({
 						icon(["M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z", "M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"])),
 					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "转发", title: "转发到聊天", onClick: function () { fwdHook[1](true); } },
 						icon(["M14 5l7 7-7 7", "M21 12H9a6 6 0 0 0-6 6v1"])),
+					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "下载", title: "下载到本机", disabled: !body,
+						onClick: function () { artDownload(a, body); } },
+						icon(["M12 4v11", "M7 10l5 5 5-5", "M5 20h14"])),
 					React.createElement("button", { type: "button", className: "cs-art-refresh cs-art-full-btn", "aria-label": full ? "退出全屏" : "全屏", title: full ? "退出全屏（Esc）" : "全屏",
 						onClick: function () { flowSwap(function () { fullHook[1](!full); }); } },
 						full ? icon(["M9 4v5H4", "M15 4v5h5", "M9 20v-5H4", "M15 20v-5h5"]) : icon(["M4 9V4h5", "M20 9V4h-5", "M4 15v5h5", "M20 15v5h-5"]))),
@@ -8775,6 +8783,24 @@ window.__ModuleLoader__.load({
 			return React.createElement(React.Fragment, null,
 				React.createElement("div", { className: "cs-art-empty" }, React.createElement("b", null, "正在全屏查看"), React.createElement("span", null, "按 Esc 或右上角按钮退出全屏。")),
 				ReactDOM.createPortal(React.createElement("div", { className: "cs-art-full", role: "dialog", "aria-label": a.title }, view), document.body), fwd);
+		}
+		// company-art-download-v1 (the user, 2026-11-26: 「工件界面增加一个下载按钮」): the artifact as its file (the page it is,
+		// the name it has on the share), saved by this window's own download.
+		function artDownload(a, body) {
+			if (!body || typeof body.content !== "string") return;
+			let name = String((a && a.path) || "").split(/[\\/]/).pop() || "";
+			if (!name) name = String((body.title || (a && a.title) || "工件")).replace(/[\\/:*?"<>|]+/g, " ").trim() || "工件";
+			if (!/\.[A-Za-z0-9]{1,8}$/.test(name)) name += ".html";
+			const url = URL.createObjectURL(new Blob([body.content], { type: "text/html;charset=utf-8" }));
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = name;
+			link.style.display = "none";
+			document.body.appendChild(link);
+			link.click();
+			link.remove();
+			setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+			try { csToast("已开始下载：" + name); } catch (err) {}
 		}
 		function artWhen(ms) {
 			if (!ms) return "";
