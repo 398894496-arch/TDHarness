@@ -661,6 +661,7 @@ async function onUpgrade(req, sock, head) {
     if (head && head.length) up.write(head);
     d.clients++;
     d.lastSeen = Date.now();
+    if (d.clients === 1) writePresence();
     let closed = false;
     // company-desk-hub-wslog-v1: how a live connection ended (which side first, how long, how much each way), so a
     // phone whose assistant cannot send can be read here; no content.
@@ -668,6 +669,7 @@ async function onUpgrade(req, sock, head) {
     sock.on("data", (x) => { toKernel += x.length; }); up.on("data", (x) => { toClient += x.length; });
     const done = (by) => () => {
       if (closed) return; closed = true; d.clients = Math.max(0, d.clients - 1); d.lastSeen = Date.now();
+      if (d.clients === 0) writePresence();
       log("WS_CLOSE", a.w.login, p, "by=" + by, "ms=" + (Date.now() - t0), "toKernel=" + toKernel, "toClient=" + toClient);
     };
     sock.on("close", done("client")); up.on("close", done("kernel"));
@@ -683,6 +685,31 @@ async function onUpgrade(req, sock, head) {
     log("WS_OPEN", a.w.login, p);
     up.pipe(sock); sock.pipe(up);
   });
+}
+
+// company-desk-hub-presence-v1 (the user, 2026-11-26: 「为什么我后台看不到谁在线了？我自己都不在线了」): 同事's 在线 was the
+// computers' seat heartbeat (desk_lease.py), and a person on the server desk holds no seat. Here a person with a page
+// connected (a computer's window, the phone) is online; runtime/desk-hub-presence.json says so for people-api.py:
+// { at, online: { login: last unix second with a page connected } }, written every 15 s and when a page comes or goes.
+const presence = {};
+const presenceFile = () => path.join(runtimeDir(), "desk-hub-presence.json");
+function loadPresence() {
+  try {
+    const j = JSON.parse(fs.readFileSync(presenceFile(), "utf8"));
+    for (const [k, v] of Object.entries((j && j.online) || {})) if (Number(v) > 0) presence[k] = Number(v);
+  } catch {}
+}
+let presenceWriting = false;
+function writePresence() {
+  const now = Math.floor(Date.now() / 1000);
+  for (const [login, d] of desks) if (d.clients > 0) presence[login] = now;
+  if (presenceWriting) return;
+  presenceWriting = true;
+  const file = presenceFile(), tmp = file + ".tmp-" + process.pid;
+  fs.promises.writeFile(tmp, JSON.stringify({ at: now, online: presence }))
+    .then(() => fs.promises.rename(tmp, file))
+    .catch(() => {})
+    .finally(() => { presenceWriting = false; });
 }
 
 function idleSweep() {
@@ -727,6 +754,8 @@ function serve() {
     srv.listen(CFG.port, "127.0.0.1", () => log("DESK_HUB_LISTEN", "127.0.0.1:" + CFG.port));
   });
   setInterval(idleSweep, 5 * 60 * 1000).unref();
+  loadPresence();
+  setInterval(writePresence, 15 * 1000).unref();
   return srv;
 }
 

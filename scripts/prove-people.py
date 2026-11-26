@@ -104,6 +104,22 @@ def main() -> None:
         check(models["grok-4.7"]["calls"] == 2 and models["grok-4.7"]["tokens"] == 1215 and models["grok-4.7"]["cached"] == 800, "by model %r" % models)
         floor = {r["login"]: r for r in box["floor"]}
         check(floor["tdh"]["tokens_7d"] == 1800 and floor["tdh"]["calls_7d"] == 2, "floor %r" % floor["tdh"])
+        check(floor["tdh"]["online"] is False, "no seat, no page: offline %r" % floor["tdh"])
+
+        # company-desk-hub-presence-v1: a page connected to the server desk (desk_hub.js's presence file) is online.
+        def floor_now():
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return {r["login"]: r for r in json.loads(resp.read().decode("utf-8"))["floor"]}
+        now = int(time.time())
+        (runtime / "desk-hub-presence.json").write_text(json.dumps({"at": now, "online": {"tdh": now - 5}}), encoding="utf-8")
+        f = floor_now()["tdh"]
+        check(f["online"] is True and f["last_login_unix"] == now - 5, "a page on the server desk: online %r" % f)
+        (runtime / "desk-hub-presence.json").write_text(json.dumps({"at": now, "online": {"tdh": now - 600}}), encoding="utf-8")
+        f = floor_now()["tdh"]
+        check(f["online"] is False and f["last_login_unix"] == now - 600, "gone ten minutes ago: offline, last seen kept %r" % f)
+        (runtime / "desk-hub-presence.json").write_text(json.dumps({"at": now - 600, "online": {"tdh": now - 600}}), encoding="utf-8")
+        check(floor_now()["tdh"]["online"] is False, "a stale file (the hub stopped) says nothing about now")
+        (runtime / "desk-hub-presence.json").unlink()
 
         # Departments: an older roster gets one seeded from its people, with a readable name.
         code, got = call(port, "GET")
