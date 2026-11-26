@@ -178,14 +178,18 @@ fun AvatarSetup(again: Boolean = false, close: () -> Unit = {}) {
                         }
                     }
                     Text(if (again) "取消" else "退出登录", color = p.ink2, fontSize = 13.sp, modifier = Modifier.padding(top = 10.dp).clip(CircleShape)
-                        .clickable { if (again) close() else scope.launch { signOutAll(view.context) } }.padding(horizontal = 14.dp, vertical = 8.dp))
+                        .clickable { if (again) close() else AppScope.launch { signOutAll(view.context) } }.padding(horizontal = 14.dp, vertical = 8.dp))
                 }
                 Spacer(Modifier.height(10.dp))
             }
         }
     }
-    if (again) Dialog(close, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) { body() } else body()
+    // The app's own layer (a Dialog window lost the navigation bar's room); at sign-in Main already puts it in one.
+    if (again) FullScreen(close) { body() } else body()
 }
+
+/** Work that must finish though the page that started it goes away (signing out, a file on its way). */
+val AppScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
 
 /** Signing out everywhere on this phone: the watch, the chat, the pages, the relay, then the session. */
 suspend fun signOutAll(ctx: android.content.Context) {

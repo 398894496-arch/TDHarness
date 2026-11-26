@@ -23,6 +23,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -67,6 +68,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 data class Call(
@@ -93,17 +95,25 @@ object Calls {
         Desk.openChat()
         if (watch?.isActive == true) return
         watch = scope.launch {
+            var empty = 0
             while (isActive) {
                 val w = Desk.chatWeb
                 if (w != null && Desk.chatState == DeskState.Ready) {
                     val got = CompletableDeferred<String>()
                     w.evaluateJavascript(PEEK) { got.complete(it ?: "") }
-                    val s = runCatching { org.json.JSONTokener(got.await()).nextValue() as? String }.getOrNull().orEmpty()
-                    if (s.isNotEmpty() && s != last) { last = s; take(s) }
+                    // A page that never answers (gone, hung) does not stop the watch.
+                    val raw = withTimeoutOrNull(3000) { got.await() }.orEmpty()
+                    val s = runCatching { org.json.JSONTokener(raw).nextValue() as? String }.getOrNull().orEmpty()
+                    if (s.isNotEmpty()) { empty = 0; if (s != last) { last = s; take(s) } }
+                    else if (++empty >= 30 && call == null) {
+                        // The page lost its chat (its desk restarted, its key changed): load it again.
+                        empty = 0; ready = false; last = ""
+                        Desk.retryChat()
+                    }
                 } else if (Desk.chatState == DeskState.Failed) {
                     delay(5000); Desk.retryChat()
                 }
-                delay(if (call != null) 200 else 600)
+                delay(if (call != null) 200 else if (ChatWatch.inFront) 600 else 1500)
             }
         }
     }
@@ -230,7 +240,7 @@ fun CallScreen(c: Call) {
     val peer = Chat.topics.firstOrNull { it.topic == c.topic }
     val name = peer?.name ?: "同事"
     val waiting = c.state == "dialing" || c.state == "ringing"
-    Box(Modifier.fillMaxSize().zIndex(9f)) {
+    Box(Modifier.fillMaxSize().zIndex(31f).clickable(remember { androidx.compose.foundation.interaction.MutableInteractionSource() }, null) {}) {
         DeskBackground()
         Box(Modifier.fillMaxSize().alpha(0.45f).blur(90.dp), contentAlignment = Alignment.Center) { Avatar(name, 420.dp, peer?.photo) }
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

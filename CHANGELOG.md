@@ -4,6 +4,12 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.26.7
+
+**安卓打开聊天闪退修好；全面审查后再修 13 处**
+- 聊天闪退：用户：「聊天，点头像，就闪退 你看一下 能不能全面审查完代码再发」。聊天室里的「查看更早的消息」、通话记录、TDH 助手卡片按钮用了毛玻璃，又处在被模糊的内容里面，模糊库直接报错（`Layout nodes using Modifier.haze and Modifier.hazeChild can not be descendants of each other`）。测试号的聊天只有两条消息，这些按钮没出现过，所以之前没测出来。现在模糊区域统一用 `HazeSource` 包住，里面的玻璃自动不取模糊，不会再嵌套。
+- 审查后修的：一次加几张照片给 AI 会因为重名闪退（照片名同一秒加序号，附件条按位置排）；长 PDF 一次画出全部页会撑爆内存（改为滚到哪页画哪页）；网慢时设头像可能把聊天名片上的名字清掉（必须先读到名片才写）；设置、文档翻页、各种面板打开时来电，通话界面被盖住（通话界面和横幅移到最上层）；聊天室打开时横幅玻璃里透出底下的会话列表；「更换头像」压住手势条；退出登录可能被中途打断；服务器重启后漏掉 AI 答完通知；聊天页坏了通话不会自己恢复；History 角标留着已删除的对话；离开聊天会把正在上传的文件取消；后台线程改界面状态；发失败后再发可能出现重复编号闪退。安卓包 1.3（2026112606）。
+
 ## 2026.11.26.6
 
 **安卓 AI 页的输入框和底栏不再透字**
