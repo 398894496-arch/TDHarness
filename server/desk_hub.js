@@ -42,6 +42,9 @@ const CFG = {
   dist: process.env.DESK_HUB_DIST || path.join(ROOT, "client-dist"),
   site: process.env.DESK_HUB_SITE || "https://tdharness.local:8443",
   skills: process.env.DESK_HUB_SKILLS || path.join(ROOT, "company", "_skills"),
+  // The folder the dsh-company share is (setup-server.ps1). company-server-share-path-v1: the kernels here read the
+  // share's own name (\\<host>\dsh-company\...) as this folder; the computers' relays map this folder back to the share.
+  company: process.env.DESK_HUB_COMPANY || path.join(ROOT, "company"),
   prefix: "/desk-hub",
   firstPort: Number(process.env.DESK_HUB_FIRST_PORT || 17900),
   maxStarts: 2,
@@ -407,7 +410,7 @@ async function launchAsUser(w, port) {
   const env = {
     DSH_HOME: p.home, USERPROFILE: p.profile, HOME: p.profile, GROK_API_KEY: w.kernel_token,
     DSH_PERMISSION_MODE: "workspace-write", NODE_EXTRA_CA_CERTS: path.join(CFG.pack, "company-ca.crt"),
-    NO_PROXY: "localhost,127.0.0.1", TDH_SERVER_DESK: "1",
+    NO_PROXY: "localhost,127.0.0.1", TDH_SERVER_DESK: "1", TDH_COMPANY_LOCAL: CFG.company,
   };
   const args = ["--require", shim, bin, "--profile", "web", "--patch", p.overlay, "--host", "127.0.0.1", "--port", String(port),
     "--no-open", "--trusted-host", "127.0.0.1", "--trusted-host", "localhost"];
@@ -543,7 +546,9 @@ async function onRequest(req, res) {
     // still open here (company-phone-stream-watch-v1: a connection the network dropped without a word looked open to
     // the phone, and the assistant's answers went nowhere — the user, 2026-11-26: 「对话没有响应了」).
     const sid = new URLSearchParams(search || "").get("stream") || "";
-    const out = { ok: true, login: a.w.login, state: d ? d.state : "down", clients: d ? d.clients : 0, boot: d && d.state === "up" ? String(d.pid) : "" };
+    // company: where the share is on this server (company-local-reveal-v1: the computer's relay shows a file the desk
+    // names by this server's path in its own file manager, on the share).
+    const out = { ok: true, login: a.w.login, state: d ? d.state : "down", clients: d ? d.clients : 0, boot: d && d.state === "up" ? String(d.pid) : "", company: CFG.company };
     if (sid) out.stream = liveStreams.has(a.w.login + " " + sid);
     const body = Buffer.from(JSON.stringify(out));
     res.writeHead(200, { "Content-Type": "application/json", "Content-Length": body.length, "Cache-Control": "no-store" }); res.end(body);

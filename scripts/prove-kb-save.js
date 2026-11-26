@@ -128,7 +128,8 @@ function post(port, token, route, body) {
     assert.strictEqual(r.http, 401, 'no login, no write');
 
     // The desk reads a local file into the request.
-    const desk = await import(path.join(ROOT, 'desk', 'plugins', 'company-shell', 'lib', 'index.js'));
+    // A file URL: on Windows an absolute path (d:\...) is not something import() takes.
+    const desk = await import(require('url').pathToFileURL(path.join(ROOT, 'desk', 'plugins', 'company-shell', 'lib', 'index.js')).href);
     const local = path.join(root, 'desk-file 价目表.xlsx');
     fs.writeFileSync(local, xlsx);
     const made = desk.kbSaveBody({ zone: 'company', folder: '01 公司介绍', path: local });

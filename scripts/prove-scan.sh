@@ -34,8 +34,10 @@ while IFS= read -r f; do
   esac
   for n in "${needles[@]}"; do
     # The desk's home folder on every site's PCs is ~/.dsh-company-rc8 (the templates'
-    # start scripts create it); the desk source has to name it. Elsewhere it is a leak.
-    case "$f|$n" in desk/*'|dsh-company-rc8') continue ;; esac
+    # start scripts create it), the same name on every site. The code that runs on or for those
+    # PCs has to name it: the desk source, the Windows app and the server's desk host, the site
+    # patches and their proofs. In documents it is still a leak.
+    case "$f|$n" in desk/*'|dsh-company-rc8'|server/*'|dsh-company-rc8'|patches/*'|dsh-company-rc8'|scripts/*'|dsh-company-rc8') continue ;; esac
     if grep -E -n "$n" "$f" >/dev/null 2>&1; then
       echo "SCAN_HIT=$f|$n"
       bad=1

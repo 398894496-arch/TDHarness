@@ -4,6 +4,18 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.26
+
+**AI 做的文件不再「无法下载」：卡片上不放下载按钮，点文件夹按钮在自己电脑上打开公司盘里的文件夹；对话里的图片不再裂；安卓 App；iPhone 版送 TestFlight 外部测试**
+- 服务器工作台的文件（`company-server-share-path-v1`、`company-local-reveal-v1`）：用户：「刚让他做了个三维模具图纸 无法下载」「直接不给下载按钮了 直接给一个从文件夹打开的按钮」。原因是会话里文件的地址是公司盘的网络名（`\\tdharness.local\dsh-company\…`），助手放在服务器上以后，服务器用这个名字找不到自己的盘，下载回了一段报错，存成了 `file.json`，对话里的图片也裂了。
+  - 服务器上的助手把这个名字当成服务器本机的公司目录（`desk_hub.js` 给内核 `TDH_COMPANY_LOCAL`），图片、预览恢复。
+  - 交付卡片去掉下载按钮（手机上保留）；文件夹按钮由这台电脑的本机中转（`desk-hub-relay.js` 的 `/_tdh/reveal`）在员工自己的电脑上打开公司盘里的文件夹并选中文件（Windows 资源管理器、Mac 访达）。侧边栏预览顶栏的下载按钮也换成「在文件夹中显示」。只认公司盘里的路径，别的网页调不动。
+  - 电脑端要更新到这一版才有本机中转的这一步；服务器上每个人的助手下次启动时换上新版本。
+- 手机端（iOS）：应用内通知和后台推送（APNs）、已读同步、深色模式；手机号验证码登录并勾选协议，用户协议、隐私政策、免责声明；助手就是服务器上自己的工作台，断线后自己接回（`X-TDH-Stream`，服务器 `/_hub/status?stream=`）；按住说话按下即响应（UIKit 手势，约 25 毫秒）；聊天走 WebSocket。送 TestFlight 外部测试审核。
+- 审核用的演示登录（`company-review-login-v1`）：`runtime/review-login.json` 里的一个号码用固定验证码登录、不发短信，到期自动失效。
+- 安卓 App（`company-android-v1`，`mobile/android`）：登录、服务器上的助手、聊天、历史对话、文档，后台收新消息通知。
+- CI：Windows 上 `prove-kb-save.js` 用文件 URL 导入；扫描允许程序代码里写员工电脑上的桌面目录名（每家都一样），文档里照旧拦。
+
 ## 2026.11.25.4
 
 **手机端重做成 History · AI · Chat · Docs 四页；手机聊天有了语音消息、语音通话、通讯录和建群；通话纪要挂断后几秒就出；Mac 通话不再每次弹麦克风提示**

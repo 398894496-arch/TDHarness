@@ -68,6 +68,8 @@ jobs:
         run: node scripts/prove-kb-groups.js
       - name: Prove an agent saves into the knowledge base by each zone's rule
         run: node scripts/prove-kb-save.js
+      - name: Prove a desk file is shown in this computer's folder, and the server reads the share's name as its own folder
+        run: node scripts/prove-local-reveal.js
       - name: Prove KRouter's nightly runs on the company memory, conversations stay private
         if: runner.os == 'Linux'
         run: node scripts/prove-krouter-nightly.js
