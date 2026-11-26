@@ -27,7 +27,9 @@ import kotlin.math.sqrt
 
 object Voice {
     private const val RATE = 16000
-    private const val MAX_SECONDS = 60
+    const val MAX_SECONDS = 60
+
+    fun granted(ctx: android.content.Context) = androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
     /** 0…1, how loud the last tenth of a second was (the panel's bars follow it). */
     var level by mutableFloatStateOf(0f)

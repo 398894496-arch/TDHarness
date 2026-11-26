@@ -22,7 +22,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = (project.findProperty("tdhVersionCode") as String?)?.toInt() ?: 1
-        versionName = "1.2"
+        versionName = "1.3"
     }
 
     signingConfigs {
@@ -62,5 +62,9 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     // company-android-chat-native-v1: the chat's WebSocket (Tinode), as the iPhone keeps one open.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // company-android-glass-v1: real frosted glass (a blur of what lies under the bars), as on the iPhone.
+    implementation("dev.chrisbanes.haze:haze:1.1.1")
+    // A picture's turn (EXIF) for the avatar, as the iPhone reads it.
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 }
