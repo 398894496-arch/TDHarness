@@ -14,6 +14,7 @@ Prints CARD_CHAT_PROVE_OK=1.
 from __future__ import annotations
 
 import importlib.util
+import datetime
 import json
 import os
 import subprocess
@@ -125,11 +126,13 @@ def main() -> None:
         time.sleep(1.0)
         check(len(said(n, timeout=0.5)) == n, "a card one gives oneself: nothing said")
         t2 = (mailbox(BOSS_TOK, {"action": "issue", "to": "wang", "title": "盘点仓库"}).get("ticket"))
-        mailbox(BOSS_TOK, {"action": "set-due", "ticket": t2, "due": "2026-11-25"})
+        # A date ahead of today (a fixed date turned into the past and set-due refused it).
+        due = (datetime.date.today() + datetime.timedelta(days=7)).isoformat()
+        mailbox(BOSS_TOK, {"action": "set-due", "ticket": t2, "due": due})
         mailbox(BOSS_TOK, {"action": "cancel", "ticket": t2, "reason": "不用了"})
         got = said(n + 3)
         check([p[2]["tdh_card"]["event"] for p in got[n:]] == ["issued", "due", "cancelled"], "due and void: %s" % [p[2] for p in got[n:]])
-        check(got[-1][3] == "【任务卡】盘点仓库：作废，不用了" and got[-2][3].startswith("【任务卡】盘点仓库：截止改为 2026-11-25"), "their words: %s" % [p[3] for p in got[n:]])
+        check(got[-1][3] == "【任务卡】盘点仓库：作废，不用了" and got[-2][3].startswith("【任务卡】盘点仓库：截止改为 " + due), "their words: %s" % [p[3] for p in got[n:]])
     finally:
         proc.terminate()
         proc.wait(timeout=10)
