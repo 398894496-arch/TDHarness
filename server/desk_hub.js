@@ -483,6 +483,39 @@ function chatHeaders(req, port) {
   if (h.referer) { try { const r = new URL(h.referer); h.referer = "http://127.0.0.1:" + port + r.pathname + r.search; } catch { delete h.referer; } }
   return h;
 }
+// company-old-webview-v1: the pages a phone or a computer opens (the desk's own, the chat's) get desk-polyfills.js in
+// front of their scripts, for a WebView older than what they are written for (an Android phone's Chrome 114).
+let polyfillTag = null;
+function polyfills() {
+  if (polyfillTag === null) {
+    try { polyfillTag = Buffer.from("<script>" + fs.readFileSync(path.join(__dirname, "desk-polyfills.js"), "utf8").replace(/<\/script/gi, "<\\/script") + "</script>"); }
+    catch { polyfillTag = Buffer.alloc(0); }
+  }
+  return polyfillTag;
+}
+const isPageRequest = (req, p) => req.method === "GET" && (p === "/" || p === "/index.html" || p === "/chat/" || p === "/chat/index.html");
+// A page answer with the polyfills put first in its head; anything else (not HTML, compressed, an error) as it came.
+function answerPage(ures, res, h) {
+  const type = String(h["content-type"] || "");
+  if (ures.statusCode !== 200 || !/text\/html/i.test(type) || h["content-encoding"] || !polyfills().length) {
+    res.writeHead(ures.statusCode || 502, h);
+    ures.pipe(res);
+    return;
+  }
+  const chunks = [];
+  ures.on("data", (c) => chunks.push(c));
+  ures.on("error", () => res.destroy());
+  ures.on("end", () => {
+    const html = Buffer.concat(chunks);
+    const at = /<head[^>]*>/i.exec(html.toString("latin1"));
+    const cut = at ? at.index + at[0].length : 0;
+    const body = Buffer.concat([html.subarray(0, cut), polyfills(), html.subarray(cut)]);
+    delete h["transfer-encoding"];
+    h["content-length"] = String(body.length);
+    res.writeHead(200, h);
+    res.end(body);
+  });
+}
 function kernelGet(d, pathName) {
   return new Promise((resolve) => {
     const r = http.request({ hostname: "127.0.0.1", port: d.port, method: "GET", path: withKernelToken(pathName, "", d, "GET"),
@@ -499,7 +532,10 @@ async function chatWhere(d) {
   let j = null;
   try { j = JSON.parse(r.body.toString("utf8")); } catch {}
   const m = j && j.ok && typeof j.url === "string" ? /^http:\/\/127\.0\.0\.1:(\d+)(\/.*)$/.exec(j.url) : null;
-  if (m) d.chatPort = Number(m[1]);
+  if (m) {
+    d.chatPort = Number(m[1]);
+    try { d.chatKey = new URL(m[2], "http://x").searchParams.get("k") || ""; } catch { d.chatKey = ""; }
+  }
   return { status: r.status || 502, json: m ? { ok: true, url: m[2] } : (j || { ok: false, error: "relay" }) };
 }
 async function chatPortOf(d) {
@@ -543,7 +579,7 @@ async function admit(req) {
 }
 
 async function onRequest(req, res) {
-  const { p, search } = innerPath(req.url);
+  let { p, search } = innerPath(req.url);
   if (p === "/_hub/health") { res.writeHead(200, { "Content-Type": "text/plain" }); res.end("ok"); return; }
   const a = await admit(req);
   if (a.deny) { const [c, h] = DENY[a.deny]; fail(res, c, a.deny, h); return; }
@@ -602,7 +638,19 @@ async function onRequest(req, res) {
   if (isChatPath(p)) {
     const cport = await chatPortOf(d);
     if (!cport) { fail(res, 503, "chat-relay", "聊天还没准备好，请稍后重试"); return; }
-    const cu = http.request({ hostname: "127.0.0.1", port: cport, method: req.method, path: p + search, headers: chatHeaders(req, cport) }, (ures) => {
+    // company-chat-key-heal-v1 (the user, 2026-11-26: 「我电脑端的聊天又挂了」): the chat relay's page key (?k=) is new at
+    // every start of the person's kernel; a chat column opened before kept the old one and got 「请从 TDH 窗口…打开」 on
+    // every request. The key keeps other programs on a computer off a loopback relay; here the person is already known
+    // by their sign-in, so the key a request carries becomes the relay's current one.
+    if (/[?&]k=/.test(search)) {
+      if (!d.chatKey) await chatWhere(d);
+      if (d.chatKey) { const q = new URLSearchParams(search); q.set("k", d.chatKey); search = "?" + q.toString(); }
+    }
+    const page = isPageRequest(req, p);
+    const ch = chatHeaders(req, cport);
+    if (page) delete ch["accept-encoding"];
+    const cu = http.request({ hostname: "127.0.0.1", port: cport, method: req.method, path: p + search, headers: ch }, (ures) => {
+      if (page) { answerPage(ures, res, Object.assign({}, ures.headers)); return; }
       res.writeHead(ures.statusCode || 502, ures.headers);
       ures.pipe(res);
     });
@@ -611,7 +659,10 @@ async function onRequest(req, res) {
     req.pipe(cu);
     return;
   }
-  const up = http.request({ hostname: "127.0.0.1", port: d.port, method: req.method, path: withKernelToken(p, search, d, req.method), headers: upstreamHeaders(req, d) }, (ures) => {
+  const page = isPageRequest(req, p);
+  const uh = upstreamHeaders(req, d);
+  if (page) delete uh["accept-encoding"];
+  const up = http.request({ hostname: "127.0.0.1", port: d.port, method: req.method, path: withKernelToken(p, search, d, req.method), headers: uh }, (ures) => {
     const h = Object.assign({}, ures.headers);
     // company-desk-hub-cache-v1: the desk's own built files carry their content's hash in their names
     // (/assets/index-DjTxlw_T.js) but came without a word on caching, so a phone fetched them anew at every start.
@@ -620,6 +671,7 @@ async function onRequest(req, res) {
       h["cache-control"] = "public, max-age=31536000, immutable";
     }
     if (h.location) { try { const l = new URL(h.location, "http://127.0.0.1:" + d.port); if (l.host === "127.0.0.1:" + d.port) h.location = l.pathname + l.search; } catch {} }
+    if (page) { answerPage(ures, res, h); return; }
     res.writeHead(ures.statusCode || 502, h);
     ures.pipe(res);
   });
@@ -633,7 +685,7 @@ const liveStreams = new Set();
 
 async function onUpgrade(req, sock, head) {
   sock.on("error", () => {});
-  const { p, search } = innerPath(req.url);
+  let { p, search } = innerPath(req.url);
   const a = await admit(req);
   if (a.deny) { sock.end("HTTP/1.1 " + DENY[a.deny][0] + " Denied\r\nConnection: close\r\n\r\n"); return; }
   let d = desks.get(a.w.login);
@@ -649,6 +701,7 @@ async function onUpgrade(req, sock, head) {
   const chat = isChatPath(p);
   const cport = chat ? await chatPortOf(d) : 0;
   if (chat && !cport) { sock.end("HTTP/1.1 503 Chat Not Ready\r\nConnection: close\r\n\r\n"); return; }
+  if (chat && /[?&]k=/.test(search) && d.chatKey) { const q = new URLSearchParams(search); q.set("k", d.chatKey); search = "?" + q.toString(); }
   const up = net.connect(chat ? cport : d.port, "127.0.0.1");
   up.on("error", () => { if (chat) d.chatPort = 0; sock.destroy(); });
   up.on("connect", () => {
@@ -784,6 +837,7 @@ async function selftest() {
   const kernel = http.createServer((req, res) => {
     seen.push({ url: req.url, host: req.headers.host, origin: req.headers.origin, auth: req.headers.authorization, method: req.method });
     if (req.url === "/api/workspace.create") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ type: "result", result: { workspaceId: "ws-1" } })); return; }
+    if (req.url.startsWith("/?")) { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end("<!doctype html><html><head><title>d</title><script>boot()</script></head><body></body></html>"); return; }
     res.writeHead(200, { "Content-Type": "text/plain" }); res.end("kernel:" + req.url);
   });
   kernel.on("upgrade", (req, sock) => { seen.push({ ws: req.url, host: req.headers.host, origin: req.headers.origin }); sock.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"); sock.on("data", (d) => sock.write("echo:" + d)); });
@@ -812,6 +866,9 @@ async function selftest() {
   // two windows at once: one start
   const [r1, r2] = await Promise.all([get("/desk-hub/", "dsh_aliceToken0123456789", { Origin: "http://127.0.0.1:17803" }), get("/desk-hub/api/x?y=1", "dsh_aliceToken0123456789")]);
   assert.strictEqual(r1.status, 200); assert.strictEqual(r2.status, 200);
+  // company-old-webview-v1: the page gets the polyfills before its own first script; other answers untouched.
+  assert.ok(/<head><script>[\s\S]*company-old-webview-v1[\s\S]*<\/script><title>d<\/title><script>boot\(\)/.test(r1.body), "polyfills first in the page's head");
+  assert.strictEqual(r2.body, "kernel:/api/x?y=1", "an API answer untouched");
   assert.strictEqual(launches, 1, "one start for two windows");
   const first = seen.find((s) => s.url.startsWith("/?"));
   assert.ok(first && /token=KTOK/.test(first.url), "GET / carries the kernel's start token");

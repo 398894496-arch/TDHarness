@@ -4,6 +4,14 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.26.4
+
+**旧版安卓手机（华为等）上 AI 页打不开、没有历史对话**
+- 安卓 App 1.1 照 iPhone 重做（`company-android-look-v1`，`company-android-voice-v1`）：用户：「安卓只是功能一样吗 为什么UI完全不一样」「重做并修连接」。日夜两套和 iPhone 一样的渐变背景、毛玻璃顶栏、浮动底栏（History · AI · Chat · Docs）；AI 页有问候和四张卡片、原生输入框（「+」加照片或文件、按住说话 / 打字）、思考时的熔岩灯在回答开始的位置；历史卡片分组、左滑归档；文档卡片和查看页（转发、交给 AI）；设置里有外观（跟随系统 / 浅色 / 深色）；登录页同 iPhone。按住说话录音后交给服务器转写（安卓自带的识别要谷歌服务，华为手机没有）。聊天在 1.2 也改成原生（`company-android-chat-native-v1`）：会话列表（圆形头像、未读数、置顶在前，左滑置顶 / 删除）、通讯录、聊天室（自己的话在右边浅蓝气泡，图片、文件卡、语音气泡带波形和转写、通话记录、TDH 助手卡片的「记下 / 不用」、任务卡），发文字、图片、文件，按住说话发语音消息；和 iPhone 一样直接连公司聊天（WebSocket）。
+- 电脑端聊天栏不会再因为服务器上的助手重启而打不开（`company-chat-key-heal-v1`）：用户：「我电脑端的聊天又挂了」。聊天页的地址带一把钥匙，助手每次重启都会换一把；之前打开的聊天栏拿着旧钥匙，只剩「请从 TDH 窗口最右边的聊天栏……打开」。现在 hub 已经凭登录确认是本人，转发时把旧钥匙换成当前的。
+- 安卓按住说话的转写（`company-phone-asr-v1`，`/company/ext/chat/asr`）：手机录 16 kHz 录音，交给服务器上聊天语音用的同一个识别服务，返回文字，不保存。登录返回里加上本人姓名，手机问候语用。
+- 旧网页内核也能用（`company-old-webview-v1`）：用户的华为手机（VDE-AL00）自带的网页内核是 Chrome 114。工作台页面第一行启动代码就用了 Chrome 119 才有的 `Promise.withResolvers`，后面还有 `AbortSignal.any`、迭代器的 `.some()` / `.find()`、集合运算等，旧内核上启动到第一行就停了：AI 页是电脑端的起始页（「选择一个工作区开始」），历史为空，实时连接每几秒断一次。现在 `desk_hub.js` 在工作台和聊天页的最前面放进 `server/desk-polyfills.js`，旧内核缺什么补什么（新内核原样不动）。手机上已装的安卓包不用重装。
+
 ## 2026.11.26.3
 
 **右栏白天和左栏一样是毛玻璃；工件可以下载，「交给助手」开新对话；同事页重新能看到谁在线；iPhone 思考动画回到回答的位置**

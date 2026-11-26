@@ -23,6 +23,9 @@ object Site {
         private set
     lateinit var ssl: SSLContext
         private set
+    /** The same trust as [ssl], for clients that want the manager itself (the chat's WebSocket). */
+    lateinit var trust: javax.net.ssl.X509TrustManager
+        private set
 
     fun load(ctx: Context) {
         val text = runCatching { ctx.assets.open("site.json").bufferedReader().use { it.readText() } }.getOrDefault("")
@@ -38,6 +41,7 @@ object Site {
         cas.forEachIndexed { i, pem -> ks.setCertificateEntry("ca$i", cf.generateCertificate(ByteArrayInputStream(pem.toByteArray()))) }
         val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm()).apply { init(ks) }
         ssl = SSLContext.getInstance("TLS").apply { init(null, tmf.trustManagers, null) }
+        trust = tmf.trustManagers.filterIsInstance<javax.net.ssl.X509TrustManager>().first()
     }
 
     /** The certificate must name the site's host (the server is reached by address: LAN, tunnel or cloud entry). */

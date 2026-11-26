@@ -60,6 +60,33 @@ object Desk {
     var arts by mutableStateOf<List<Art>?>(null)
     var chatState by mutableStateOf(DeskState.Idle)
 
+    // company-android-look-v1: what the iPhone's AI page follows (DeskTab.swift DeskModel).
+    /** How many messages the open conversation shows (-1 until the page says): 0 is a new, empty one. */
+    var flowCount by mutableStateOf(-1)
+    /** Thinking before its answer begins: the drops, where the page keeps room for them (its own pixels = dp). */
+    var thinking by mutableStateOf(false)
+    var thinkingAt by mutableStateOf(floatArrayOf(0f, 0f, 0f, 0f))
+    var sending by mutableStateOf(false)
+    /** Something was sent in the conversation now open: the greeting never comes back over it. */
+    var saidHere by mutableStateOf(false)
+    /** A short word over everything (已转发、已放进 AI…), gone by itself. */
+    var toast by mutableStateOf<String?>(null)
+    private var toastJob: kotlinx.coroutines.Job? = null
+    private var lookJs = ""
+    private var dark = true
+
+    /** The AI tab is in front (a finished answer there needs no word elsewhere). */
+    var aiVisible = false
+    val currentBusy: Boolean get() = sessions.firstOrNull { it.id == current }?.busy ?: false
+    /** The greeting and its four cards over an empty conversation. */
+    val welcome: Boolean get() = state == DeskState.Ready && flowCount == 0 && !currentBusy && !sending && !saidHere
+
+    fun say(text: String) {
+        toast = text
+        toastJob?.cancel()
+        toastJob = scope.launch { delay(2600); if (toast == text) toast = null }
+    }
+
     /** Set by MainActivity: the file picker and the system's permission asks the pages need. */
     var chooseFiles: ((ValueCallback<Array<Uri>>, WebChromeClient.FileChooserParams) -> Unit)? = null
     var askMic: ((granted: (Boolean) -> Unit) -> Unit)? = null
@@ -82,6 +109,7 @@ object Desk {
 
     fun create(ctx: Context) {
         if (web != null) return
+        if (lookJs.isEmpty()) lookJs = runCatching { ctx.assets.open("look.js").bufferedReader().use { it.readText() } }.getOrDefault("")
         web = makeWeb(ctx, desk = true)
         chatWeb = makeWeb(ctx, desk = false)
     }
@@ -110,6 +138,7 @@ object Desk {
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 WebViewCompat.addDocumentStartJavaScript(this, SHIM, setOf("*"))
             }
+            setBackgroundColor(Color.TRANSPARENT)
         } else {
             addJavascriptInterface(Bridge(), "TDHAndroid")
         }
@@ -120,7 +149,12 @@ object Desk {
 
             override fun onPageFinished(view: WebView, url: String?) {
                 if (url == null || !url.startsWith("http://127.0.0.1:")) return
-                if (desk) pageReady() else if (chatState == DeskState.Opening) chatState = DeskState.Ready
+                if (desk) {
+                    // The page's look (the iPhone's), its day or night, and the room under the app's bars.
+                    view.evaluateJavascript("window.__tdhDark=" + dark + ";" + lookJs, null)
+                    sendInsets()
+                    pageReady()
+                } else if (chatState == DeskState.Opening) chatState = DeskState.Ready
             }
 
             override fun onReceivedError(view: WebView, req: WebResourceRequest, err: android.webkit.WebResourceError) {
@@ -211,9 +245,6 @@ object Desk {
                 flush()
             }
             load()
-            // The chat page too, a moment later (the chat tab then opens at once).
-            delay(2500)
-            openChat()
         }
         startHealing()
     }
@@ -252,6 +283,7 @@ object Desk {
         if (state == DeskState.Ready) return
         state = DeskState.Ready
         readyAt = System.currentTimeMillis()
+        learnCan()
         val want = pendingOpen
         pendingOpen = null
         if (want != null) js("if (window.tdhPhone) tdhPhone.open(${JSONObject.quote(want)})")
@@ -259,9 +291,26 @@ object Desk {
     }
 
     private fun take(m: JSONObject) {
+        when (m.optString("type")) {
+            "flow" -> { flowCount = m.optInt("count", -1); if (flowCount > 0) sending = false; return }
+            "thinking" -> {
+                thinking = m.optBoolean("on")
+                if (thinking) thinkingAt = floatArrayOf(m.optDouble("x").toFloat(), m.optDouble("y").toFloat(), m.optDouble("w", 56.0).toFloat(), m.optDouble("h", 28.0).toFloat())
+                return
+            }
+            "copy" -> {
+                val ctx = web?.context ?: return
+                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("TDH", m.optString("text")))
+                say("已复制")
+                return
+            }
+        }
         if (m.optString("type") != "state") return
         if (state != DeskState.Ready) pageReady()
+        val was = current
         current = m.optString("current")
+        if (current != was) saidHere = false
         val list = m.optJSONArray("sessions") ?: JSONArray()
         sessions = (0 until list.length()).map { i ->
             val s = list.getJSONObject(i)
@@ -280,9 +329,98 @@ object Desk {
         js("if (window.tdhPhone) tdhPhone.open(${JSONObject.quote(id)})")
     }
 
-    fun newChat() { js("if (window.tdhPhone) tdhPhone.newChat()") }
+    fun newChat() { saidHere = false; js("if (window.tdhPhone) tdhPhone.newChat()") }
 
-    fun remove(id: String) { js("if (window.tdhPhone && tdhPhone.remove) tdhPhone.remove(${JSONObject.quote(id)})") }
+    /** Day or night for the page too (the app's appearance, not the system's). */
+    fun setDark(d: Boolean) {
+        dark = d
+        js("window.__tdhDark=$d; if (window.__tdhSetDark) __tdhSetDark($d)")
+    }
+
+    /** The app's bars over the page (dp = the page's own pixels): the conversation scrolls beneath them. */
+    private var insets = 0 to 0
+    fun setInsets(top: Int, bottom: Int) { insets = top to bottom; sendInsets() }
+    private fun sendInsets() { js("if (window.tdhPhone && tdhPhone.insets) tdhPhone.insets(${insets.first}, ${insets.second})") }
+
+    /** Says it to the assistant in the open conversation (a new one when none is open): true when it went. */
+    fun send(text: String, done: (Boolean) -> Unit) {
+        if (state != DeskState.Ready) { done(false); return }
+        sending = true
+        val id = "send" + System.nanoTime()
+        results[id] = { s ->
+            val ok = runCatching { JSONObject(s).optBoolean("ok") }.getOrDefault(false)
+            if (ok) { saidHere = true; attached = emptyList(); scope.launch { delay(8000); sending = false } } else { sending = false; Diag.say("desk", "send: $s") }
+            done(ok)
+        }
+        js("""(async function (t) {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const answer = (o) => TDHAndroid.result(${JSONObject.quote(id)}, JSON.stringify(o));
+  try {
+    if (!window.tdhPhone) return answer({ok:false, error:'not-ready'});
+    const cards = () => [...document.querySelectorAll("[data-composer-card] button")].some(x => /^(移除文件|Remove file)/.test(x.getAttribute('aria-label') || ''));
+    let put = tdhPhone.ask(t);
+    if (!put && cards()) { for (let i = 0; i < 5 && !put; i++) { await wait(400); put = tdhPhone.ask(t); } if (!put) return answer({ok:false, error:'ask-failed-with-files'}); }
+    if (!put) { tdhPhone.newChat(); await wait(700); put = tdhPhone.ask(t); }
+    if (!put && t) return answer({ok:false, error:'no-session'});
+    for (let i = 0; i < 20; i++) {
+      await wait(60);
+      const b = document.querySelector("[data-composer-card] button[aria-label='发送消息'], [data-composer-card] button[aria-label='Send message']");
+      if (b && !b.disabled && b.getAttribute('aria-disabled') !== 'true') { b.click(); return answer({ok:true}); }
+    }
+    answer({ok:false, error:'no-send'});
+  } catch (e) { answer({ok:false, error:String(e && e.message || e)}); }
+})(${JSONObject.quote(text)})""")
+    }
+
+    /** A page call that answers later: [expr] is a JS expression (a value or a promise); [done] gets its JSON. */
+    fun ask(expr: String, done: (String) -> Unit) {
+        if (state != DeskState.Ready) { done("{}"); return }
+        val id = "ask" + System.nanoTime()
+        results[id] = done
+        js("Promise.resolve().then(function () { return $expr; }).then(function (r) { TDHAndroid.result(${JSONObject.quote(id)}, JSON.stringify(r === undefined ? null : r)); }, function (e) { TDHAndroid.result(${JSONObject.quote(id)}, JSON.stringify({ok:false, error:String(e && e.message || e)})); })")
+    }
+
+    /** Set by MainActivity: the phone's own picker for 「+」 (the AI composer, a chat's composer). */
+    var pickForAi: (() -> Unit)? = null
+    var pickForChat: (() -> Unit)? = null
+
+    /** A file's bytes, shown by whatever app on the phone opens its kind (a chat's file, a picture). */
+    fun openBytes(ctx: Context, name: String, mime: String, bytes: ByteArray) {
+        val f = File(File(ctx.cacheDir, "files"), safeName(name)).apply { parentFile?.mkdirs(); writeBytes(bytes) }
+        openFile(ctx, f, mime.takeIf { it.isNotBlank() && it != "image/*" })
+    }
+    /** Files put into the assistant's composer, to go with the next thing said (their names, for the native composer). */
+    var attached by mutableStateOf<List<String>>(emptyList())
+
+    fun askFile(name: String, mime: String, bytes: ByteArray) {
+        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        ask("window.tdhPhone && tdhPhone.askFile ? tdhPhone.askFile(${JSONObject.quote(name)}, ${JSONObject.quote(mime)}, ${JSONObject.quote(b64)}) : {ok:false}") { s ->
+            if (runCatching { JSONObject(s).optBoolean("ok") }.getOrDefault(false)) { attached = attached + name; say("已放进对话框，说说要怎么处理它") }
+            else say("「$name」没放进去，稍后再试")
+        }
+    }
+
+    /** An attached file out of the composer again: the page's own 「移除文件 <name>」 button on its file card. */
+    fun detach(name: String) {
+        attached = attached - name
+        js("(function(n){var b=[].slice.call(document.querySelectorAll('[data-composer-card] button')).find(function(x){var l=x.getAttribute('aria-label')||'';return /^(移除文件|Remove file)/.test(l)&&l.indexOf(n)>=0});if(b)b.click()})(${JSONObject.quote(name)})")
+    }
+
+    /** What History's swipe may do (the kernel archives; deleting only where it can). */
+    var canArchive by mutableStateOf(false)
+    var canRemove by mutableStateOf(false)
+    fun learnCan() {
+        ask("window.tdhPhone && tdhPhone.can ? tdhPhone.can() : {}") { s ->
+            val j = runCatching { JSONObject(s) }.getOrNull() ?: return@ask
+            canArchive = j.optBoolean("archive"); canRemove = j.optBoolean("remove")
+        }
+    }
+
+    fun archive(id: String, done: (Boolean) -> Unit) =
+        ask("window.tdhPhone && tdhPhone.archive ? tdhPhone.archive(${JSONObject.quote(id)}) : {ok:false}") { s -> done(runCatching { JSONObject(s).optBoolean("ok") }.getOrDefault(false)) }
+
+    fun remove(id: String, done: (Boolean) -> Unit = {}) =
+        ask("window.tdhPhone && tdhPhone.remove ? tdhPhone.remove(${JSONObject.quote(id)}) : {ok:false}") { s -> done(runCatching { JSONObject(s).optBoolean("ok") }.getOrDefault(false)) }
 
     fun loadArts() {
         val id = "arts" + System.nanoTime()
