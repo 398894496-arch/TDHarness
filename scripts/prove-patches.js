@@ -134,6 +134,14 @@ const marks = [
   // dsh-client-ui-chat first ships; it must land there and stay off 0.1.1.
   // The markdown slot belongs to 0.1.2 up to (not including) 0.1.6; later kernels are left alone.
   ['MARKDOWN_SLOT', chatText.includes('company-assistant-markdown-slot-v1') === (goldIs012Line && goldBelow016 && chatText !== '')],
+  // 0.1.7+ presets are dsh-web-app patch rows: the session's own skill-filesystem and
+  // agent-instructions rows must carry the company skills cache and .company-root.
+  ['PRESET_LAYOUT', (() => {
+    const f = path.join(dst, 'node_modules', '@deepseek-ai', 'dsh-web-app', 'presets', 'standard.patch.yml');
+    if (!fs.existsSync(f)) return true;
+    const t = fs.readFileSync(f, 'utf8');
+    return t.includes('company-preset-patch-layout-v1') && t.includes("'.dsh-company-rc8', 'skills'") && t.includes('- .company-root');
+  })()],
 ];
 let bad = 0;
 for (const [name, ok] of marks) {

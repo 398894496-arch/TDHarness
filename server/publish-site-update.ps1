@@ -15,6 +15,7 @@ $SitePy = Join-Path $Server 'site-cs.py'
 $Patches = Join-Path $Server 'site-patches'
 $SignDir = 'D:\dsh\runtime\pack-sign'
 $Pub = Join-Path $SignDir 'pack-sign.pub'
+$SiteSkills = if ($env:TDH_SITE_SKILLS) { $env:TDH_SITE_SKILLS } else { 'D:\dsh\company\_skills' }
 
 function Find-Tool([string[]]$Names, [string[]]$Extra) {
   foreach ($n in $Names) {
@@ -44,6 +45,23 @@ Write-Output ('BACKUP=' + $bak)
 & $py $DeltaPy remember --dist $Dist --history $History
 if ($LASTEXITCODE -ne 0) { throw 'delta-remember-failed' }
 
+# 1b. Staging (company-publish-staged-v1): every step below works on copies in client-stage, and step 6
+#     moves the finished files into the download folder at the end. Until then desks keep downloading the
+#     live packs and the version.json that matches them. 2026-11-19: four publishes in one evening each
+#     changed the live packs for 15 minutes before version.json followed, and a desk updating meanwhile
+#     failed its check (tree-restore-failed). A publish that fails now leaves the live folder untouched.
+$Live = $Dist
+$Stage = 'D:\dsh\client-stage'
+if (Test-Path -LiteralPath $Stage) { Remove-Item -Recurse -Force -LiteralPath $Stage }
+New-Item -ItemType Directory -Force -Path $Stage | Out-Null
+foreach ($name in 'CompanyDesk-win.zip', 'CompanyDesk-mac.zip') {
+  $p = Join-Path $Live $name
+  if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $Stage $name) }
+}
+$Dist = $Stage
+$env:TDH_DIST = $Stage
+Write-Output ('STAGE=' + $Stage)
+
 # 2. Site patches (idempotent). With this server's Caddy root exported, desks reach the
 #    gateway over TLS (8443/gw) and carry the root; TDHarness.exe in step 3 follows the same file.
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Server 'export-ca.ps1')
@@ -58,6 +76,12 @@ foreach ($name in 'CompanyDesk-win.zip', 'CompanyDesk-mac.zip') {
   if (Test-Path -LiteralPath $DeskPlugins) {
     & $py $SitePy --site $SiteYml overlay-zip --src $zip --plugins $DeskPlugins
     if ($LASTEXITCODE -ne 0) { throw ('overlay-failed-' + $name) }
+  }
+  # company-site-skills-in-pack-v1: this site's skills (the share's _skills: mail, ERP, production, chat...) in the
+  # pack too, so a desk that cannot read the share at boot still has them. The share still wins where it is read.
+  if (Test-Path -LiteralPath $SiteSkills) {
+    & $py $SitePy --site $SiteYml put-site-skills --src $zip --file $SiteSkills
+    if ($LASTEXITCODE -ne 0) { throw ('site-skills-failed-' + $name) }
   }
   $a = @((Join-Path $Patches 'apply_site_patches.py'), '--zip', $zip, '--patches', $Patches, '--pub', $Pub)
   if (Test-Path -LiteralPath $Ca) { $a += @('--ca', $Ca) }
@@ -76,6 +100,12 @@ if ($tn -match 'TAILNET_SITE_OK=1') {
   & $py $SitePy --site $SiteYml put-zip --src (Join-Path $Dist 'CompanyDesk-win.zip') --file 'D:\dsh\runtime\tailscale\vendor' --name 'CompanyDesk/vendor/'
   if ($LASTEXITCODE -ne 0) { throw 'tailnet-vendor-put-failed' }
   Copy-Item -Force 'D:\dsh\runtime\tailscale\vendor\tailscale-setup.msi' (Join-Path $Dist 'tailscale-setup.msi')
+  # company-mac-tailnet-join-v1: the Mac pack gets the same files and Tailscale's pkg (mac-join-off-lan.sh).
+  $macZip = Join-Path $Dist 'CompanyDesk-mac.zip'
+  if ((Test-Path -LiteralPath $macZip) -and (Test-Path -LiteralPath 'D:\dsh\runtime\tailscale\vendor-mac\Tailscale.pkg')) {
+    & $py $SitePy --site $SiteYml put-zip --src $macZip --file 'D:\dsh\runtime\tailscale\vendor-mac' --name 'CompanyDesk/vendor/'
+    if ($LASTEXITCODE -ne 0) { throw 'tailnet-vendor-mac-put-failed' }
+  }
 }
 
 # 2c. Desktop control (company-desktop-cua-v1): Cua Driver from the release archives that
@@ -124,6 +154,14 @@ if (Test-Path -LiteralPath $OclCur) {
   Write-Output 'OPENCLI_SKIP=not-fetched (run server\fetch-opencli.ps1)'
 }
 
+# 2e. Microsoft's WebView2 bootstrapper beside the Setup (company-compat-v1): a desk without the WebView2 Runtime
+#     (Windows 10 with updates turned off) installs it from here before it needs it.
+$wv = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Server 'fetch-webview2.ps1') 2>&1 | Out-String
+Write-Output $wv.Trim()
+if ($wv -match 'WEBVIEW2_SETUP_OK=1') {
+  Copy-Item -Force 'D:\dsh\runtime\vendor\webview2\MicrosoftEdgeWebview2Setup.exe' (Join-Path $Dist 'MicrosoftEdgeWebview2Setup.exe')
+}
+
 # 3. TDHarness.exe carries the build mark and the site address; Setup.exe carries the site address
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Server 'compile-apphost.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'compile-apphost-failed' }
@@ -138,6 +176,18 @@ foreach ($name in 'CompanyDesk-win.zip', 'CompanyDesk-mac.zip') {
   if ($LASTEXITCODE -ne 0) { throw ('reseal-failed-' + $name) }
   Write-Output ($name + ' ' + $o)
 }
+
+# 4b. The Mac download (company-mac-app-v1): TDHarness.app around this pack, in a folder with a
+#     link to /Applications, so a person drags it in. Built after the reseal so its BUILD.json is
+#     the final one. The download page comes from server\download.html on every publish.
+$MacApp = Join-Path (Split-Path -Parent $Server) 'desk\mac-app'
+$MacZip = Join-Path $Dist 'CompanyDesk-mac.zip'
+if ((Test-Path -LiteralPath $MacZip) -and (Test-Path -LiteralPath (Join-Path $MacApp 'TDHarness'))) {
+  $o = & $py $SitePy --site $SiteYml mac-app-zip --src $MacZip --file $MacApp --out (Join-Path $Dist 'TDHarness-mac.zip')
+  if ($LASTEXITCODE -ne 0) { throw 'mac-app-zip-failed' }
+  Write-Output ('TDHarness-mac.zip ' + $o)
+}
+Copy-Item -Force -LiteralPath (Join-Path $Server 'download.html') -Destination (Join-Path $Dist 'index.html')
 
 # 5. version.json + signature
 $winP = Join-Path $Dist 'CompanyDesk-win.zip'
@@ -166,6 +216,12 @@ $signRc = $LASTEXITCODE
 $ErrorActionPreference = 'Stop'
 Write-Output $signOut.Trim()
 if ($signRc -ne 0) { throw 'pack-sign-failed' }
+
+# 6. Go live: the finished files into the download folder, version.json and its signature last.
+$o = & $py $SitePy --site $SiteYml go-live --src $Stage --out $Live
+if ($LASTEXITCODE -ne 0) { Write-Output $o; throw 'go-live-failed' }
+Write-Output ($o | Select-String -Pattern 'GO_LIVE_FILES|LIVE_PRUNED' | ForEach-Object { $_.Line })
+Remove-Item -Recurse -Force -LiteralPath $Stage -ErrorAction SilentlyContinue
 Write-Output ('WIN_MARK=' + $winMark)
 Write-Output ('MAC_MARK=' + $macMark)
 Write-Output 'PUBLISH_OK=1'

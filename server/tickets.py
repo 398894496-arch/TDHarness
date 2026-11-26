@@ -9,6 +9,7 @@ task_card tool.
 Life of a card:  待提交 --submit--> 待审批 --verdict--> 已通过 (archived)
                     ^                    |         \\--> 未通过 --submit--> 待审批
                     \\---- withdraw -----/
+Only the issuer and the assignee see a card (company-ticket-p2p-v1); the issuer approves it.
 The issuer (or an admin) can also set a due time, hand the card to someone else,
 or cancel it (已作废, archived, with a reason); anyone who sees a card can comment.
 collect_notices() says who should be told what (due soon, overdue), once each per day.
@@ -40,6 +41,7 @@ CLOSED_STATES = ("已通过", "已作废")
 COMMENT_MAX = 2000
 COMMENTS_MAX = 200
 SOON_MS = 24 * 3600 * 1000
+HOUR_MS = 3600 * 1000
 
 
 def parse_due(value) -> int:
@@ -125,29 +127,19 @@ class Board:
         os.replace(tmp, self.path)
 
     # -- who may see / do what ---------------------------------------------
+    # company-ticket-p2p-v1: a card is between the one who issued it and the one who does it, and
+    # nobody else, whatever their role (2026-11-19: an admin saw a card sent to someone else; the rule
+    # was "admins see every card, a director sees the dept's"). Roles still decide who may issue to whom.
     @staticmethod
     def can_see(who: dict, card: dict) -> bool:
-        role = who.get("role")
         login = who.get("login")
-        if role == "admin":
-            return True
-        if card.get("to") == login or card.get("from") == login:
-            return True
-        return role == "director" and card.get("dept") == who.get("dept")
+        return bool(login) and (card.get("to") == login or card.get("from") == login)
 
     @staticmethod
     def can_review(who: dict, card: dict) -> bool:
-        """Nobody approves their own work. The one exception is an admin's card to
-        themselves: there is nobody above to ask."""
-        role = who.get("role")
-        login = who.get("login")
-        if card.get("to") == login:
-            return role == "admin" and card.get("from") == login
-        if role == "admin":
-            return True
-        if role == "director" and card.get("dept") == who.get("dept"):
-            return True
-        return card.get("from") == login
+        """The issuer approves. A card someone gave themselves is their own to-do: nobody else
+        sees it, so they close it themselves."""
+        return bool(who.get("login")) and card.get("from") == who.get("login")
 
     @staticmethod
     def may_issue(who: dict, target: dict) -> bool:
@@ -615,7 +607,8 @@ def fmt_ms(ms: int) -> str:
 def collect_notices(board: "Board", people: dict, now: int | None = None) -> list[dict]:
     """Who to tell what about due times, once per card and kind per day. Marks what it
     returns as told and saves, so call it under the people service's lock.
-    Kinds: soon (due within 24h: the assignee), overdue (the assignee and the issuer)."""
+    Kinds: soon (due within 24h: the assignee), hour (a due with a time of day, within the hour: the
+    assignee; company-chat-tasks-v1), overdue (the assignee and the issuer)."""
     now = now or now_ms()
     day = datetime.fromtimestamp(now / 1000).strftime("%Y-%m-%d")
     data = board.load()
@@ -625,26 +618,35 @@ def collect_notices(board: "Board", people: dict, now: int | None = None) -> lis
         if not due or card.get("state") not in OPEN_STATES:
             continue
         told = card.setdefault("reminded", {})
-        kind = "overdue" if now > due else ("soon" if due - now <= SOON_MS else "")
+        timed = datetime.fromtimestamp(due / 1000).strftime("%H:%M:%S") != "23:59:59"
+        if now > due:
+            kind = "overdue"
+        elif timed and due - now <= HOUR_MS:
+            kind = "" if told.get("hour") else "hour"        # once; not a second "soon" after it
+        else:
+            kind = "soon" if due - now <= SOON_MS else ""
         if not kind or told.get(kind) == day:
             continue
         told[kind] = day
         to = [card.get("to")] + ([card.get("from")] if kind == "overdue" and card.get("from") != card.get("to") else [])
-        word = "已超期" if kind == "overdue" else "快到期"
+        word = {"overdue": "已超期", "hour": "一小时内到期", "soon": "快到期"}[kind]
+        owner = (people.get(card.get("to")) or {}).get("name") or card.get("to")
         for login in to:
             if login in people:
                 out.append({"to": login, "kind": kind, "ticket": card["id"],
                             "text": "任务卡%s：「%s」截止 %s，负责人 %s，状态 %s" % (
-                                word, card.get("title"), fmt_ms(due), card.get("to"), card.get("state"))})
+                                word, card.get("title"), fmt_ms(due), owner, card.get("state"))})
     if out:
         board.save(data)
     return out
 
 
-def digest(board: "Board", people: dict, now: int | None = None) -> str:
-    """One morning page for an admin: open cards per person, overdue first, and what waits for review."""
+def digest(board: "Board", people: dict, now: int | None = None, viewer: str | None = None) -> str:
+    """One morning page: open cards per person, overdue first, and what waits for review. With a
+    viewer, only the cards that person issued or does (company-ticket-p2p-v1)."""
     now = now or now_ms()
-    rows = [c for c in board.load()["tickets"] if c.get("state") not in CLOSED_STATES]
+    rows = [c for c in board.load()["tickets"] if c.get("state") not in CLOSED_STATES
+            and (viewer is None or viewer in (c.get("from"), c.get("to")))]
     if not rows:
         return ""
     lines = ["任务卡日报 %s：进行中 %d 张" % (datetime.fromtimestamp(now / 1000).strftime("%m-%d"), len(rows))]

@@ -6,6 +6,9 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
 		const React = require("react");
+		// The host's static modules include react-dom (createPortal): 聊天's own column at the window's right
+		// edge is drawn on document.body, outside the kernel's frame (company-chat-dock-v1).
+		const ReactDOM = require("react-dom");
 		// Verified live on the desk (2026-08-21): the host's per-plugin require
 		// resolves this to the same icon/primitive set the shipped rows use —
 		// real SVG icon components (IconPanelLeftOutline16, IconCloseOutline16,
@@ -75,6 +78,14 @@ window.__ModuleLoader__.load({
 		// fails at import time with "cannot access before initialization", which
 		// takes the whole frame with it now that the shipped sidebar row is off.
 		const ANIM = "var(--ds-transition-duration-slow, 240ms) var(--ds-ease-in-out, ease-in-out)";
+		// company-chat-dock-v1: 聊天's own column at the right edge, from this window width up (the CSS and
+		// ChatDock read the same query), and how wide it is (300px is the right sidebar's own minimum; the chat
+		// page goes to one column at a time under 640px).
+		const CHAT_DOCK_MEDIA = "(min-width: 1100px)";
+		const CHAT_DOCK_WIDTH = "clamp(300px, 26vw, 400px)";
+		const DOCK_W_KEY = "cs-dock-w";
+		// The kernel keeps its two columns (about 560px with the left one); the chat column takes the rest at most.
+		function dockClamp(w) { return Math.round(Math.max(300, Math.min(Number(w) || 300, window.innerWidth - 560, 1400))); }
 		// Layout hard-codes the collapsed track at 56. We paint a 48px rail and
 		// override the frame's first grid track when the sidebar is collapsed
 		// (see [data-sidebar-collapsed] below). Keep the two numbers in lockstep.
@@ -384,6 +395,377 @@ window.__ModuleLoader__.load({
 			".cs-tc-form .cs-field > span { font-weight: 500; }",
 			".cs-tc-err { margin-top: 8px; font-size: 12px; color: " + T.err + "; }"
 		].join("\n");
+		const LOOK_SPRING = "cubic-bezier(.32,1.45,.6,1)";
+		// company-look-today-v1 (the user, 2026-11-24: 「today 这个界面就很好」, 极简, 液态玻璃的选中, 胶囊放大): the desk on a warm
+		// off-white page; the left column a floating glass card; the middle switched by a glass capsule; the chat column
+		// a sky-to-apricot page with 今天 / 聊天. The kernel's own parts are found by the stable part of their class
+		// names ("_frame", "_sidebarCol", "_centerCol"), never the hashed whole. Dark: body[data-ds-dark-theme].
+		const TODAY_CSS = [
+			"body { --look-page: #f0f0ef; --look-glass: rgba(255,255,255,.62); --look-glass-line: rgba(255,255,255,.78); --look-card: #fff;",
+			"  --look-ink: #1c1c1e; --look-ink2: #6e6e73; --look-ink3: #a1a1a6; --look-soft: rgba(120,120,128,.10); --look-thumb: rgba(120,120,128,.14);",
+			"  --look-sky: #a9cbef; --look-mist: #cfe0f2; --look-peach: #f7dcc0; --look-accent: #2f6fe4; --look-red: #ff453a;",
+			"  --look-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06); --look-float: 0 2px 8px rgba(0,0,0,.08), 0 10px 30px rgba(0,0,0,.08); }",
+			"body[data-ds-dark-theme] { --look-page: #161618; --look-glass: rgba(40,40,44,.6); --look-glass-line: rgba(255,255,255,.08); --look-card: #232326;",
+			"  --look-ink: #f2f2f4; --look-ink2: #a1a1a8; --look-ink3: #6c6c72; --look-soft: rgba(255,255,255,.07); --look-thumb: rgba(255,255,255,.14);",
+			"  --look-sky: #1f3a5e; --look-mist: #223349; --look-peach: #4a3626; --look-accent: #79a6ff;",
+			"  --look-shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.3); --look-float: 0 2px 8px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35); }",
+			// The user (2026-11-24): 「左边能不能是毛玻璃，中间渐变也优化一下」 — the page is soft light (sky at the top left,
+			// apricot at the bottom right, mist between, as the chat column), so the left card has something to frost.
+			"html, body { background-color: var(--look-page) !important; background-image: var(--look-wash) !important; background-attachment: fixed !important; }",
+			"body { --look-wash: radial-gradient(1200px 820px at -8% -12%, rgba(150,190,236,.95), transparent 62%), radial-gradient(1000px 760px at 108% 112%, rgba(245,208,170,.95), transparent 60%),",
+			"  radial-gradient(820px 600px at 58% 36%, rgba(200,220,244,.7), transparent 70%), linear-gradient(180deg, #e9eff7 0%, #f4efe9 100%); }",
+			"body[data-ds-dark-theme] { --look-wash: radial-gradient(1100px 760px at -8% -12%, rgba(31,58,94,.75), transparent 62%), radial-gradient(900px 700px at 108% 112%, rgba(74,54,38,.7), transparent 60%),",
+			"  radial-gradient(760px 560px at 58% 38%, rgba(34,51,73,.5), transparent 70%), linear-gradient(180deg, #17191d 0%, #161618 100%); }",
+			"[class*='_frame'] { background: transparent !important; overflow-x: clip !important; }",
+			"[class*='_centerCol'] [class$='_root']:not([data-testid='todo-panel']), [class*='_centerCol'] [class*='_root ']:not([data-testid='todo-panel']) { background: transparent !important; }",
+			// The task bar over the composer (the kernel's todo panel): its own glass, a frosted tint the text behind blurs under.
+			"[class*='_centerCol'] [data-testid='todo-panel'] { background: rgba(255,255,255,.55) !important; -webkit-backdrop-filter: blur(22px) saturate(1.7) !important;",
+			"  backdrop-filter: blur(22px) saturate(1.7) !important; border: 1px solid var(--look-glass-line) !important; }",
+			"body[data-ds-dark-theme] [class*='_centerCol'] [data-testid='todo-panel'] { background: rgba(30,32,38,.55) !important; }",
+			// the left column: a floating glass card
+			"[class*='_sidebarCol'] { background: transparent !important; border: 0 !important; padding: 10px 0 10px 10px; box-sizing: border-box; }",
+			".cs-side { background: linear-gradient(180deg, rgba(255,255,255,.52), rgba(255,255,255,.34)) !important; border: 1px solid rgba(255,255,255,.7); border-radius: 22px;",
+			"  box-shadow: 0 1px 1px rgba(255,255,255,.6) inset, 0 10px 34px rgba(40,70,120,.10); backdrop-filter: blur(36px) saturate(190%); -webkit-backdrop-filter: blur(36px) saturate(190%); overflow: hidden; }",
+			"body[data-ds-dark-theme] .cs-side { background: linear-gradient(180deg, rgba(48,50,58,.55), rgba(34,36,42,.42)) !important; border-color: rgba(255,255,255,.08); box-shadow: 0 10px 34px rgba(0,0,0,.35); }",
+			// rows inside the glass: lighter hovers so the frost shows through
+			".cs-side [class*='_item']:hover, .cs-side [class*='_row']:hover { background: rgba(255,255,255,.35); }",
+			".cs-look-nav { position: relative; flex: none; display: flex; flex-direction: column; gap: 2px; padding: 4px 10px 10px; }",
+			".cs-look-nav.is-rail { align-items: center; padding: 4px 0 10px; gap: 6px; }",
+			".cs-look-pill { position: absolute; z-index: 0; border-radius: 14px; background: var(--look-card); box-shadow: var(--look-shadow), inset 0 1px 0 rgba(255,255,255,.7);",
+			"  transition: top .5s " + LOOK_SPRING + ", height .5s " + LOOK_SPRING + ", left .3s ease, width .3s ease, opacity .2s; pointer-events: none; opacity: 0; }",
+			"body[data-ds-dark-theme] .cs-look-pill { box-shadow: var(--look-shadow), inset 0 1px 0 rgba(255,255,255,.08); }",
+			".cs-look-nav.is-rail .cs-look-pill { box-shadow: 0 1px 3px rgba(0,0,0,.10), 0 6px 16px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.7); }",
+			".cs-side .cs-foot { margin-top: auto; }",
+			"[class*='_sidebarCol'] { padding-left: 8px !important; }",
+			".cs-look-row { position: relative; z-index: 1; display: flex; align-items: center; gap: 11px; width: 100%; height: 40px; padding: 0 12px; border: 0; border-radius: 14px;",
+			"  background: transparent; color: var(--look-ink2); font: 500 14px/1 " + FONT + "; text-align: left; cursor: pointer; transform-origin: left center;",
+			"  transition: transform .14s ease-out, color .2s; }",
+			".cs-look-row:hover { color: var(--look-ink); }",
+			".cs-look-row.is-on { color: var(--look-ink); font-weight: 600; }",
+			".cs-look-nav.is-rail .cs-look-row { width: 42px; height: 42px; padding: 0; justify-content: center; transform-origin: center; }",
+			".cs-look-glyph { flex: none; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; transition: transform .45s " + LOOK_SPRING + ", color .2s; }",
+			".cs-look-row.is-on .cs-look-glyph { transform: scale(1.2); color: var(--look-accent); }",
+			".cs-look-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-look-count { font: 400 12px/1 " + FONT + "; color: var(--look-ink3); }",
+			".cs-look-dot { position: absolute; top: 9px; right: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--look-red); }",
+			// 「我」
+			".cs-me { position: relative; }",
+			".cs-me-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px; border: 0; border-radius: 16px; background: transparent; cursor: pointer;",
+			"  color: var(--look-ink); font: 500 13.5px/1.2 " + FONT + "; text-align: left; transition: background .2s; }",
+			".cs-me-btn:hover { background: var(--look-soft); }",
+			".cs-me.is-rail .cs-me-btn { width: 44px; justify-content: center; padding: 4px; margin: 0 auto; }",
+			".cs-me-pic { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font: 600 14px/1 " + FONT + "; color: var(--look-ink);",
+			"  background: linear-gradient(160deg, var(--look-sky), var(--look-peach)); transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-me-btn:hover .cs-me-pic { transform: scale(1.08); }",
+			".cs-me-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }",
+			".cs-me-name small, .cs-me-head small { font-weight: 400; font-size: 12px; color: var(--look-ink2); }",
+			".cs-me-menu { position: fixed; z-index: 2000; width: 236px; padding: 8px; border-radius: 20px;",
+			"  background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-float);",
+			"  backdrop-filter: blur(30px) saturate(170%); -webkit-backdrop-filter: blur(30px) saturate(170%); transform-origin: 16px 100%;",
+			"  visibility: hidden; opacity: 0; transform: scale(.6); pointer-events: none; transition: transform .4s " + LOOK_SPRING + ", opacity .18s, visibility 0s .4s; }",
+			".cs-me-menu.is-open { visibility: visible; opacity: 1; transform: none; pointer-events: auto; transition: transform .4s " + LOOK_SPRING + ", opacity .18s, visibility 0s; }",
+			".cs-me-head { display: flex; align-items: center; gap: 10px; padding: 6px 8px 10px; font: 400 13px/1.3 " + FONT + "; color: var(--look-ink); }",
+			".cs-me-head b { display: block; font-weight: 600; font-size: 14px; }",
+			".cs-me-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 10px; border: 0; border-radius: 12px; background: transparent;",
+			"  color: var(--look-ink); font: 400 14px/1 " + FONT + "; cursor: pointer; text-align: left; transition: background .15s, transform .3s " + LOOK_SPRING + "; }",
+			".cs-me-item:hover { background: var(--look-soft); transform: translateX(2px); }",
+			".cs-me-item svg { color: var(--look-ink2); flex: none; }",
+			".cs-me-item.is-danger { color: #e5484d; } .cs-me-item.is-danger svg { color: #e5484d; }",
+			".cs-me-settings { padding: 0 2px; } .cs-me-settings > * { width: 100%; }",
+			".cs-me-line { height: 1px; margin: 6px 8px; background: var(--look-soft); }",
+			// the middle's switch
+			".cs-mid-switch { position: fixed; top: 8px; z-index: 1500; transform: translateX(-50%); display: flex; gap: 2px; padding: 4px; border-radius: 22px;",
+			"  background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-float);",
+			"  backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); }",
+			".cs-mid-thumb { position: absolute; top: 4px; bottom: 4px; border-radius: 18px; background: var(--look-thumb); transition: left .5s " + LOOK_SPRING + ", width .5s " + LOOK_SPRING + "; }",
+			".cs-mid-tab { position: relative; z-index: 1; height: 32px; padding: 0 16px; border: 0; border-radius: 18px; background: transparent; cursor: pointer;",
+			"  color: var(--look-ink2); font: 500 14.5px/1 " + FONT + "; transition: transform .14s ease-out, color .2s; }",
+			".cs-mid-tab.is-on { color: var(--look-ink); font-weight: 600; }",
+			// the chat column: a page of its own
+			"@media " + CHAT_DOCK_MEDIA + " {",
+			"  html[data-company-chat-dock] #root { padding-right: calc(var(--company-chat-dock-width) + 20px) !important; }",
+			"}",
+			".cs-look-dock { top: 10px !important; right: 10px !important; bottom: 10px !important; border-radius: 24px; overflow: hidden; border: 1px solid var(--look-glass-line) !important;",
+			"  background: linear-gradient(180deg, var(--look-sky) 0%, var(--look-mist) 40%, var(--look-peach) 100%) !important; box-shadow: var(--look-shadow); }",
+			".cs-dock-head { flex: none; display: flex; justify-content: center; padding: 12px 12px 6px; }",
+			".cs-dock-seg { position: relative; display: flex; gap: 2px; padding: 4px; border-radius: 22px; background: rgba(255,255,255,.55); border: 1px solid rgba(255,255,255,.7);",
+			"  box-shadow: 0 4px 18px rgba(40,70,120,.10); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }",
+			"body[data-ds-dark-theme] .cs-dock-seg { background: rgba(40,44,54,.6); border-color: rgba(255,255,255,.1); }",
+			".cs-dock-thumb { position: absolute; top: 4px; bottom: 4px; border-radius: 18px; background: var(--look-thumb); transition: left .5s " + LOOK_SPRING + ", width .5s " + LOOK_SPRING + "; }",
+			".cs-dock-tab { position: relative; z-index: 1; height: 32px; padding: 0 18px; border: 0; border-radius: 18px; background: transparent; cursor: pointer;",
+			"  color: var(--look-ink2); font: 500 15px/1 " + FONT + "; transition: transform .3s " + LOOK_SPRING + ", color .2s; }",
+			".cs-dock-tab:hover { transform: scale(1.06); } .cs-dock-tab.is-on { color: var(--look-ink); font-weight: 600; }",
+			".cs-dock-dot { position: absolute; top: 5px; right: 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--look-red); }",
+			".cs-dock-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }",
+			".cs-dock-chat { position: absolute; inset: 0; display: flex; flex-direction: column; }",
+			".cs-dock-body.is-today .cs-dock-chat { pointer-events: none; }",
+			// 今天
+			".cs-today { position: absolute; inset: 0; z-index: 2; overflow: auto; padding: 6px 14px 16px; font-family: " + FONT + "; color: var(--look-ink); }",
+			".cs-today-date { text-align: center; font-size: 12.5px; color: var(--look-ink2); margin: 4px 0 10px; }",
+			".cs-today-card { margin: 0 0 12px; padding: 14px 16px; border-radius: 22px; background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-shadow);",
+			"  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-today-card:hover { transform: translateY(-2px); }",
+			".cs-today-card h3 { display: flex; justify-content: space-between; margin: 0 0 6px; font-size: 15px; font-weight: 600; }",
+			".cs-today-card h3 small { font-weight: 400; color: var(--look-ink3); font-size: 12px; }",
+			".cs-today-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 2px; border: 0; border-top: 1px solid var(--look-soft); background: transparent;",
+			"  color: var(--look-ink); font: 400 14px/1.4 " + FONT + "; text-align: left; cursor: pointer; }",
+			".cs-today-row:first-of-type { border-top: 0; }",
+			".cs-today-box { width: 18px; height: 18px; flex: none; border-radius: 6px; border: 1.5px solid var(--look-ink3); transition: transform .35s " + LOOK_SPRING + "; }",
+			".cs-today-row:hover .cs-today-box { transform: scale(1.15); border-color: var(--look-accent); }",
+			".cs-today-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-today-d { flex: none; font-size: 12px; color: var(--look-ink2); } .cs-today-d.is-late { color: #e5484d; font-weight: 600; }",
+			".cs-today-empty { margin: 4px 0 2px; font-size: 13.5px; color: var(--look-ink2); }",
+			".cs-today-foot { text-align: center; font-size: 12.5px; color: var(--look-ink2); margin: 18px 0 0; }",
+			// the user: 「对话框不放模型选项，默认 6.2 sol 高推理」「不要工作区了」. The model is the site default
+			// (gateway.env DEFAULT_MODEL / DEFAULT_EFFORT, synced at sign-in); the workspace stays the default one.
+			"[class*='_centerCol'] [class*='_root']:has(> button[aria-label^='选择模型']), [class*='_centerCol'] button[aria-label^='选择模型'] { display: none !important; }",
+			"[class*='_centerCol'] button[aria-label='选择工作区'] { display: none !important; }",
+			".cs-pane-sess [class*='_sectionLabel'] { font-size: 0 !important; }",
+			".cs-pane-sess [class*='_sectionLabel']::after { content: '最近'; font-size: 12px; color: var(--look-ink3); }",
+			".cs-pane-sess [class*='_projectRow'] { display: none !important; }",
+			// ERP / 邮箱 in the middle: a card like the two columns beside it.
+			// The user (2026-11-24): no card behind ERP / 邮箱, the page as the 助手 one; only room under the switch.
+			"[data-company-erp], .tm-root { background: transparent !important; box-sizing: border-box; }",
+			// The user (2026-11-24: 「助手 ERP 邮箱遮住了一点对话窗口，往下移动一点」): the whole middle column starts under
+			// the capsule (top 8px + 42px), for the conversation's title row as for ERP and 邮箱.
+			"[class*='_centerCol'] { padding-top: 56px !important; box-sizing: border-box; }",
+			// company-flow-motion-v1: the three regions a switch can change, and how each one goes (blur out, focus in, a soft
+			// spring); a region that did not change crossfades with itself and so stands still. The page itself does not fade.
+			// company-vt-only-while-switching-v1 (the user, 2026-11-25: 「对话框上面这个任务栏的毛玻璃没起效」): WebKit (the Mac
+			// window) does not blur through a backdrop-filter inside an element that carries a view-transition-name, so the
+			// names are on only while a switch runs (html.cs-vt-on, set by flowSwap) and the glass works the rest of the time.
+			"html.cs-vt-on [class*='_centerCol'] { view-transition-name: cs-mid; }",
+			// company-dock-art-v1: the kernel's right column inside the chat column's 工件 page (under its 今天 / 聊天 / 工件),
+			// hidden on the other two; its resize handle goes with it. Only while the chat column is there (wide windows).
+			"html[data-company-chat-dock] [data-rightbar-col] { position: fixed !important; top: 108px; right: 11px; bottom: 11px; width: calc(var(--company-chat-dock-width) - 2px) !important;",
+			"  z-index: 6; border-radius: 0 0 23px 23px; overflow: hidden; background: var(--look-card); visibility: hidden; opacity: 0; pointer-events: none; }",
+			"html[data-company-chat-dock][data-cs-dock-page='art'] [data-rightbar-col]:has([data-sidebar-right-open='true']) { visibility: visible; opacity: 1; pointer-events: auto; animation: cs-flow-in .5s cubic-bezier(.22,1,.36,1) both; }",
+			"html[data-company-chat-dock] [data-rightbar-col] [data-sidebar-right-panel] { width: 100% !important; height: 100%; }",
+			"html[data-company-chat-dock] [class*='_frame'] > [class*='_handle'] ~ [class*='_handle'] { display: none !important; }",
+			".cs-art { position: absolute; inset: 0; display: flex; flex-direction: column; font-family: " + FONT + "; color: var(--look-ink); }",
+			".cs-art-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 6px 18px 10px; }",
+			".cs-art-head b { font-size: 15px; font-weight: 600; } .cs-art-head small { font-size: 12.5px; color: var(--look-ink2); }",
+			".cs-art-refresh { margin-left: auto; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink2);",
+			"  display: grid; place-items: center; cursor: pointer; transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-art-refresh:hover { transform: scale(1.08); color: var(--look-ink); } .cs-art-refresh.is-busy svg { animation: cs-art-spin .9s linear infinite; }",
+			"@keyframes cs-art-spin { to { transform: rotate(360deg); } }",
+			".cs-art-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 16px; display: flex; flex-direction: column; gap: 8px; }",
+			".cs-art-group { margin: 8px 6px 0; font-size: 12px; color: var(--look-ink2); }",
+			".cs-art-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border-radius: 18px; text-align: left; cursor: pointer;",
+			"  border: 1px solid var(--look-glass-line); background: var(--look-glass); box-shadow: var(--look-shadow); color: var(--look-ink); font: inherit;",
+			"  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); transition: transform .4s " + LOOK_SPRING + ", background .2s; animation: cs-flow-in .55s cubic-bezier(.22,1,.36,1) both; }",
+			".cs-art-card:hover { transform: translateY(-2px); background: var(--look-card); }",
+			".cs-art-card:nth-child(2) { animation-delay: .04s; } .cs-art-card:nth-child(3) { animation-delay: .08s; } .cs-art-card:nth-child(4) { animation-delay: .12s; } .cs-art-card:nth-child(n+5) { animation-delay: .16s; }",
+			".cs-art-icon { flex: none; width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; color: var(--look-accent); background: var(--look-soft); }",
+			".cs-art-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }",
+			".cs-art-text b { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-art-text small { font-size: 12px; color: var(--look-ink3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-art-when { flex: none; align-self: flex-start; padding-top: 2px; font-size: 12px; color: var(--look-ink2); }",
+			".cs-art-card.is-ghost { cursor: default; height: 62px; animation: cs-art-ghost 1.4s ease-in-out infinite alternate; }",
+			".cs-art-card.is-ghost i { display: block; height: 10px; border-radius: 5px; background: var(--look-soft); }",
+			".cs-art-card.is-ghost i:first-child { width: 36px; height: 36px; border-radius: 12px; } .cs-art-card.is-ghost i:last-child { flex: 1; max-width: 60%; }",
+			"@keyframes cs-art-ghost { from { opacity: .55; } to { opacity: 1; } }",
+			".cs-art-empty { margin: 40px 24px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; color: var(--look-ink2); font-size: 13px; }",
+			".cs-art-empty b { color: var(--look-ink); font-size: 15px; font-weight: 600; }",
+			".cs-art-view { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 0 12px 12px; gap: 10px; font-family: " + FONT + "; animation: cs-flow-in .5s cubic-bezier(.22,1,.36,1) both; }",
+			".cs-art-bar { flex: none; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 4px 0 4px; }",
+			".cs-art-bar-back { flex: none; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink);",
+			"  display: grid; place-items: center; cursor: pointer; transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-art-bar-back:hover { transform: scale(1.08) translateX(-1px); }",
+			".cs-art-bar-title { flex: 1; min-width: 0; font-size: 14.5px; font-weight: 600; color: var(--look-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-art-sheet { position: relative; flex: 1; min-height: 0; border-radius: 18px; overflow: hidden; background: #fff; border: 1px solid var(--look-glass-line); box-shadow: var(--look-shadow); }",
+			// company-art-dark-v1 (the user, 2026-11-24: 「切换夜晚模式以后背景色一样变成深色渐变」): at night the sheet is no card;
+			// the artifact itself is turned to dark inside its frame (ART_THEME_SHIM), on the column's own gradient.
+			"body[data-ds-dark-theme] .cs-art-sheet { background: rgba(255,255,255,.035); border-color: rgba(255,255,255,.08); box-shadow: none; }",
+			".cs-art-sheet iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }",
+			// company-art-full-v1 (the user, 2026-11-24: 「工件页面能不能拖拽拉开…或者刷新旁边加一个全屏按钮」): the reader over the
+			// whole window, on the column's gradient; Esc or the same button brings it back.
+			".cs-art-bar .cs-art-refresh { margin-left: 0; }",
+			// company-chat-forward-v1: 转发 — the chats to send an artifact to, newest first, several at once, a word with it.
+			".cs-fwd-mask { position: fixed; inset: 0; z-index: 1800; display: grid; place-items: center; background: rgba(20,28,48,.18); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);",
+			"  animation: cs-fwd-fade .25s ease-out both; font-family: " + FONT + "; }",
+			"@keyframes cs-fwd-fade { from { opacity: 0; } to { opacity: 1; } }",
+			".cs-fwd { width: min(420px, calc(100vw - 32px)); max-height: min(620px, calc(100vh - 48px)); display: flex; flex-direction: column; border-radius: 26px; overflow: hidden;",
+			"  background: var(--look-card, #fff); border: 1px solid var(--look-glass-line); box-shadow: 0 30px 80px rgba(20,30,60,.28); color: var(--look-ink);",
+			"  animation: cs-fwd-in .5s " + LOOK_SPRING + " both; }",
+			"@keyframes cs-fwd-in { from { opacity: 0; transform: translateY(16px) scale(.96); } to { opacity: 1; transform: none; } }",
+			".cs-fwd-head { display: flex; align-items: center; gap: 10px; padding: 16px 16px 8px 20px; }",
+			".cs-fwd-head b { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-fwd-x { flex: none; width: 30px; height: 30px; border-radius: 50%; border: 0; background: var(--look-soft); color: var(--look-ink2); cursor: pointer; display: grid; place-items: center; }",
+			".cs-fwd-search { margin: 4px 16px 6px; height: 38px; border-radius: 19px; border: 1px solid var(--look-glass-line); background: var(--look-soft, rgba(0,0,0,.04)); padding: 0 16px; font: inherit; font-size: 13.5px; color: var(--look-ink); outline: none; }",
+			".cs-fwd-search:focus { border-color: var(--look-accent); }",
+			".cs-fwd-picked { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px 2px; }",
+			".cs-fwd-chip { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 10px; border-radius: 13px; border: 0; background: var(--look-soft); color: var(--look-accent); font: inherit; font-size: 12.5px; cursor: pointer;",
+			"  animation: cs-fwd-in .4s " + LOOK_SPRING + " both; }",
+			".cs-fwd-sec { margin: 10px 20px 4px; font-size: 12px; color: var(--look-ink2); }",
+			".cs-fwd-list { flex: 1; min-height: 120px; overflow-y: auto; padding: 0 8px 8px; }",
+			".cs-fwd-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 12px; border: 0; border-radius: 14px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;",
+			"  transition: background .15s, transform .35s " + LOOK_SPRING + "; }",
+			".cs-fwd-row:hover { background: var(--look-soft); } .cs-fwd-row:active { transform: scale(.98); }",
+			".cs-fwd-av { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 14px; font-weight: 600; }",
+			".cs-fwd-av.is-grp { border-radius: 11px; }",
+			".cs-fwd-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-fwd-tag { flex: none; font-size: 11px; color: var(--look-ink2); padding: 1px 6px; border-radius: 6px; background: var(--look-soft); }",
+			".cs-fwd-tick { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 1.5px solid var(--look-ink3, rgba(0,0,0,.25)); display: grid; place-items: center; transition: all .3s " + LOOK_SPRING + "; }",
+			".cs-fwd-row.is-on .cs-fwd-tick { background: var(--look-accent); border-color: var(--look-accent); transform: scale(1.08); }",
+			".cs-fwd-foot { display: flex; gap: 8px; padding: 10px 16px 16px; border-top: 1px solid var(--look-glass-line); }",
+			".cs-fwd-note { flex: 1; min-width: 0; height: 40px; border-radius: 20px; border: 1px solid var(--look-glass-line); background: var(--look-soft, rgba(0,0,0,.04)); padding: 0 16px; font: inherit; font-size: 13.5px; color: var(--look-ink); outline: none; }",
+			".cs-fwd-send { flex: none; height: 40px; padding: 0 18px; border-radius: 20px; border: 0; background: var(--look-accent); color: #fff; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .35s " + LOOK_SPRING + ", opacity .2s; }",
+			".cs-fwd-send:disabled { opacity: .45; cursor: default; } .cs-fwd-send:not(:disabled):hover { transform: scale(1.04); }",
+			".cs-fwd-empty { padding: 30px 20px; text-align: center; font-size: 13px; color: var(--look-ink2); }",
+			".cs-fwd-err { padding: 0 20px 6px; font-size: 12.5px; color: #d9363e; }",
+			".cs-toast { position: fixed; left: 50%; bottom: 36px; z-index: 1900; transform: translateX(-50%); max-width: min(480px, calc(100vw - 32px)); padding: 10px 18px; border-radius: 22px;",
+			"  background: rgba(30,36,52,.88); color: #fff; font-family: " + FONT + "; font-size: 13.5px; box-shadow: 0 12px 36px rgba(0,0,0,.22); animation: cs-toast-in .5s " + LOOK_SPRING + " both; }",
+			".cs-toast.is-out { animation: cs-toast-out .3s ease-in both; }",
+			"@keyframes cs-toast-in { from { opacity: 0; transform: translate(-50%, 14px) scale(.94); } to { opacity: 1; transform: translate(-50%, 0); } }",
+			"@keyframes cs-toast-out { to { opacity: 0; transform: translate(-50%, 8px) scale(.97); } }",
+			".cs-view { position: fixed; z-index: 1750; display: flex; flex-direction: column; border-radius: 22px; overflow: hidden; font-family: " + FONT + ";",
+			"  background: linear-gradient(180deg, var(--look-sky, #dfe9fb) 0%, var(--look-mist, #eef1f7) 40%, var(--look-peach, #f6e6d8) 100%);",
+			"  border: 1px solid var(--look-glass-line); box-shadow: 0 30px 80px rgba(20,30,60,.30); animation: cs-view-in .5s " + LOOK_SPRING + " both; }",
+			"@keyframes cs-view-in { from { opacity: 0; transform: translateY(14px) scale(.95); } to { opacity: 1; transform: none; } }",
+			".cs-view-bar { flex: none; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 12px 0 12px; cursor: grab; user-select: none; }",
+			"html.cs-view-moving, html.cs-view-moving * { cursor: grabbing !important; user-select: none !important; } html.cs-view-moving iframe { pointer-events: none !important; }",
+			".cs-view-chip { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 14px; cursor: grab; -webkit-user-drag: element;",
+			"  transition: background .2s, transform .35s " + LOOK_SPRING + "; }",
+			".cs-view-chip:hover { background: var(--look-glass); } .cs-view-chip:active { transform: scale(.98); }",
+			".cs-view-ext { flex: none; min-width: 34px; height: 34px; padding: 0 4px; border-radius: 10px; display: grid; place-items: center; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--look-accent); }",
+			".cs-view-name { min-width: 0; font-size: 14px; font-weight: 600; color: var(--look-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".cs-view-bar .cs-art-refresh { margin-left: 0; flex: none; }",
+			".cs-view-sheet { position: relative; flex: 1; min-height: 0; margin: 0 12px 12px; border-radius: 16px; overflow: hidden; background: #fff; border: 1px solid var(--look-glass-line); }",
+			".cs-view-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }",
+			".cs-view-media { width: 100%; height: 100%; display: grid; place-items: center; background: rgba(0,0,0,.03); }",
+			".cs-view-media img, .cs-view-media video { max-width: 100%; max-height: 100%; object-fit: contain; }",
+			".cs-view-text { margin: 0; padding: 16px 18px; height: 100%; overflow: auto; box-sizing: border-box; font: 12.5px/1.6 ui-monospace, Menlo, Consolas, monospace; color: #1d2433; white-space: pre-wrap; word-break: break-word; }",
+			".cs-view-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; color: var(--look-ink2); font-size: 13px; }",
+			".cs-view-empty b { color: var(--look-ink); font-size: 15px; }",
+			".cs-art-bar-title[draggable='true'] { cursor: grab; -webkit-user-drag: element; }",
+			".cs-art-card[draggable='true'] { -webkit-user-drag: element; } .cs-art-card.is-dragging { opacity: .5; transform: scale(.97); }",
+			"html.cs-art-dragging [data-company-chat] { outline: 2px dashed var(--look-accent); outline-offset: -6px; border-radius: 18px; }",
+			".cs-art-full { position: fixed; inset: 12px; z-index: 1700; border-radius: 26px; overflow: hidden; border: 1px solid var(--look-glass-line);",
+			"  background: linear-gradient(180deg, var(--look-sky) 0%, var(--look-mist) 40%, var(--look-peach) 100%); box-shadow: 0 30px 80px rgba(20,30,60,.28);",
+			"  animation: cs-art-full-in .55s cubic-bezier(.22,1,.36,1) both; }",
+			".cs-art-full .cs-art-view { padding: 10px 16px 16px; animation: none; }",
+			"@keyframes cs-art-full-in { from { opacity: 0; transform: scale(.96) translateY(10px); filter: blur(6px); } to { opacity: 1; transform: none; filter: none; } }",
+			"@media (prefers-reduced-motion: reduce) { .cs-art-full { animation: none; } }",
+			// company-dock-grip-v1: the column's left edge pulls it wider (or narrower); double-click puts it back.
+			".cs-dock-grip { position: absolute; top: 0; bottom: 0; left: 0; width: 9px; z-index: 8; cursor: col-resize; touch-action: none; }",
+			".cs-dock-grip::after { content: ''; position: absolute; top: 50%; left: 3px; width: 3px; height: 44px; margin-top: -22px; border-radius: 2px;",
+			"  background: var(--look-ink3, rgba(0,0,0,.3)); opacity: 0; transition: opacity .25s, height .35s " + LOOK_SPRING + ", margin-top .35s " + LOOK_SPRING + "; }",
+			".cs-dock-grip:hover::after, html.cs-dock-dragging .cs-dock-grip::after { opacity: .55; height: 72px; margin-top: -36px; }",
+			"html.cs-dock-dragging, html.cs-dock-dragging * { cursor: col-resize !important; user-select: none !important; }",
+			"html.cs-dock-dragging iframe { pointer-events: none !important; }",
+			"html.cs-dock-dragging .cs-look-dock, html.cs-dock-dragging #root, html.cs-dock-dragging [class*='_frame'] { transition: none !important; view-transition-name: none !important; }",
+			".cs-art-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 13.5px; color: var(--look-ink2); }",
+			".cs-art-lava { position: relative; display: inline-block; width: 34px; height: 20px; }",
+			".cs-art-back { position: absolute; z-index: 7; top: 0; left: 12px; right: 12px; height: 34px; display: flex; align-items: center; gap: 4px; padding: 0 12px; border-radius: 17px;",
+			"  border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink); font: 500 13.5px/1 " + FONT + "; cursor: pointer; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }",
+			".cs-art-back:hover { background: var(--look-card); }",
+			"html.cs-vt-on .cs-side { view-transition-name: cs-side; }",
+			"html.cs-vt-on .cs-look-dock { view-transition-name: cs-dock; }",
+			"::view-transition-old(root), ::view-transition-new(root) { animation: none; }",
+			"::view-transition-group(cs-mid), ::view-transition-group(cs-side), ::view-transition-group(cs-dock) { animation-duration: .6s; animation-timing-function: cubic-bezier(.22,1,.36,1); }",
+			"::view-transition-old(cs-mid), ::view-transition-old(cs-side), ::view-transition-old(cs-dock) { animation: cs-flow-out .32s cubic-bezier(.4,0,1,1) both; }",
+			"::view-transition-new(cs-mid), ::view-transition-new(cs-side), ::view-transition-new(cs-dock) { animation: cs-flow-in .62s cubic-bezier(.22,1,.36,1) both; }",
+			"@keyframes cs-flow-out { to { opacity: 0; filter: blur(14px); transform: scale(.985); } }",
+			"@keyframes cs-flow-in { from { opacity: 0; filter: blur(16px); transform: translateY(8px) scale(.985); } }",
+			"html.cs-vt-morph::view-transition-group(cs-mid), html.cs-vt-morph::view-transition-group(cs-side), html.cs-vt-morph::view-transition-group(cs-dock) { animation-duration: .55s; animation-timing-function: cubic-bezier(.32,.72,0,1); }",
+			"html.cs-vt-morph::view-transition-old(cs-mid), html.cs-vt-morph::view-transition-old(cs-side), html.cs-vt-morph::view-transition-old(cs-dock) { animation: cs-flow-fade-out .3s ease both; height: 100%; object-fit: none; object-position: left top; }",
+			"html.cs-vt-morph::view-transition-new(cs-mid), html.cs-vt-morph::view-transition-new(cs-side), html.cs-vt-morph::view-transition-new(cs-dock) { animation: cs-flow-fade-in .45s ease both; height: 100%; object-fit: none; object-position: left top; }",
+			"@keyframes cs-flow-fade-out { to { opacity: 0; } }",
+			"@keyframes cs-flow-fade-in { from { opacity: 0; } }",
+			// What newly appears comes into focus too, one after another (the 今天 cards, mail rows, ERP / 邮箱, a menu).
+			".cs-today-card, [data-company-erp], .tm-root, html body .tm-row { animation: cs-flow-in .62s cubic-bezier(.22,1,.36,1) both; }",
+			".cs-today-card:nth-child(2) { animation-delay: .06s; } .cs-today-card:nth-child(3) { animation-delay: .12s; } .cs-today-card:nth-child(4) { animation-delay: .18s; }",
+			"html body .tm-row:nth-child(2) { animation-delay: .03s; } html body .tm-row:nth-child(3) { animation-delay: .06s; } html body .tm-row:nth-child(4) { animation-delay: .09s; }",
+			"html body .tm-row:nth-child(5) { animation-delay: .12s; } html body .tm-row:nth-child(6) { animation-delay: .15s; } html body .tm-row:nth-child(7) { animation-delay: .18s; }",
+			"html body .tm-row:nth-child(8) { animation-delay: .21s; } html body .tm-row:nth-child(n+9) { animation-delay: .24s; }",
+			".cs-me-menu.is-open { animation: cs-flow-pop .5s " + LOOK_SPRING + " both; }",
+			"@keyframes cs-flow-pop { from { opacity: 0; filter: blur(10px); transform: scale(.7); } }",
+			"@media (prefers-reduced-motion: reduce) { .cs-today-card, [data-company-erp], .tm-root, html body .tm-row, .cs-me-menu.is-open { animation: none !important; } }",
+			"[data-company-erp] > div:first-child { border-bottom: 0 !important; }",
+			// 邮箱 in the 今天 look (the user, 2026-11-24: 「邮箱这个界面能不能跟我们的UI风格匹配」): glass controls and
+			// pills, the folders as a capsule, rows as rounded cards, the letter on a glass card. Over the mail page's own CSS.
+			"html body .tm-head, html body .tm-tabs, html body .tm-col, html body .tm-tools { border-color: transparent !important; }",
+			// The user (2026-11-24: 「写邮件能不能放在同一行右边」): one row; the account and search boxes give way first.
+			"html body .tm-wrap { padding: 6px 14px; gap: 8px; flex-wrap: nowrap !important; }",
+			"html body .tm-wrap .tm-acct-pick { flex: 0 1 260px; min-width: 120px; }",
+			"html body .tm-wrap .tm-searchbox { flex: 1 1 180px; min-width: 96px; }",
+			"html body .tm-wrap .tm-btn { flex: none; }",
+			"html body .tm-wrap .tm-btn.is-main { order: 99; margin-left: 2px; }",
+			"html body .tm-btn, html body .tm-acct-pick, html body .tm-in, html body select.tm-in { height: 34px; border-radius: 12px; border: 1px solid var(--look-glass-line); background: var(--look-glass);",
+			"  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 1px 2px rgba(0,0,0,.04); color: var(--look-ink); transition: transform .3s " + LOOK_SPRING + ", background .2s; }",
+			"html body .tm-btn:hover:not(:disabled) { background: var(--look-card); transform: translateY(-1px); }",
+			"html body .tm-btn.is-main { background: var(--look-ink); border-color: transparent; color: var(--look-page); padding: 0 16px; font-weight: 600; box-shadow: 0 6px 16px rgba(0,0,0,.14); }",
+			"html body .tm-btn.is-main:hover:not(:disabled) { background: var(--look-ink); filter: none; transform: translateY(-1px) scale(1.02); }",
+			"html body .tm-icon { width: 34px; border-radius: 50%; }",
+			"html body .tm-search { height: 34px; border-radius: 17px; border: 1px solid var(--look-glass-line); background: var(--look-glass); padding: 0 14px; color: var(--look-ink);",
+			"  backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }",
+			"html body .tm-search:focus, html body .tm-in:focus, html body .tm-area:focus { border-color: var(--look-glass-line); box-shadow: 0 0 0 3px rgba(47,111,228,.25); background: var(--look-card); outline: 0; }",
+			"html body .tm-tabs { align-self: flex-start; display: inline-flex; gap: 2px; margin: 4px 14px 8px; padding: 4px; border-radius: 14px; background: var(--look-soft); }",
+			"html body .tm-tab { height: 30px; padding: 0 14px; border-radius: 10px; border-bottom: 0 !important; color: var(--look-ink2); transition: background .25s, color .2s, transform .3s " + LOOK_SPRING + "; }",
+			"html body .tm-tab:hover { color: var(--look-ink); }",
+			"html body .tm-tab.is-on { background: var(--look-card); color: var(--look-ink); box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 12px rgba(0,0,0,.05); }",
+			"html body .tm-tab.is-on .tm-count { color: var(--look-accent); }",
+			"html body .tm-scroll { padding: 0 10px 12px; }",
+			"html body .tm-row { border: 0 !important; border-radius: 14px; margin: 1px 0; padding: 12px 14px 12px 30px; transition: background .2s, box-shadow .2s; }",
+			"html body .tm-row:hover { background: rgba(255,255,255,.45); }",
+			"body[data-ds-dark-theme] .tm-row:hover { background: rgba(255,255,255,.05); }",
+			"html body .tm-row.is-on { background: var(--look-glass); box-shadow: var(--look-shadow); }",
+			"html body .tm-row.is-new::before { left: 13px; background: var(--look-accent); box-shadow: 0 0 0 3px rgba(47,111,228,.15); }",
+			"html body .tm-date, html body .tm-meta, html body .tm-count { color: var(--look-ink2); }",
+			"html body .tm-read { margin: 0 10px 10px 0; border-radius: 22px; background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-shadow);",
+			"  backdrop-filter: blur(28px) saturate(170%); -webkit-backdrop-filter: blur(28px) saturate(170%); overflow: hidden; }",
+			"html body .tm-frame { border-radius: 0 0 22px 22px; }",
+			"html body .tm-att { height: 32px; border-radius: 10px; border: 1px solid var(--look-glass-line); background: var(--look-glass); }",
+			"html body .tm-area { border-radius: 14px; border: 1px solid var(--look-glass-line); background: var(--look-glass); }",
+			"html body .tm-chip { background: var(--look-soft); }",
+			"html body .tm-mask { background: rgba(20,24,32,.22); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }",
+			"html body .tm-dialog { border-radius: 22px; background: var(--look-glass); border: 1px solid var(--look-glass-line); box-shadow: var(--look-float);",
+			"  backdrop-filter: blur(34px) saturate(170%); -webkit-backdrop-filter: blur(34px) saturate(170%); }",
+			"html body .tm-err, html body .tm-ok, html body .tm-imgbar { border-radius: 12px; }",
+			// The user (2026-11-24): 完全权限 is simply how the desk works (no picker); no 几轮几步 · tok/s · 用量 · 上下文
+			// under the composer; no right-sidebar button at the top right (the chat column is the right side).
+			"[class*='_centerCol'] [class*='_root']:has(> button[aria-label^='访问模式']), [class*='_centerCol'] button[aria-label^='访问模式'] { display: none !important; }",
+			"[class*='_centerCol'] [data-composer-stat], [class*='_centerCol'] [aria-label^='上下文已用'] { display: none !important; }",
+			"button[aria-label='打开右侧边栏'], button[aria-label='关闭右侧边栏'] { display: none !important; }",
+			// The user (2026-11-24: 「对话框左边的不协调」): the kernel fades the composer's seat into its own flat page
+			// colour, a white band over this page's light. No band; the composer card stands on the page as it is.
+			"[class*='_centerCol'] [class*='_composerSeat'] { background: transparent !important; }",
+			// The user (2026-11-24: 「标准模式的这个模式切换也关掉，以后默认标准模式」): agent-presets default is standard in
+			// both packs' overlay.yml; the picker goes, above the composer (its whole row) and in a session's title row.
+			"[class*='_centerCol'] [class*='_heroWorkspaceRow'] { display: none !important; }",
+			"[data-slot='conversation.session.header.actions'] > span[class$='_label'] { display: none !important; }",
+			// The user (2026-11-24): no 对话 / 轨迹 / 工件 above the conversation (工件 is the chat column's page), and under
+			// an answer only 复制, 用量 and the time (no 好的回答 / 有问题的回答, no 在新对话中分支).
+			"[class*='_centerCol'] [class*='_header'] [role='tablist'][class$='_tabs'] { display: none !important; }",
+			"[class*='_centerCol'] button[aria-label='好的回答'], [class*='_centerCol'] button[aria-label='有问题的回答'], [class*='_centerCol'] button[aria-label='取消标记'],",
+			"[class*='_centerCol'] button[aria-label='在新对话中分支'], [class*='_centerCol'] button[aria-label^='仅可从已完成轮次'] { display: none !important; }",
+			// The user (2026-11-24: 「深度求索中前面还有一个鲸鱼尾巴的 logo，这是不是就暴露了，能不能设计一个类似 google 那种思考中的
+			// 动态」): no whale; a four-point star that turns and breathes, and the words in a moving blue-violet-rose light.
+			// The words themselves are changed by thinkWords() (正在思考).
+			"[data-chat-running] [class*='_runningIcon'] > *:not(.cs-lava) { display: none !important; }",
+			// The user (2026-11-24, after a rainbow star, a glass bead and five stock spinners: 「B3 我最满意」): a lava lamp —
+			// three drops (sky, blue, apricot) drifting at their own pace, melting into one another and parting (an SVG goo
+			// filter, #cs-goo, put in the page by thinkWords()); the words in the page's own grey, the clock kept.
+			"[data-chat-running] [class*='_runningIcon'] { contain: none !important; overflow: visible !important; width: 34px !important; height: 20px !important; margin-right: 2px; }",
+			// One SVG per lamp (lavaNode): the drops, their goo filter and their SMIL motion together. WebKit (the Mac window)
+			// does not apply an SVG filter to HTML boxes when it draws them live: the drops were three separate dots there.
+			".cs-lava { position: absolute; inset: 0; display: block; width: 34px; height: 20px; overflow: visible; }",
+			".cs-lava .d1 { fill: #4f7cdc; } .cs-lava .d2 { fill: #8fbcef; } .cs-lava .d3 { fill: #f0b98a; }",
+			"body[data-ds-dark-theme] .cs-lava .d1 { fill: #8fb3ff; } body[data-ds-dark-theme] .cs-lava .d2 { fill: #5b8fd6; } body[data-ds-dark-theme] .cs-lava .d3 { fill: #d49a6a; }",
+			"[data-chat-running] [class*='_runningText'], [data-chat-running] [class*='_runningText'] * { background: none !important; color: var(--look-ink2) !important;",
+			"  -webkit-text-fill-color: currentColor !important; animation: none !important; font-weight: 400 !important; letter-spacing: .2px; }",
+			"[class*='_centerCol'] [class*='_menuAnchor']:has(> button[class$='_seat']), [class*='_centerCol'] button[class$='_seat'] { display: none !important; }",
+			// 白天 / 夜间 where the right-sidebar button was
+			".cs-theme-btn { position: fixed; top: 12px; z-index: 1500; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;",
+			"  border: 1px solid var(--look-glass-line); background: var(--look-glass); color: var(--look-ink); box-shadow: var(--look-float);",
+			"  backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); transition: transform .4s " + LOOK_SPRING + "; }",
+			".cs-theme-btn:hover { transform: scale(1.1); }",
+			".cs-theme-btn:active { transform: scale(.94); }",
+			".cs-theme-btn svg { transition: transform .6s " + LOOK_SPRING + ", opacity .2s; }",
+			".cs-theme-btn.is-dark svg { transform: rotate(-30deg); }"
+		].join("\n");
+
 		const CSS = [
 			// 说明书硬约束：整页含官方工作区树，不用随附英文字体画中文名。
 			"html[data-company-shell], html[data-company-shell] body,",
@@ -704,6 +1086,13 @@ window.__ModuleLoader__.load({
 			"  text-overflow: ellipsis; white-space: nowrap;",
 			"  font-size: 12px; font-weight: 400;",
 			"}",
+			".cs-restore {",
+			"  flex: none; height: 22px; padding: 0 8px; border-radius: 999px; cursor: pointer;",
+			"  border: 1px solid " + tint(T.brand, 45) + "; background: transparent; color: " + T.brand + ";",
+			"  font-size: 12px; line-height: 20px;",
+			"}",
+			".cs-restore:hover { background: " + tint(T.brand, 12) + "; }",
+			".cs-restore:disabled { opacity: .5; cursor: default; }",
 			".cs-row-m {",
 			"  margin-top: 2px; font-size: 11px; font-weight: 400; line-height: 1.4;",
 			"  color: " + T.label2 + ";",
@@ -928,8 +1317,24 @@ window.__ModuleLoader__.load({
 			".cs-cat { display: flex; flex-direction: column; gap: 8px; width: 100%; }",
 			".cs-cat-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }",
 			".cs-cat input[type=text], .cs-cat input[type=password] { height: 32px; min-width: 220px; border-radius: 8px; border: 0.5px solid var(--dsw-alias-border-l3, #ddd); padding: 0 8px; font: inherit; background: #fff; color: #111; }",
-			".cs-apply { height: 36px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 8px; background: #111; color: #fff; cursor: pointer; font: inherit; }"
-		].join("\n") + "\n" + LOOK_CSS + "\n" + CARD_CSS;
+			".cs-apply { height: 36px; margin-top: 8px; padding: 0 14px; border: 0; border-radius: 8px; background: #111; color: #fff; cursor: pointer; font: inherit; }",
+			// company-chat-dock-v1 (see ChatDock): #root gives up the chat's width on the right, so the kernel's frame
+			// lays its three columns out in the rest; the chat column sits in that strip. A right sidebar shown
+			// fullscreen is 100vw wide and anchored at the frame's right edge: it stops at the chat, as the kernel
+			// stops it at the sidebar on Windows' own title bar.
+			"@media " + CHAT_DOCK_MEDIA + " {",
+			"  html[data-company-chat-dock] { --company-chat-dock-width: " + CHAT_DOCK_WIDTH + "; }",
+			"  html[data-company-chat-dock] #root { box-sizing: border-box; padding-right: var(--company-chat-dock-width); }",
+			"  html[data-company-chat-dock] [data-sidebar-right-panel=fullscreen] { max-width: calc(100vw - var(--company-chat-dock-width)); }",
+			"}",
+			".cs-chat-dock {",
+			"  position: fixed; top: 0; right: 0; bottom: 0; z-index: 5;",
+			"  width: var(--company-chat-dock-width, 340px);",
+			"  box-sizing: border-box; display: flex; flex-direction: column; min-width: 0; min-height: 0;",
+			"  background: " + T.base + "; border-left: 0.5px solid var(--dsw-alias-border-l3);",
+			"}"
+		].join("\n") + "\n" + LOOK_CSS + "\n" + CARD_CSS + "\n" + TODAY_CSS;
+
 
 		function Style() {
 			React.useEffect(function () {
@@ -1452,6 +1857,8 @@ window.__ModuleLoader__.load({
 		let clearSessionFn = function () {};
 		let sessionListFn = function () { return null; };
 		let workspaceListFn = function () { return null; };
+		// company-session-restore-v1 (the user, 2026-11-21: "归档后的窗口 你要给我一个还原按钮"): the archived list's 还原.
+		let unarchiveFn = function () { return Promise.reject(new Error("not-ready")); };
 		let insertDeskTextFn = function () { return false; };
 		// The session whose composer is on screen, as told by the composer's own
 		// slot. 0.2.x dropped `current` from the session list, so this is the only
@@ -1770,8 +2177,12 @@ window.__ModuleLoader__.load({
 			if (s.indexOf("dept-last") >= 0) return "至少要留一个部门";
 			if (s.indexOf("avatar-bad") >= 0) return "头像格式不对，换一张 PNG 或 JPG 试试";
 			if (s.indexOf("no-such-person") >= 0) return "花名册里没有这个人";
+			if (s.indexOf("phone-bad") >= 0) return "手机号不对，请填 11 位手机号";
+			if (s.indexOf("phone-taken") >= 0) return "这个手机号已经登记在别人名下";
 			if (s.indexOf("role-bad") >= 0) return "角色不对";
 			if (s.indexOf("password-bad") >= 0) return "密码里不能有换行";
+			if (s.indexOf("password-wrong") >= 0) return "旧密码不对";
+			if (s.indexOf("password-same") >= 0) return "新密码和旧密码一样，换一个";
 			if (s.indexOf("action-unknown") >= 0) return "服务器还不认这个操作，需要更新人员服务";
 			if (s.indexOf("password-too-short") >= 0) return "密码至少 6 位";
 			if (s.indexOf("forbidden") >= 0) return "只有老板和管理能改人员";
@@ -2382,8 +2793,9 @@ window.__ModuleLoader__.load({
 				}
 				return;
 			}
-			if (isTerminalTask(task)) return;
-			startCardSession(task);
+			// company-task-open-card-v1: a card with no session yet just opens as a card (what to do, files,
+			// report, hand-in). Starting a session closed the card and dropped the assignee into an empty
+			// chat (2026-11-19, TDH); that is the card's own 「新建会话处理」 button now.
 		}
 
 		function deskLogin() {
@@ -3020,6 +3432,12 @@ window.__ModuleLoader__.load({
 			const sessArchiveHook = React.useState(false);
 			const sessArchive = sessArchiveHook[0];
 			const setSessArchive = sessArchiveHook[1];
+			const restoringHook = React.useState({});
+			const restoring = restoringHook[0];
+			const setRestoring = restoringHook[1];
+			const restoredHook = React.useState({});
+			const restored = restoredHook[0];
+			const setRestored = restoredHook[1];
 			const taskArchiveHook = React.useState(false);
 			const taskArchive = taskArchiveHook[0];
 			const setTaskArchive = taskArchiveHook[1];
@@ -3062,7 +3480,7 @@ window.__ModuleLoader__.load({
 					className: "cs-icon-btn",
 					type: "button",
 					"aria-label": wide ? "收起侧栏" : "展开侧栏",
-					onClick: function () { props.toggleSidebar(); }
+					onClick: function () { flowSwap(function () { props.toggleSidebar(); }, "morph"); }
 				}, React.createElement(P.IconPanelLeftOutline16, { size: 18 }))
 			);
 			const panels = React.useSyncExternalStore(props.panelStore ? props.panelStore.subscribe : noSubscribe, props.panelStore ? props.panelStore.getSnapshot : noPanels);
@@ -3071,8 +3489,10 @@ window.__ModuleLoader__.load({
 				function () { return props.panelInfo ? props.panelInfo.getSnapshot().activePanelId : null; }
 			);
 			// Plugins can switch whole parts of the desk off, so only the admin gets
-			// the entry, same as the models and version pages.
-			const shownPanels = shellRole === "admin" ? panels : [];
+			// that entry, same as the models and version pages; the rest are everyone's.
+			// 聊天 is not listed while it has its own column at the right edge.
+			const chatDock = React.useSyncExternalStore(chatDockSubscribe, chatDocked);
+			const shownPanels = panelsForDesk(shellRole, panels, chatDock);
 			function openFreshSession() {
 				if (props.selectPanel) props.selectPanel(null);
 				selectTask(null);
@@ -3263,7 +3683,7 @@ window.__ModuleLoader__.load({
 
 			function archivedSessionRows() {
 				const ws = workspaceListFn() || {};
-				const ids = ws.archivedSessionIds || [];
+				const ids = (ws.archivedSessionIds || []).filter(function (id) { return !restored[id]; });
 				const snap = sessionListFn() || {};
 				const byId = snap.byId || {};
 				if (!ids.length) {
@@ -3281,7 +3701,23 @@ window.__ModuleLoader__.load({
 						}
 					},
 						React.createElement("div", { className: "cs-row-t" },
-							React.createElement("span", { className: "cs-row-t-name" }, title)
+							React.createElement("span", { className: "cs-row-t-name" }, title),
+							React.createElement("button", {
+								type: "button",
+								className: "cs-restore",
+								title: "放回会话列表",
+								disabled: restoring[id] === true,
+								onClick: function (event) {
+									event.stopPropagation();
+									const mark = function (v) { return function (prev) { const next = Object.assign({}, prev); next[id] = v; return next; }; };
+									setRestoring(mark(true));
+									Promise.resolve().then(function () { return unarchiveFn(id); }).then(function () {
+										setRestored(mark(true));
+									}).catch(function () {
+										setRestoring(mark("failed"));
+									});
+								}
+							}, restoring[id] === "failed" ? "没还原，再点一次" : "还原")
 						),
 						React.createElement("div", { className: "cs-row-m" }, id)
 					);
@@ -3316,54 +3752,24 @@ window.__ModuleLoader__.load({
 				),
 
 
-				wide
-					? React.createElement("div", { className: "cs-tabrow" },
-						React.createElement("div", { className: "cs-tablist", role: "tablist" },
-							[
-								{ id: "sessions", label: "会话" },
-								{ id: "tasks", label: "任务" }
-							].map(function (item) {
-								return React.createElement("button", {
-									key: item.id,
-									type: "button",
-									role: "tab",
-									"aria-selected": tab === item.id,
-									className: "cs-tab" + (tab === item.id ? " cs-tab-on" : ""),
-									onClick: function () {
-										if (item.id === "tasks") {
-											closeDetailsQuiet();
-										}
-										setTab(item.id);
-									}
-								}, item.label);
-							})
-						)
-					)
-					: null,
-
-				shownPanels.length
-					? React.createElement("nav", { className: "cs-side-nav", "aria-label": "面板" },
-						shownPanels.map(function (panel) {
-							const on = activePanel === panel.id;
-							return React.createElement(P.Tooltip, { key: panel.id, label: panel.label, delayMs: 500, disabled: wide },
-								React.createElement("button", {
-									type: "button",
-									className: "cs-nav-row" + (on ? " is-on" : ""),
-									"aria-label": panel.label,
-									"aria-current": on ? "page" : undefined,
-									onClick: function () { props.selectPanel(on ? null : panel.id); }
-								},
-									React.createElement("span", { className: "cs-nav-glyph", "aria-hidden": "true" },
-										safeSlot(function () {
-											return renderSlot("sidebar.panellist", { size: wide ? 16 : 18, active: on }, { only: panel.id });
-										})
-									),
-									wide ? React.createElement("span", null, panel.label) : null
-								)
-							);
-						})
-					)
-					: null,
+				// company-look-today-v1 (the user, 2026-11-24: 左栏「会话 · 任务 · 定时任务 · 工件」, 设置收进「我」, ERP 和邮箱
+				// 在中间): one list for the four; the sessions tree and the task list below stay as they were.
+				React.createElement(TodayNav, {
+					wide: wide,
+					tab: tab,
+					activePanel: activePanel,
+					panels: shownPanels,
+					renderSlot: renderSlot,
+					onTab: function (id) {
+						flowSwap(function () {
+							if (props.selectPanel) props.selectPanel(null);
+							if (id === "tasks") closeDetailsQuiet();
+							setTab(id);
+							if (collapsed) props.toggleSidebar();
+						});
+					},
+					onPanel: function (id, on) { flowSwap(function () { props.selectPanel(on ? null : id); }); }
+				}),
 
 				wide
 					? React.createElement("div", { className: "cs-region" },
@@ -3472,16 +3878,395 @@ window.__ModuleLoader__.load({
 				: null,
 
 				React.createElement("div", { className: "cs-foot" },
-					wide
-						? safeSlot(function () {
-							return renderSlot("sidebar.footer.action", { wide: wide });
-						})
-						: null,
+					// The footer slot carries other plugins' style sheets (hide-bottom-panel): always drawn.
 					safeSlot(function () {
-						return renderSlot("sidebar.settings", { wide: wide });
-					})
+						return renderSlot("sidebar.footer.action", { wide: wide });
+					}),
+					React.createElement(MeMenu, { wide: wide, renderSlot: renderSlot, panels: panels, selectPanel: props.selectPanel })
 				)
 			);
+		}
+
+		// ---- company-look-today-v1: the left column's list, the 「我」 menu, the middle's switch, 今天 ----------------
+		function lookIcon(paths, size) {
+			return React.createElement("svg", { width: size || 18, height: size || 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor",
+				strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": "true" },
+				paths.map(function (d, i) { return React.createElement("path", { key: i, d: d }); }));
+		}
+		const LOOK_ICONS = {
+			sessions: ["M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9z"],
+			tasks: ["M8 4h8a4 4 0 0 1 4 4v8a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V8a4 4 0 0 1 4-4z", "M8.5 12l2.5 2.5 4.5-5"],
+			today: ["M12 3v2M12 19v2M5 12H3M21 12h-2M6.3 6.3L4.9 4.9M19.1 19.1l-1.4-1.4M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4", "M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z"],
+			chat: ["M4 5.5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4.5 3.5V16.5H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z"],
+			plugin: ["M9 4.5h3.5v2a1.5 1.5 0 0 0 3 0v-2H19v4h-2a1.5 1.5 0 0 0 0 3h2v4.5h-4.5v-2a1.5 1.5 0 0 0-3 0v2H5V11h2a1.5 1.5 0 0 0 0-3H5V4.5z"],
+			logout: ["M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3", "M10 16l-4-4 4-4M6 12h10"]
+		};
+		// The list's two own rows and the two panels kept here (定时任务, 工件); ERP and 邮箱 moved to the middle's
+		// switch, 插件 into 「我」, 聊天 has its column.
+		const LOOK_RAIL_PANELS = { schedules: "定时任务", artifacts: "工件", "artifact": "工件" };
+		function lookRailPanels(panels) {
+			return (panels || []).filter(function (p) {
+				return p && (LOOK_RAIL_PANELS[p.id] || /artifact/i.test(String(p.id)) || /artifact/i.test(String(p.label)));
+			}).map(function (p) {
+				return { id: p.id, label: LOOK_RAIL_PANELS[p.id] || (/artifact/i.test(String(p.id) + String(p.label)) ? "工件" : p.label) };
+			});
+		}
+		// company-flow-motion-v1 (the user, 2026-11-24, a clip of a glass dashboard: 「所有动画展开等等一切都是这样流式非线性
+		// 动画」): a switch is a View Transition — the region that changes blurs out and the new one comes into focus (CSS
+		// below names the regions: the left card, the middle, the chat column; the rest stands still). React renders inside
+		// the transition (flushSync) so the browser has both pictures. No View Transitions (older WebKit), reduced motion,
+		// or one already running: the switch happens at once.
+		let flowBusy = false;
+		function flowSwap(fn, mode) {
+			const reduce = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+			if (flowBusy || reduce || typeof document.startViewTransition !== "function" || document.visibilityState !== "visible") { fn(); return; }
+			flowBusy = true;
+			// The switch must happen even when the engine skips the transition without calling back (a hidden page).
+			let ran = false;
+			const run = function () { if (ran) return; ran = true; try { ReactDOM.flushSync(fn); } catch (err) { fn(); } };
+			setTimeout(function () { if (!ran) { run(); flowBusy = false; } }, 400);
+			// "morph": a size change (the left column folding) — the regions slide to their new size on the same curve and
+			// crossfade, no blur.
+			const root = document.documentElement;
+			if (mode === "morph") root.classList.add("cs-vt-morph");
+			root.classList.add("cs-vt-on");
+			try {
+				const vt = document.startViewTransition(run);
+				const done = function () { flowBusy = false; root.classList.remove("cs-vt-morph"); root.classList.remove("cs-vt-on"); };
+				if (vt && vt.finished && typeof vt.finished.then === "function") vt.finished.then(done, done); else done();
+			} catch (err) { flowBusy = false; root.classList.remove("cs-vt-on"); fn(); }
+		}
+		function TodayNav(props) {
+			const wide = props.wide;
+			const box = React.useRef(null);
+			const pill = React.useRef(null);
+			const items = [{ id: "sessions", label: "会话", icon: "sessions" }, { id: "tasks", label: "任务", icon: "tasks", count: lookOpenTasks().length }]
+				.concat(lookRailPanels(props.panels).map(function (p) { return { id: p.id, label: p.label, panel: true }; }));
+			const onId = props.activePanel && items.some(function (i) { return i.panel && i.id === props.activePanel; })
+				? props.activePanel : (props.activePanel ? "" : props.tab);
+			// The selection is one glass pill that slides to the chosen row (stretching over the way, then settling).
+			React.useLayoutEffect(function () {
+				const nav = box.current;
+				const pl = pill.current;
+				if (!nav || !pl) return;
+				const row = nav.querySelector('[data-look-id="' + onId + '"]');
+				if (!row) { pl.style.opacity = "0"; return; }
+				const prevTop = parseFloat(pl.dataset.top || "NaN");
+				const top = row.offsetTop;
+				pl.style.opacity = "1";
+				pl.style.left = row.offsetLeft + "px";
+				pl.style.width = row.offsetWidth + "px";
+				if (!isNaN(prevTop) && prevTop !== top) {
+					const lo = Math.min(prevTop, top);
+					const hi = Math.max(prevTop, top) + row.offsetHeight;
+					pl.style.transition = "top .18s ease-out, height .18s ease-out";
+					pl.style.top = lo + "px";
+					pl.style.height = (hi - lo) + "px";
+					const timer = setTimeout(function () {
+						pl.style.transition = "";
+						pl.style.top = top + "px";
+						pl.style.height = row.offsetHeight + "px";
+					}, 170);
+					pl.dataset.top = String(top);
+					return function () { clearTimeout(timer); };
+				}
+				pl.style.top = top + "px";
+				pl.style.height = row.offsetHeight + "px";
+				pl.dataset.top = String(top);
+				return undefined;
+			});
+			// Folded: the icons grow near the pointer (a bell curve over about two rows).
+			function onMove(ev) {
+				if (wide || !box.current) return;
+				const r = box.current.getBoundingClientRect();
+				[].forEach.call(box.current.querySelectorAll(".cs-look-row"), function (el) {
+					const d = (ev.clientY - r.top - el.offsetTop - el.offsetHeight / 2) / 44;
+					el.style.transform = "scale(" + (1 + 0.3 * Math.exp(-d * d * 1.3)).toFixed(3) + ")";
+				});
+			}
+			function onLeave() {
+				if (!box.current) return;
+				[].forEach.call(box.current.querySelectorAll(".cs-look-row"), function (el) { el.style.transform = ""; });
+			}
+			return React.createElement("nav", { className: "cs-look-nav" + (wide ? "" : " is-rail"), "aria-label": "导航", ref: box, onMouseMove: onMove, onMouseLeave: onLeave },
+				React.createElement("span", { className: "cs-look-pill", ref: pill, "aria-hidden": "true" }),
+				items.map(function (item) {
+					const on = item.id === onId;
+					const glyph = item.panel
+						? safeSlot(function () { return props.renderSlot("sidebar.panellist", { size: 18, active: on }, { only: item.id }); })
+						: lookIcon(LOOK_ICONS[item.icon], 18);
+					return React.createElement(P.Tooltip, { key: item.id, label: item.label, delayMs: 300, disabled: wide },
+						React.createElement("button", {
+							type: "button",
+							className: "cs-look-row" + (on ? " is-on" : ""),
+							"data-look-id": item.id,
+							"aria-label": item.label,
+							"aria-current": on ? "page" : undefined,
+							onClick: function () { if (item.panel) props.onPanel(item.id, on); else props.onTab(item.id); }
+						},
+							React.createElement("span", { className: "cs-look-glyph" }, glyph),
+							wide ? React.createElement("span", { className: "cs-look-label" }, item.label) : null,
+							item.count ? React.createElement("span", { className: wide ? "cs-look-count" : "cs-look-dot" }, wide ? String(item.count) : "") : null
+						));
+				}));
+		}
+		function lookOpenTasks() {
+			return inboxTasks().filter(function (t) { return t && !isDraft(t) && t.state !== "已通过" && t.state !== "已作废"; });
+		}
+		// 「我」: who is signed in here; 设置 (the kernel's own entry), 插件 for an admin, 退出登录.
+		function MeMenu(props) {
+			const openHook = React.useState(false);
+			const open = openHook[0];
+			const box = React.useRef(null);
+			const menu = React.useRef(null);
+			const atHook = React.useState(null);
+			React.useEffect(function () {
+				if (!open) return undefined;
+				function away(ev) {
+					if (box.current && box.current.contains(ev.target)) return;
+					if (menu.current && menu.current.contains(ev.target)) return;
+					openHook[1](false);
+				}
+				document.addEventListener("mousedown", away, true);
+				return function () { document.removeEventListener("mousedown", away, true); };
+			}, [open]);
+			const me = deskSelf() || {};
+			const name = String(me.name || deskLogin() || "我");
+			const role = shellRole === "admin" ? "管理员" : shellRole === "director" ? "总监" : "员工";
+			const hasPlugins = shellRole === "admin" && (props.panels || []).some(function (p) { return p && p.id === "plugins"; });
+			// The rail is a glass card (backdrop-filter, overflow hidden), so the menu is put on the body
+			// and placed from the button: above it when the rail is open, beside it when folded.
+			function toggle(ev) {
+				if (open) { openHook[1](false); return; }
+				const r = ev.currentTarget.getBoundingClientRect();
+				atHook[1](props.wide
+					? { left: Math.round(r.left), bottom: Math.round(window.innerHeight - r.top + 8), origin: "16px 100%" }
+					: { left: Math.round(r.right + 12), bottom: Math.round(window.innerHeight - r.bottom), origin: "0 100%" });
+				openHook[1](true);
+			}
+			function logout() {
+				openHook[1](false);
+				fetch("/company/logout", { method: "POST", credentials: "same-origin" }).catch(function () {});
+			}
+			return React.createElement("div", { className: "cs-me" + (props.wide ? "" : " is-rail"), ref: box },
+				// Always mounted: the settings dialog lives inside the kernel's 设置 button, and unmounting
+				// the menu would close the dialog the moment it opens.
+				ReactDOM.createPortal(React.createElement("div", {
+					className: "cs-me-menu" + (open ? " is-open" : ""), role: "menu", ref: menu, "aria-hidden": !open,
+					style: atHook[0] ? { left: atHook[0].left + "px", bottom: atHook[0].bottom + "px", transformOrigin: atHook[0].origin } : { left: "12px", bottom: "64px" }
+				},
+					React.createElement("div", { className: "cs-me-head" },
+						React.createElement("span", { className: "cs-me-pic" }, name.slice(0, 1)),
+						React.createElement("span", null, React.createElement("b", null, name), React.createElement("small", null, (deskLogin() || "") + " · " + role))),
+					React.createElement("div", { className: "cs-me-item cs-me-settings", onClick: function () { setTimeout(function () { openHook[1](false); }, 0); } },
+						safeSlot(function () { return props.renderSlot("sidebar.settings", { wide: true }); })),
+					hasPlugins ? React.createElement("button", { type: "button", className: "cs-me-item", onClick: function () { openHook[1](false); props.selectPanel("plugins"); } },
+						lookIcon(LOOK_ICONS.plugin, 17), React.createElement("span", null, "插件")) : null,
+					React.createElement("div", { className: "cs-me-line" }),
+					React.createElement("button", { type: "button", className: "cs-me-item is-danger", onClick: logout },
+						lookIcon(LOOK_ICONS.logout, 17), React.createElement("span", null, "退出登录"))
+				), document.body),
+				React.createElement("button", { type: "button", className: "cs-me-btn", "aria-label": "我的设置", "aria-expanded": open, onClick: toggle },
+					React.createElement("span", { className: "cs-me-pic" }, name.slice(0, 1)),
+					props.wide ? React.createElement("span", { className: "cs-me-name" }, name, React.createElement("small", null, role)) : null));
+		}
+		// The middle's switch: 助手 (the conversation), ERP, 邮箱; another panel open (工件, 定时任务, 插件) shows as a fourth.
+		function MidSwitch(props) {
+			const active = React.useSyncExternalStore(
+				props.panelInfo ? props.panelInfo.subscribe : noSubscribe,
+				function () { return props.panelInfo ? props.panelInfo.getSnapshot().activePanelId : null; }
+			);
+			const posHook = React.useState(null);
+			const box = React.useRef(null);
+			const thumb = React.useRef(null);
+			React.useEffect(function () {
+				let raf = 0;
+				function place() {
+					const col = document.querySelector('[class*="_centerCol"]');
+					if (!col) { posHook[1](null); return; }
+					const r = col.getBoundingClientRect();
+					posHook[1](function (prev) {
+						const next = Math.round(r.left + r.width / 2);
+						return prev === next ? prev : next;
+					});
+				}
+				place();
+				const ro = typeof ResizeObserver === "function" ? new ResizeObserver(function () { cancelAnimationFrame(raf); raf = requestAnimationFrame(place); }) : null;
+				const col = document.querySelector('[class*="_centerCol"]');
+				if (ro && col) ro.observe(col);
+				window.addEventListener("resize", place);
+				const tick = setInterval(place, 1500);
+				return function () { if (ro) ro.disconnect(); window.removeEventListener("resize", place); clearInterval(tick); };
+			}, []);
+			const tabs = [{ id: null, label: "助手", icon: LOOK_ICONS.sessions }, { id: ERP_PANEL, label: "ERP" }, { id: MAIL_PANEL, label: "邮箱" }];
+			if (active && active !== ERP_PANEL && active !== MAIL_PANEL && active !== CHAT_PANEL) {
+				tabs.push({ id: active, label: LOOK_RAIL_PANELS[active] || (/artifact/i.test(String(active)) ? "工件" : active === "plugins" ? "插件" : "面板"), extra: true });
+			}
+			const onIndex = Math.max(0, tabs.findIndex(function (x) { return x.id === active; }));
+			React.useLayoutEffect(function () {
+				const b = box.current;
+				const th = thumb.current;
+				if (!b || !th) return undefined;
+				const el = b.querySelectorAll(".cs-mid-tab")[onIndex];
+				if (!el) return undefined;
+				const prevL = parseFloat(th.dataset.l || "NaN");
+				const prevW = parseFloat(th.dataset.w || "NaN");
+				const l = el.offsetLeft;
+				const w = el.offsetWidth;
+				th.dataset.l = String(l);
+				th.dataset.w = String(w);
+				if (!isNaN(prevL) && prevL !== l) {
+					const lo = Math.min(prevL, l);
+					const hi = Math.max(prevL + prevW, l + w);
+					th.style.transition = "left .18s ease-out, width .18s ease-out";
+					th.style.left = lo + "px";
+					th.style.width = (hi - lo) + "px";
+					const timer = setTimeout(function () { th.style.transition = ""; th.style.left = l + "px"; th.style.width = w + "px"; }, 170);
+					return function () { clearTimeout(timer); };
+				}
+				th.style.left = l + "px";
+				th.style.width = w + "px";
+				return undefined;
+			});
+			function onMove(ev) {
+				if (!box.current) return;
+				[].forEach.call(box.current.querySelectorAll(".cs-mid-tab"), function (el) {
+					const r = el.getBoundingClientRect();
+					const d = (ev.clientX - (r.left + r.width / 2)) / 70;
+					el.style.transform = "scale(" + (1 + 0.14 * Math.exp(-d * d * 1.4)).toFixed(3) + ")";
+				});
+			}
+			function onLeave() {
+				if (box.current) [].forEach.call(box.current.querySelectorAll(".cs-mid-tab"), function (el) { el.style.transform = ""; });
+			}
+			if (posHook[0] == null) return null;
+			// On the body: the kernel's title row stacks above the overlay slot and would take the clicks.
+			return ReactDOM.createPortal(React.createElement("div", { className: "cs-mid-switch", ref: box, style: { left: posHook[0] + "px" }, role: "tablist", onMouseMove: onMove, onMouseLeave: onLeave },
+				React.createElement("span", { className: "cs-mid-thumb", ref: thumb, "aria-hidden": "true" }),
+				tabs.map(function (x, i) {
+					return React.createElement("button", {
+						key: String(x.id),
+						type: "button",
+						role: "tab",
+						"aria-selected": i === onIndex,
+						className: "cs-mid-tab" + (i === onIndex ? " is-on" : ""),
+						onClick: function () { if (props.selectPanel && i !== onIndex) flowSwap(function () { props.selectPanel(x.id); }); }
+					}, x.label);
+				})), document.body);
+		}
+		// company-look-today-v1 (the user, 2026-11-24: 「之前放展开折叠的位置，换成切换白天和晚上的按钮」): one round glass button at the
+		// middle column's top right; it flips the kernel's own theme preference (ui-theme, theme.setTheme), so 设置 → 外观
+		// shows the same choice.
+		// The lava lamp (正在思考, an artifact opening): one SVG, 34 × 20, three drops on their own paths through a goo
+		// filter of its own (an id per lamp). SMIL moves them; nothing in it is an HTML box (see .cs-lava).
+		let lavaSeq = 0;
+		function lavaNode() {
+			const ns = "http://www.w3.org/2000/svg";
+			const id = "cs-goo-" + (++lavaSeq);
+			const svg = document.createElementNS(ns, "svg");
+			svg.setAttribute("class", "cs-lava");
+			svg.setAttribute("viewBox", "0 0 34 20");
+			svg.setAttribute("aria-hidden", "true");
+			const el = function (parent, name, attrs) {
+				const n = document.createElementNS(ns, name);
+				Object.keys(attrs).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+				parent.appendChild(n);
+				return n;
+			};
+			const f = el(el(svg, "defs", {}), "filter", { id: id, x: "-40%", y: "-80%", width: "180%", height: "260%" });
+			el(f, "feGaussianBlur", { "in": "SourceGraphic", stdDeviation: "2.6", result: "b" });
+			el(f, "feColorMatrix", { "in": "b", values: "1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -8" });
+			const g = el(svg, "g", { filter: "url(#" + id + ")" });
+			const still = (function () { try { return matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (err) { return false; } })();
+			[
+				{ c: "d1", cx: "6.5;26.5;6.5", cy: "7.5;11.5;7.5", r: "5.5", dur: "4.6s" },
+				{ c: "d2", cx: "29;7;29", cy: "13;7;13", r: "4", dur: "6.2s" },
+				{ c: "d3", cx: "15.5;27.5;15.5", cy: "5;14;5", r: "4.2;2.8;4.2", dur: "3.4s" }
+			].forEach(function (d) {
+				const first = function (v) { return v.split(";")[0]; };
+				const c = el(g, "circle", { "class": d.c, cx: first(d.cx), cy: first(d.cy), r: first(d.r) });
+				if (still) return;
+				["cx", "cy", "r"].forEach(function (k) {
+					if (d[k].indexOf(";") < 0) return;
+					el(c, "animate", { attributeName: k, values: d[k], dur: d.dur, calcMode: "spline", keyTimes: "0;.5;1",
+						keySplines: ".42 0 .58 1;.42 0 .58 1", repeatCount: "indefinite" });
+				});
+			});
+			return svg;
+		}
+		function bodyDark() { try { return !!(document.body && document.body.hasAttribute("data-ds-dark-theme")); } catch (err) { return false; } }
+		function subscribeBodyDark(fn) {
+			if (typeof MutationObserver === "undefined" || !document.body) return function () {};
+			const mo = new MutationObserver(fn);
+			mo.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+			return function () { mo.disconnect(); };
+		}
+		function ThemeToggle(props) {
+			const dark = React.useSyncExternalStore(subscribeBodyDark, bodyDark);
+			const posHook = React.useState(null);
+			React.useEffect(function () {
+				function place() {
+					const col = document.querySelector('[class*="_centerCol"]');
+					if (!col) { posHook[1](null); return; }
+					const r = col.getBoundingClientRect();
+					const next = Math.round(r.right - 52);
+					posHook[1](function (prev) { return prev === next ? prev : next; });
+				}
+				place();
+				const col = document.querySelector('[class*="_centerCol"]');
+				const ro = typeof ResizeObserver === "function" && col ? new ResizeObserver(place) : null;
+				if (ro) ro.observe(col);
+				window.addEventListener("resize", place);
+				const tick = setInterval(place, 1500);
+				return function () { if (ro) ro.disconnect(); window.removeEventListener("resize", place); clearInterval(tick); };
+			}, []);
+			if (posHook[0] == null || !props.theme || typeof props.theme.setTheme !== "function") return null;
+			const sun = ["M12 4V2.5", "M12 21.5V20", "M4 12H2.5", "M21.5 12H20", "M6.3 6.3 5.2 5.2", "M18.8 18.8l-1.1-1.1", "M6.3 17.7l-1.1 1.1", "M18.8 5.2l-1.1 1.1"];
+			const icon = dark
+				? React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round", strokeLinejoin: "round" },
+					React.createElement("path", { d: "M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" }))
+				: React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" },
+					React.createElement("circle", { cx: 12, cy: 12, r: 4.2 }),
+					sun.map(function (d, i) { return React.createElement("path", { key: i, d: d }); }));
+			return ReactDOM.createPortal(React.createElement("button", {
+				type: "button",
+				className: "cs-theme-btn" + (dark ? " is-dark" : ""),
+				style: { left: posHook[0] + "px" },
+				"aria-label": dark ? "切换到白天" : "切换到夜间",
+				title: dark ? "白天" : "夜间",
+				onClick: function () { flowSwap(function () { try { props.theme.setTheme(dark ? "light" : "dark"); } catch (err) {} }); }
+			}, icon), document.body);
+		}
+		// 今天, the chat column's first page: what is due today or late, and what waits for my verdict.
+		function TodayPane() {
+			useShellPulse();
+			const now = Date.now();
+			const end = new Date();
+			end.setHours(23, 59, 59, 999);
+			const mine = lookOpenTasks();
+			const due = mine.filter(function (t) { return t.due && t.due <= end.getTime() && !isAwaitingVerdict(t); })
+				.sort(function (a, b) { return a.due - b.due; });
+			const later = mine.filter(function (t) { return !(t.due && t.due <= end.getTime()) && !isAwaitingVerdict(t); }).slice(0, 5);
+			const verdict = mine.filter(isAwaitingVerdict);
+			function row(t) {
+				const late = t.due && t.due < now;
+				return React.createElement("button", { key: t.id, type: "button", className: "cs-today-row", onClick: function () { selectTask(t.id); } },
+					React.createElement("span", { className: "cs-today-box" }),
+					React.createElement("span", { className: "cs-today-t" }, t.title),
+					React.createElement("span", { className: "cs-today-d" + (late ? " is-late" : "") }, t.due ? (late ? "已超期" : cardTime(t.due)) : (t.from || "")));
+			}
+			function card(title, list, empty) {
+				return React.createElement("section", { className: "cs-today-card" },
+					React.createElement("h3", null, title, React.createElement("small", null, list.length ? String(list.length) : "")),
+					list.length ? list.map(row) : React.createElement("p", { className: "cs-today-empty" }, empty));
+			}
+			const d = new Date();
+			return React.createElement("div", { className: "cs-today" },
+				React.createElement("div", { className: "cs-today-date" }, (d.getMonth() + 1) + " 月 " + d.getDate() + " 日 · 星期" + "日一二三四五六".charAt(d.getDay())),
+				card("今天要做的", due, "今天没有到期的事"),
+				verdict.length ? card("等我审批", verdict, "") : null,
+				later.length ? card("接下来", later, "") : null,
+				React.createElement("p", { className: "cs-today-foot" }, "点一项打开任务卡；早报和通话纪要在「聊天」里"));
 		}
 
 		function fileKind(file) {
@@ -4731,25 +5516,35 @@ window.__ModuleLoader__.load({
 			if (!q || !q.loaded) return "正在读取…";
 			if (quotaUnderOne(q)) {
 				const w = quotaWhen(q.resetsAt);
-				return (q.plan ? String(q.plan) + " · " : "") + "本周已用不到 1%（OpenAI 按整数报）" + (w ? " · " + w + " 刷新" : "");
+				return (q.plan ? String(q.plan) + " · " : "") + "本周已用不到 1%（OpenAI 按整数报）" + (w ? " · " + w + " 重置" : "") + quotaAt(q);
 			}
 			if (q.err) return "额度接口没接通";
 			if (q.kind === "key" && quotaPercent(q) == null) return "走 API key，没有订阅额度";
 			if (quotaPercent(q) == null) return "订阅没有返回额度数据";
 			const kind = q.kind === "weekly" ? "本周" : (q.kind === "monthly" ? "本月" : "本期");
 			const when = quotaWhen(q.resetsAt);
-			return (q.plan ? String(q.plan) + " · " : "") + kind + (when ? " · " + when + " 刷新" : "");
+			return (q.plan ? String(q.plan) + " · " : "") + kind + (when ? " · " + when + " 重置" : "") + quotaAt(q);
+		}
+		function quotaAt(q) {
+			const n = Date.parse((q && q.fetchedAt) || "");
+			if (!n) return "";
+			try { return " · " + new Date(n).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }) + " 读的"; } catch (err) { return ""; }
 		}
 		function meter(pct) {
 			if (pct == null) return null;
 			const tone = pct < 10 ? " cs-meter-err" : (pct < 30 ? " cs-meter-warn" : "");
 			return el("div", { className: "cs-meter" + tone }, el("i", { style: { width: pct + "%" } }));
 		}
+		// company-quota-refresh-v1: q.reload() asks for a reading taken now (the 刷新 button);
+		// q.fetchedAt says when the shown one was taken.
 		function useQuota() {
 			const qHook = React.useState({ loaded: false, usedPercent: null, remainingPercent: null, plan: "", kind: "", resetsAt: "", err: "" });
-			React.useEffect(function () {
-				fetchQuota().then(function (out) {
+			const busyHook = React.useState(false);
+			function load(fresh) {
+				busyHook[1](true);
+				fetchQuota(fresh).then(function (out) {
 					const j = out.j || {};
+					busyHook[1](false);
 					qHook[1]({
 						loaded: true,
 						usedPercent: out.ok ? j.usedPercent : null,
@@ -4757,12 +5552,18 @@ window.__ModuleLoader__.load({
 						plan: (out.ok && j.plan) || "",
 						kind: (out.ok && j.kind) || "",
 						resetsAt: (out.ok && j.resetsAt) || "",
+						fetchedAt: (out.ok && j.fetchedAt) || "",
 						vendor: (out.ok && j.vendor) || "grok",
-						err: out.ok ? "" : ((j.error && j.error.message) || j.error || ("http-" + out.status))
+						err: out.ok ? (j.quotaError || "") : ((j.error && j.error.message) || j.error || ("http-" + out.status))
 					});
 				});
-			}, []);
-			return qHook[0];
+			}
+			React.useEffect(function () { load(false); }, []);
+			return Object.assign({}, qHook[0], { busy: busyHook[0], reload: function () { load(true); } });
+		}
+		function quotaRefresh(q) {
+			if (!q || typeof q.reload !== "function") return null;
+			return el("button", { type: "button", className: "cs-chip", disabled: !!q.busy, title: "向 OpenAI 要一次最新的额度", onClick: function () { q.reload(); } }, q.busy ? "刷新中…" : "刷新");
 		}
 		function contextText(n) {
 			n = Number(n) || 0;
@@ -5061,6 +5862,10 @@ window.__ModuleLoader__.load({
 			const busyHook = React.useState(false);
 			const doneHook = React.useState(false);
 			const editHook = React.useState(null);
+			// company-self-password-v1: everyone changes their own sign-in password here (people-api
+			// action self: the old one is checked, the new one is at least 6 characters). The share
+			// account has its own password, so the company drive is not affected.
+			const pwHook = React.useState(null);
 			const armHook = useArm();
 			const fileRef = React.useRef(null);
 			React.useEffect(function () {
@@ -5176,6 +5981,46 @@ window.__ModuleLoader__.load({
 						desc: "会显示在同事、人员页和侧边栏。",
 						side: btn("移除头像", { small: true, tone: "ghost", disabled: busyHook[0], onClick: function () { saveSelf({ avatar: "" }, "头像已移除。"); } })
 					}) : null,
+					pwHook[0] === null ? setRow("password", {
+						title: "登录密码",
+						desc: "改成只有你自己知道的密码。改完这台电脑不用重新登录，下次登录用新密码。",
+						side: btn("修改密码", { small: true, tone: "ghost", disabled: busyHook[0], onClick: function () { noteHook[1](""); pwHook[1]({ old: "", next: "", again: "" }); } })
+					}) : el("div", { className: "cs-set-row", key: "password" },
+						el("div", { className: "cs-set-main" },
+							el("div", { className: "cs-set-rt" }, el("span", null, "修改登录密码")),
+							el("form", {
+								className: "cs-form",
+								"data-mark": "company-self-password-v1",
+								style: { marginTop: 8 },
+								onSubmit: function (ev) {
+									ev.preventDefault();
+									const f = pwHook[0];
+									if (!f.old) { noteHook[1]("先填旧密码。"); return; }
+									if (f.next.length < 6) { noteHook[1]("新密码至少 6 位，现在是 " + f.next.length + " 位。"); return; }
+									if (f.next !== f.again) { noteHook[1]("两次输入的新密码不一样。"); return; }
+									if (f.next === f.old) { noteHook[1]("新密码和旧密码一样，换一个。"); return; }
+									saveSelf({ password_old: f.old, password_new: f.next }, "密码已改好。下次登录用新密码。").then(function (ok) { if (ok) pwHook[1](null); });
+								}
+							},
+								[["old", "旧密码", "current-password"], ["next", "新密码（至少 6 位）", "new-password"], ["again", "再输一次新密码", "new-password"]].map(function (x) {
+									return el("label", { className: "cs-field", key: x[0] }, el("span", null, x[1]),
+										el("input", {
+											className: "cs-input",
+											type: "password",
+											autoComplete: x[2],
+											value: pwHook[0][x[0]],
+											disabled: busyHook[0],
+											onChange: function (e) { const n = Object.assign({}, pwHook[0]); n[x[0]] = e.target.value; pwHook[1](n); }
+										}));
+								}),
+								el("div", { className: "cs-set-foot", style: { gridColumn: "1 / -1" } },
+									el("p", { className: "cs-set-note" }, "忘了旧密码就找管理员在「人员」里重设。"),
+									el("div", { style: { display: "flex", gap: 8 } },
+										btn("取消", { small: true, tone: "ghost", onClick: function () { pwHook[1](null); noteHook[1](""); } }),
+										btn(busyHook[0] ? "正在保存…" : "保存新密码", { submit: true, small: true, tone: "primary", disabled: busyHook[0] })))
+							)
+						)
+					),
 					setRow("logout", {
 						title: "退出登录",
 						desc: "本机账号会立刻清掉，窗口回到登录。",
@@ -5200,10 +6045,12 @@ window.__ModuleLoader__.load({
 			);
 		}
 
-		function fetchQuota() {
+		function fetchQuota(fresh) {
+			const h = { "Accept": "application/json" };
+			if (fresh) h["X-Company-Fresh"] = "1";
 			return fetch("/company/grok-quota", {
 				credentials: "same-origin",
-				headers: { "Accept": "application/json" }
+				headers: h
 			}).then(function (res) {
 				return res.json().then(function (j) {
 					return { ok: !!(res.ok && j && j.ok !== false), j: j || {}, status: res.status };
@@ -5325,6 +6172,94 @@ window.__ModuleLoader__.load({
 
 		// company-server-key-v1: the vendor keys live in the server's gateway.env, never on a desk.
 		// The desk's own key box is hidden (company-no-add-key); this is where an admin types one.
+		// company-key-models-v1: which of a key vendor's models everyone sees. None ticked (the
+		// default) = the vendor's whole live list, so a model it adds shows up by itself.
+		function KeyModelPicker(props) {
+			const vendors = props.vendors || [];
+			const curHook = React.useState(vendors[0] ? vendors[0].vendor : "");
+			const listHook = React.useState({ loaded: false, rows: [], err: "" });
+			const pickHook = React.useState({});
+			const allHook = React.useState(true);
+			const noteHook = React.useState("");
+			const toneHook = React.useState("");
+			const busyHook = React.useState(false);
+			const cur = vendors.some(function (v) { return v.vendor === curHook[0]; }) ? curHook[0] : (vendors[0] ? vendors[0].vendor : "");
+			function load(v) {
+				if (!v) return;
+				listHook[1]({ loaded: false, rows: [], err: "" });
+				noteHook[1]("");
+				Promise.all([postChannels({ action: "list-models", vendor: v }), postChannels({ action: "picked-models", vendor: v })]).then(function (r) {
+					if (!r[0].ok) { listHook[1]({ loaded: true, rows: [], err: channelsErr(r[0]) }); return; }
+					const picked = ((r[1].j && r[1].j.models) || []).map(function (m) { return m && m.id; }).filter(Boolean);
+					const bag = {};
+					picked.forEach(function (id) { bag[id] = true; });
+					pickHook[1](bag);
+					allHook[1](!picked.length);
+					listHook[1]({ loaded: true, rows: (r[0].j && r[0].j.models) || [], err: "" });
+				});
+			}
+			React.useEffect(function () { load(cur); }, [cur, props.stamp]);
+			if (!vendors.length) return null;
+			const rows = listHook[0].rows;
+			const label = (vendors.filter(function (v) { return v.vendor === cur; })[0] || {}).label || cur;
+			function apply() {
+				const ids = allHook[0] ? [] : rows.map(function (m) { return m.id; }).filter(function (id) { return pickHook[0][id]; });
+				if (!allHook[0] && !ids.length) { toneHook[1]("err"); noteHook[1]("至少勾一个，或者选「全部开放」。"); return; }
+				busyHook[1](true);
+				postChannels({ action: "apply-models", vendor: cur, models: ids }).then(function (out) {
+					busyHook[1](false);
+					if (!out.ok) { toneHook[1]("err"); noteHook[1](channelsErr(out)); return; }
+					toneHook[1]("");
+					noteHook[1]((ids.length ? "已开放 " + ids.length + " 个 " + label + " 模型。" : "已开放 " + label + " 的全部模型，以后它出新模型会自动出现。")
+						+ (out.j && out.j.live ? "这台电脑的模型菜单已经更新；" : "") + "其他人下次登录时更新。");
+				});
+			}
+			function toggle(id) {
+				const next = Object.assign({}, pickHook[0]);
+				if (next[id]) delete next[id]; else next[id] = true;
+				pickHook[1](next);
+			}
+			const list = !listHook[0].loaded
+				? el("div", { className: "cs-vendor-msg" }, "正在向 " + label + " 要模型列表…")
+				: listHook[0].err
+					? el("div", { className: "cs-vendor-msg" }, listHook[0].err)
+					: el("div", { className: "cs-mlist" }, rows.map(function (m) {
+						const on = allHook[0] || !!pickHook[0][m.id];
+						return el("div", { className: "cs-mrow" + (on ? "" : " cs-mrow-off"), key: m.id },
+							el("button", {
+								type: "button",
+								role: "checkbox",
+								"aria-checked": on,
+								"aria-label": m.id,
+								disabled: allHook[0] || busyHook[0],
+								className: "cs-tick" + (on ? " is-on" : ""),
+								onClick: function () { toggle(m.id); }
+							}, TICK_SVG),
+							el("div", { className: "cs-mrow-name" }, el("span", null, m.id), m.image ? badge("识图") : null)
+						);
+					}));
+			return el("div", { className: "cs-set-card", "data-mark": "company-key-models-v1", style: { marginTop: 12 } },
+				el("div", { className: "cs-form" },
+					el("label", { className: "cs-field" }, el("span", null, "开放给大家的模型"),
+						selectBox(cur, vendors.map(function (v) { return { value: v.vendor, label: v.label }; }), function (v) { curHook[1](v); }, busyHook[0])),
+					el("div", { className: "cs-field" }, el("span", null, "范围"),
+						el("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+							el("button", { type: "button", className: "cs-chip" + (allHook[0] ? " is-on" : ""), "aria-pressed": allHook[0], disabled: busyHook[0], onClick: function () { allHook[1](true); } }, "全部开放（跟着厂商更新）"),
+							el("button", { type: "button", className: "cs-chip" + (!allHook[0] ? " is-on" : ""), "aria-pressed": !allHook[0], disabled: busyHook[0], onClick: function () {
+								if (allHook[0]) { const bag = {}; rows.forEach(function (m) { bag[m.id] = true; }); pickHook[1](bag); }
+								allHook[1](false);
+							} }, "只开放勾选的"))),
+					el("div", { style: { gridColumn: "1 / -1" } }, list),
+					el("div", { className: "cs-set-foot", style: { gridColumn: "1 / -1" } },
+						el("p", { className: "cs-set-note" }, allHook[0]
+							? "模型列表每次从 " + label + " 实时取，它上新模型不用改这里。"
+							: "只有勾选的出现在大家的模型菜单里；" + label + " 上的新模型要回来勾上。"),
+						btn(busyHook[0] ? "正在保存…" : "保存给全公司", { tone: "primary", disabled: busyHook[0] || !listHook[0].loaded || !!listHook[0].err, onClick: apply }))
+				),
+				setNote(noteHook[0], toneHook[0])
+			);
+		}
+
 		function ServerKeyForm() {
 			useShellPulse();
 			const presetHook = React.useState("deepseek");
@@ -5334,6 +6269,7 @@ window.__ModuleLoader__.load({
 			const toneHook = React.useState("");
 			const busyHook = React.useState(false);
 			const boundHook = React.useState({});
+			const stampHook = React.useState(0);
 			function load() {
 				fetchChannels().then(function (out) {
 					const next = {};
@@ -5344,11 +6280,11 @@ window.__ModuleLoader__.load({
 			React.useEffect(load, []);
 			if (shellRole !== "admin") return null;
 			const presets = [
-				{ value: "deepseek", label: "DeepSeek", id: "deepseek" },
+				{ value: "deepseek", label: "DeepSeek", id: "deepseek", vendor: "deepseek" },
 				{ value: "openai", label: "OpenAI / GPT（API key）", id: "gpt" },
-				{ value: "anthropic", label: "Anthropic / Claude", id: "opus" },
-				{ value: "kimi", label: "Kimi", id: "kimi" },
-				{ value: "glm", label: "智谱 GLM", id: "glm" },
+				{ value: "anthropic", label: "Anthropic / Claude", id: "opus", vendor: "claude" },
+				{ value: "kimi", label: "Kimi", id: "kimi", vendor: "kimi" },
+				{ value: "glm", label: "智谱 GLM", id: "glm", vendor: "glm" },
 				{ value: "xai", label: "xAI / Grok（API key）", id: "grok-key" }
 			];
 			const cur = presets.filter(function (x) { return x.value === presetHook[0]; })[0] || presets[0];
@@ -5365,8 +6301,9 @@ window.__ModuleLoader__.load({
 					if (!out.ok) { toneHook[1]("err"); noteHook[1](channelsErr(out)); return; }
 					keyHook[1]("");
 					toneHook[1]("");
-					noteHook[1]("已存到服务器：" + cur.label + "。对话框的模型菜单下次打开时就有它的模型。");
+					noteHook[1]("已存到服务器：" + cur.label + "。" + (out.j && out.j.live ? "这台电脑的模型菜单已经有它的模型，" : "") + "其他人下次登录时就有。要只开放其中几个，在下面选。");
 					load();
+					stampHook[1](stampHook[0] + 1);
 				});
 			}
 			const stored = presets.filter(function (x) { return boundHook[0][x.id]; }).map(function (x) { return x.label; });
@@ -5386,7 +6323,8 @@ window.__ModuleLoader__.load({
 							btn(busyHook[0] ? "正在保存…" : "保存到服务器", { submit: true, tone: "primary", disabled: busyHook[0] }))
 					)
 				),
-				setNote(noteHook[0], toneHook[0])
+				setNote(noteHook[0], toneHook[0]),
+				el(KeyModelPicker, { stamp: stampHook[0], vendors: presets.filter(function (x) { return x.vendor && boundHook[0][x.id]; }).map(function (x) { return { vendor: x.vendor, label: x.label }; }) })
 			);
 		}
 
@@ -5628,7 +6566,8 @@ window.__ModuleLoader__.load({
 			return el("div", { className: "cs-set", "data-mark": "company-proxy-fold-v1" },
 				el("div", { className: "cs-quota" },
 					el("div", { className: "cs-quota-main" },
-						el("div", { className: "cs-quota-k" }, (q.vendor === "gpt" ? "GPT" : "Grok") + " 订阅剩余额度"),
+						el("div", { className: "cs-quota-k", style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
+							el("span", null, (q.vendor === "gpt" ? "GPT" : "Grok") + " 订阅剩余额度"), quotaRefresh(q)),
 						el("div", { className: "cs-quota-v" }, pct == null ? "—" : quotaPctText(q, pct) + "%", el("small", null, quotaSub(q))),
 						meter(pct)
 					)
@@ -6021,7 +6960,8 @@ window.__ModuleLoader__.load({
 			return setPage("同事", "谁在线、最近用了多少 token。用量来自服务器网关，经网关的模型调用都算在内。",
 				el("div", { className: "cs-stats" },
 					el("div", { className: "cs-stat" },
-						el("div", { className: "cs-stat-k" }, q.vendor === "gpt" ? "GPT 订阅剩余" : "订阅剩余"),
+						el("div", { className: "cs-stat-k", style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
+							el("span", null, q.vendor === "gpt" ? "GPT 订阅剩余" : "订阅剩余"), quotaRefresh(q)),
 						el("div", { className: "cs-stat-v" }, pct == null ? "—" : quotaPctText(q, pct), pct == null ? null : el("small", null, "%")),
 						meter(pct),
 						el("div", { className: "cs-stat-s" }, quotaSub(q))
@@ -6072,13 +7012,19 @@ window.__ModuleLoader__.load({
 			const toneHook = React.useState("");   // "err" paints the note red
 			const busyHook = React.useState(false);
 			const pendingHook = React.useState(null);
+			// company-login-sms-v1: each person's mobile number (for 手机验证码登录), admins only; never in the public roster.
+			const phonesHook = React.useState({});
+			const phoneEditHook = React.useState(null);   // { login, value }
+			const newPhoneHook = React.useState("");
 			const rowsHook = React.useState(PEOPLE.filter(function (p) { return p && p.login; }));
+			const phoneAdmin = shellRole === "admin";
 			React.useEffect(function () {
 				peopleApi(null).then(function () {
 					rowsHook[1](PEOPLE.filter(function (p) { return p && p.login; }));
 				}, function (err) {
 					noteHook[1](peopleErr(err && err.message));
 				});
+				if (phoneAdmin) peopleApi({ action: "phones" }).then(function (j) { if (j && j.phones) phonesHook[1](j.phones); }, function () {});
 			}, []);
 			if (!canManagePeople()) return null;
 			function refreshRows() {
@@ -6092,6 +7038,7 @@ window.__ModuleLoader__.load({
 				pendingHook[1](null);
 				peopleApi(body).then(function (j) {
 					refreshRows();
+					if (j && j.phones && phoneAdmin) phonesHook[1](j.phones);
 					busyHook[1](false);
 					if (body && body.action === "gw-revoke" && j && typeof j.revoked === "number") {
 						noteHook[1](okNote + "（" + j.revoked + " 把）");
@@ -6144,6 +7091,8 @@ window.__ModuleLoader__.load({
 				const seed = p.seed === true || p.login === "boss";
 				const pending = pendingOf(p.login);
 				const busy = busyHook[0];
+				const phone = phonesHook[0][p.login] || "";
+				const editing = phoneEditHook[0] && phoneEditHook[0].login === p.login;
 				const out = [setRow(p.login, {
 					className: off ? "cs-set-row-off" : "",
 					lead: personAvatar(p),
@@ -6152,8 +7101,16 @@ window.__ModuleLoader__.load({
 						off ? el("span", { key: "st" }, badge("已停用", "err")) : null,
 						seed ? el("span", { key: "seed" }, badge("种子管理员", "brand")) : null
 					],
-					desc: "登录名 " + p.login + (seed ? "  ·  " + peopleRoleText(p.role) + "  ·  " + deptName(p.dept) : ""),
+					desc: "登录名 " + p.login + (seed ? "  ·  " + peopleRoleText(p.role) + "  ·  " + deptName(p.dept) : "") +
+						(phoneAdmin ? "  ·  " + (phone ? "手机 " + phone : "未登记手机号") : ""),
 					side: [
+						phoneAdmin ? btn(phone ? "改手机号" : "登记手机号", {
+							key: "phone",
+							small: true,
+							tone: "ghost",
+							disabled: busy,
+							onClick: function () { phoneEditHook[1]({ login: p.login, value: phone }); }
+						}) : null,
 						seed ? null : el("span", { key: "role" }, selectBox(p.role || "employee", roleChoices(), function (v) {
 							runAction({ action: "set", login: p.login, role: v }, p.login + " → " + peopleRoleText(v));
 						}, busy)),
@@ -6176,6 +7133,31 @@ window.__ModuleLoader__.load({
 						})
 					]
 				})];
+				if (editing) {
+					out.push(el("form", {
+						className: "cs-set-row",
+						key: p.login + "-phone",
+						onSubmit: function (ev) {
+							ev.preventDefault();
+							const v = String(phoneEditHook[0].value || "").trim();
+							runAction({ action: "set", login: p.login, phone: v }, v ? displayName(p) + " 的手机号已登记，可以用验证码登录" : "已清除 " + displayName(p) + " 的手机号");
+							phoneEditHook[1](null);
+						}
+					},
+						el("input", {
+							className: "cs-input",
+							autoFocus: true,
+							inputMode: "numeric",
+							maxLength: 16,
+							value: phoneEditHook[0].value,
+							placeholder: "11 位手机号，留空就是清除",
+							onChange: function (e) { phoneEditHook[1]({ login: p.login, value: e.target.value }); },
+							onKeyDown: function (e) { if (e.key === "Escape") phoneEditHook[1](null); }
+						}),
+						btn("保存", { submit: true, small: true, tone: "primary", disabled: busy }),
+						btn("取消", { small: true, tone: "ghost", onClick: function () { phoneEditHook[1](null); } })
+					));
+				}
 				if (pending) {
 					let text = "";
 					let go = "";
@@ -6221,17 +7203,25 @@ window.__ModuleLoader__.load({
 					noteHook[1]("初始密码至少 6 位，现在是 " + password.length + " 位。");
 					return;
 				}
+				const phone = String(newPhoneHook[0] || "").trim();
+				if (phone && !/^(\+?86)?1[3-9]\d{9}$/.test(phone.replace(/[\s-]/g, ""))) {
+					noteHook[1](peopleErr("phone-bad"));
+					return;
+				}
 				toneHook[1]("");
-				runAction({
+				const body = {
 					action: "add",
 					login: login,
 					role: roleHook[0] || "employee",
 					dept: newDept,
 					name: String(nameHook[0] || "").trim(),
 					password: password
-				}, "已发放 " + login);
+				};
+				if (phone && phoneAdmin) body.phone = phone;
+				runAction(body, "已发放 " + login);
 				passHook[1]("");
 				nameHook[1]("");
+				newPhoneHook[1]("");
 			}
 			return setPage("人员", "发放账号，管理部门，调整角色。停用会同时吊销这个人的模型令牌。",
 				groupedRows().map(function (g) {
@@ -6329,6 +7319,16 @@ window.__ModuleLoader__.load({
 									placeholder: "至少 6 位",
 									onChange: function (e) { passHook[1](e.target.value); }
 								})),
+							phoneAdmin ? el("label", { className: "cs-field" }, el("span", null, "手机号（可选，用来验证码登录）"),
+								el("input", {
+									className: "cs-input",
+									value: newPhoneHook[0],
+									inputMode: "numeric",
+									maxLength: 16,
+									autoComplete: "off",
+									placeholder: "11 位手机号",
+									onChange: function (e) { newPhoneHook[1](e.target.value); }
+								})) : null,
 							el("label", { className: "cs-field" }, el("span", null, "角色"),
 								selectBox(roleHook[0], roleChoices(), function (v) { roleHook[1](v); })),
 							el("label", { className: "cs-field" }, el("span", null, "部门"),
@@ -6341,7 +7341,8 @@ window.__ModuleLoader__.load({
 					)
 				),
 				setNote(noteHook[0], toneHook[0]),
-				setNote("种子管理员不能停用或降权，但可以吊销令牌。总监不能设管理员。登录名发放后不能改，显示名可以随时改。")
+				setNote("种子管理员不能停用或降权，但可以吊销令牌。总监不能设管理员。登录名发放后不能改，显示名可以随时改。" +
+					(phoneAdmin ? "登记了手机号的人可以用短信验证码登录；手机号只有管理员看得到。改手机号、停用、改密码都会让这个人在已记住的电脑上重新登录。" : ""))
 			);
 		}
 
@@ -6364,7 +7365,7 @@ window.__ModuleLoader__.load({
 			const types = dt.types ? Array.prototype.slice.call(dt.types) : [];
 			for (let i = 0; i < types.length; i++) {
 				const t = String(types[i] || "").toLowerCase();
-				if (t === "files" || t.indexOf("file") >= 0 || t === "text/uri-list") return true;
+				if (t === "files" || t.indexOf("file") >= 0 || t === "text/uri-list" || t === "application/x-tdh-artifact") return true;
 			}
 			if (dt.items && dt.items.length) {
 				for (let i = 0; i < dt.items.length; i++) {
@@ -6618,6 +7619,19 @@ window.__ModuleLoader__.load({
 		}
 
 		function deskLandFromDrop(dt) {
+			// An artifact card from 工件, or a file / picture from 聊天 (company-chat-forward-v1): no file in the drop itself.
+			let art = null;
+			try { const raw = dt && dt.getData ? dt.getData("application/x-tdh-artifact") : ""; if (raw) art = JSON.parse(raw); } catch (err) { art = null; }
+			if (art && art.path) {
+				if (artDrag) artDrag.done = true;
+				return giveArtifactToAssistant(art);
+			}
+			let viewId = "";
+			try { viewId = dt && dt.getData ? dt.getData("application/x-tdh-file") : ""; } catch (err) { viewId = ""; }
+			if (viewId && viewStore.files.has(viewId)) {
+				return landDeskFiles([viewStore.files.get(viewId)]).then(function (n) { if (n) csToast("已放进助手对话框，说说要怎么处理它"); return n; });
+			}
+			if (!(dt && dt.files && dt.files.length) && chatDrag && !chatDrag.done && Date.now() - chatDrag.at < 120000) return landChatDrag();
 			const entries = [];
 			if (dt && dt.items) {
 				for (let i = 0; i < dt.items.length; i++) {
@@ -6761,6 +7775,2210 @@ window.__ModuleLoader__.load({
 			);
 		}
 
+		// company-chat-desk-v1 ------------------------------------------------------------
+		const CHAT_PANEL = "company-chat";
+		const CHAT_TAB = "company-chat";
+		let chatWhere = null;
+		function chatUrl() {
+			if (!chatWhere) {
+				chatWhere = fetch("/company/chat/where", {
+					credentials: "same-origin",
+					headers: { "Accept": "application/json" }
+				}).then(function (res) {
+					return res.json().then(function (j) {
+						if (res.ok && j && j.ok && j.url) return String(j.url);
+						throw new Error("relay");
+					});
+				}).catch(function (err) {
+					chatWhere = null;
+					throw err;
+				});
+			}
+			return chatWhere;
+		}
+		// company-chat-notify-v1: the unread count (badge on 聊天), a popup in the window when a message comes while
+		// the chat is not on screen, and the system's notification while the window is in the background. The desk's
+		// host watches the chat (chat-relay.js); this page asks it every few seconds.
+		let chatSnap = { count: 0, toast: null };
+		const chatSubs = new Set();
+		const chatStore = {
+			subscribe: function (fn) { chatSubs.add(fn); return function () { chatSubs.delete(fn); }; },
+			getSnapshot: function () { return chatSnap; }
+		};
+		function setChatSnap(next) {
+			chatSnap = next;
+			chatSubs.forEach(function (fn) { fn(); });
+		}
+		// The chat frames on screen (its column at the right edge, the left panel, an old right-sidebar tab); a hidden
+		// kept-mounted tab has no box.
+		const chatBoxes = new Set();
+		function chatOnScreen() {
+			try {
+				if (document.visibilityState && document.visibilityState !== "visible") return false;
+				let seen = false;
+				chatBoxes.forEach(function (el) { if (el && el.isConnected && el.getClientRects().length > 0) seen = true; });
+				return seen;
+			} catch (err) {
+				return false;
+			}
+		}
+		function chatHeaders() {
+			return { "Accept": "application/json", "X-TDH-Chat": "1" };
+		}
+		// company-phone-push-v1: while this desk window (a computer's, not the phone's page) is visible and focused, the
+		// kernel is told every 30 s, so an AI answer finished meanwhile does not also ring the person's phone.
+		let deskSeenOn = false;
+		function startDeskSeen() {
+			if (deskSeenOn || PHONE) return;
+			deskSeenOn = true;
+			function ping() {
+				try {
+					if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+					fetch("/company/desk/seen", { method: "POST", credentials: "same-origin", headers: chatHeaders() }).catch(function () {});
+				} catch (err) {}
+			}
+			try {
+				ping();
+				setInterval(ping, 30000);
+				document.addEventListener("visibilitychange", ping);
+				window.addEventListener("focus", ping);
+			} catch (err) {}
+		}
+		let chatPolling = false;
+		function startChatPoll() {
+			if (chatPolling) return;
+			chatPolling = true;
+			let since = -1;
+			function tick() {
+				fetch("/company/chat/unread?since=" + Math.max(0, since), { credentials: "same-origin", headers: chatHeaders() })
+					.then(function (res) { return res.json(); })
+					.then(function (j) {
+						if (!j || !j.ok) return;
+						const fresh = since < 0 ? [] : (j.events || []);
+						since = Number(j.seq) || 0;
+						let toast = chatSnap.toast;
+						if (fresh.length) {
+							const last = fresh[fresh.length - 1];
+							const text = (last.group ? "「" + (last.from || "群聊") + "」有新消息" : (last.from || "同事") + " 发来新消息") +
+								(fresh.length > 1 ? "（共 " + fresh.length + " 条）" : "");
+							// The chat's own column is always there: its list shows what is new, no popup over it.
+							if (!chatOnScreen() && !chatDocked()) toast = { id: last.id, text: text };
+							let focused = true;
+							try { focused = document.hasFocus(); } catch (err) {}
+							if (!focused) {
+								fetch("/company/chat/notify", {
+									method: "POST",
+									credentials: "same-origin",
+									headers: Object.assign({ "Content-Type": "application/json" }, chatHeaders()),
+									body: JSON.stringify({ title: "TDH 聊天", body: text })
+								}).catch(function () {});
+							}
+						}
+						const count = Number(j.count) || 0;
+						if (count !== chatSnap.count || toast !== chatSnap.toast) setChatSnap({ count: count, toast: toast });
+					})
+					.catch(function () {});
+			}
+			tick();
+			setInterval(tick, 4000);
+		}
+		function ChatIcon(props) {
+			const snap = React.useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+			const glyph = React.createElement(ChatGlyph, props);
+			const n = snap.count;
+			if (!n) return glyph;
+			return React.createElement("span", { style: { position: "relative", display: "inline-flex" }, "data-company-chat-unread": String(n) },
+				glyph,
+				React.createElement("span", {
+					style: {
+						position: "absolute", top: -6, right: -9, minWidth: 15, height: 15, padding: "0 4px", boxSizing: "border-box",
+						borderRadius: 8, background: T.err, color: "#fff", fontSize: 10, lineHeight: "15px", fontWeight: 600,
+						textAlign: "center", fontFamily: FONT, pointerEvents: "none"
+					}
+				}, n > 99 ? "99+" : String(n))
+			);
+		}
+		function ChatToast(props) {
+			const snap = React.useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot);
+			const toast = snap.toast;
+			React.useEffect(function () {
+				if (!toast) return undefined;
+				const timer = setTimeout(function () {
+					if (chatSnap.toast === toast) setChatSnap({ count: chatSnap.count, toast: null });
+				}, 8000);
+				return function () { clearTimeout(timer); };
+			}, [toast]);
+			if (!toast) return null;
+			function close() {
+				if (chatSnap.toast === toast) setChatSnap({ count: chatSnap.count, toast: null });
+			}
+			return React.createElement("div", {
+				role: "status",
+				"data-company-chat-toast": "1",
+				style: {
+					position: "fixed", right: 20, bottom: 20, zIndex: 1000, display: "flex", alignItems: "center", gap: 10,
+					maxWidth: 380, padding: "10px 10px 10px 14px", borderRadius: 10, background: T.base,
+					border: "1px solid " + T.border2, boxShadow: "0 6px 24px rgba(0,0,0,.18)", fontFamily: FONT, fontSize: 13, color: T.label
+				}
+			},
+				React.createElement(ChatGlyph, { size: 16 }),
+				React.createElement("span", { style: { flex: 1, minWidth: 0 } }, toast.text),
+				React.createElement(P.Button, {
+					variant: "outline",
+					size: "sm",
+					type: "button",
+					onClick: function () { close(); if (props && props.openChat) props.openChat(); }
+				}, "打开"),
+				React.createElement("button", {
+					type: "button",
+					"aria-label": "关闭",
+					onClick: close,
+					style: { border: 0, background: "transparent", color: T.label2, cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "2px 4px" }
+				}, "×")
+			);
+		}
+		function ChatGlyph(props) {
+			const size = (props && props.size) || 16;
+			return React.createElement("svg", {
+				width: size,
+				height: size,
+				viewBox: "0 0 16 16",
+				fill: "none",
+				stroke: "currentColor",
+				strokeWidth: 1.3,
+				strokeLinejoin: "round",
+				strokeLinecap: "round",
+				"aria-hidden": true
+			},
+				React.createElement("path", { d: "M2.5 3.5h7a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1H6l-2.5 2v-2h-1a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1z" }),
+				React.createElement("path", { d: "M10.5 6h3a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-1v2l-2.5-2H8a1 1 0 0 1-1-1v-.5" })
+			);
+		}
+		function chatBoxRef(el) {
+			// React calls this with the box, then with null when it goes: forget boxes that left the page.
+			if (el) chatBoxes.add(el);
+			chatBoxes.forEach(function (b) { if (!b.isConnected) chatBoxes.delete(b); });
+		}
+		// company-chat-theme-v1: the chat page wears the desk's light or dark (body[data-ds-dark-theme], as the
+		// artifact frame reads it): in its address when it opens, and as a message whenever the desk changes.
+		function deskTheme() {
+			try { return document.body && document.body.hasAttribute("data-ds-dark-theme") ? "dark" : "light"; } catch (err) { return "light"; }
+		}
+		function themed(u) { return u ? u + (u.indexOf("?") < 0 ? "?" : "&") + "theme=" + deskTheme() + "&look=today" : u; }
+		function ChatFrame() {
+			const [url, setUrl] = React.useState("");
+			const frame = React.useRef(null);
+			React.useEffect(function () {
+				if (!url || typeof MutationObserver === "undefined" || !document.body) return undefined;
+				let origin = "*";
+				try { origin = new URL(url).origin; } catch (err) {}
+				const tell = function () {
+					try { if (frame.current && frame.current.contentWindow) frame.current.contentWindow.postMessage({ type: "tdh-theme", theme: deskTheme() }, origin); } catch (err) {}
+				};
+				const mo = new MutationObserver(tell);
+				mo.observe(document.body, { attributes: true, attributeFilter: ["data-ds-dark-theme"] });
+				return function () { mo.disconnect(); };
+			}, [url]);
+			const [failed, setFailed] = React.useState(false);
+			const [round, setRound] = React.useState(0);
+			React.useEffect(function () {
+				let live = true;
+				setFailed(false);
+				chatUrl().then(function (u) {
+					if (live) setUrl(u);
+				}, function () {
+					if (live) setFailed(true);
+				});
+				return function () { live = false; };
+			}, [round]);
+			const box = {
+				width: "100%",
+				height: "100%",
+				minWidth: 0,
+				minHeight: 0,
+				display: "flex",
+				flexDirection: "column",
+				overflow: "hidden",
+				background: T.base,
+				fontFamily: FONT
+			};
+			if (url) {
+				return React.createElement("div", { style: box, "data-company-chat": "1", ref: chatBoxRef },
+					React.createElement("iframe", {
+						ref: frame,
+						src: themed(url),
+						title: "聊天",
+						style: { flex: 1, width: "100%", minHeight: 0, border: 0, display: "block" },
+						allow: "clipboard-read; clipboard-write; microphone; camera; autoplay; fullscreen"
+					})
+				);
+			}
+			return React.createElement("div", { style: Object.assign({}, box, { alignItems: "center", justifyContent: "center", gap: 10, color: T.label2, fontSize: 13 }) },
+				React.createElement("div", null, failed ? "聊天没打开：本机的聊天转发没起来。" : "正在打开聊天…"),
+				failed ? React.createElement(P.Button, {
+					variant: "outline",
+					size: "sm",
+					type: "button",
+					onClick: function () { setRound(round + 1); }
+				}, "重试") : null
+			);
+		}
+		function ChatPage() {
+			return React.createElement(ChatFrame);
+		}
+
+		// company-chat-dock-v1 ------------------------------------------------------------
+		// 聊天 locked in a column of its own at the window's right edge (the user, 2026-11-20): 工作区 | AI 对话 |
+		// 侧边栏 (files, browser, terminal: opened when needed, closed by default) | 聊天, always there. The kernel's
+		// frame has three columns and no seat for a fourth, but it lays itself out from its own measured width:
+		// #root gives up the chat's width on the right (CSS above), the frame and all its rules (the right
+		// sidebar's share, the 400px kept for the conversation, the workspace folding under 1024px) work in the
+		// rest, and the chat sits in that strip, a portal on document.body under the kernel's menus and dialogs.
+		// It is one chat for the whole desk, whatever session or page is shown, and the only one: while it is
+		// there the left column does not list 聊天 and an old right-sidebar 聊天 tab closes itself. A window
+		// narrower than CHAT_DOCK_MEDIA has no such column; 聊天 is back in the left column then.
+		let chatDockMq;
+		let chatDockHolders = 0;
+		const chatDockSubs = new Set();
+		function chatDockQuery() {
+			if (chatDockMq === undefined) {
+				chatDockMq = null;
+				try {
+					if (typeof window.matchMedia === "function") chatDockMq = window.matchMedia(CHAT_DOCK_MEDIA);
+				} catch (err) {}
+				if (chatDockMq) {
+					try {
+						if (typeof chatDockMq.addEventListener === "function") chatDockMq.addEventListener("change", chatDockPing);
+						else if (typeof chatDockMq.addListener === "function") chatDockMq.addListener(chatDockPing);
+					} catch (err) {}
+				}
+			}
+			return chatDockMq;
+		}
+		function chatDockPing() {
+			chatDockSubs.forEach(function (fn) { fn(); });
+		}
+		function chatDockSubscribe(fn) {
+			chatDockQuery();
+			chatDockSubs.add(fn);
+			return function () { chatDockSubs.delete(fn); };
+		}
+		// The window is wide enough for the column.
+		function chatDockWide() {
+			const mq = chatDockQuery();
+			return !!(mq && mq.matches) && typeof ReactDOM.createPortal === "function";
+		}
+		// The column is on screen (wide enough, and drawn).
+		function chatDocked() {
+			return chatDockHolders > 0 && chatDockWide();
+		}
+		// The frame folds the workspace away under 1024px of its own width. Take the chat's column out of a 1280px
+		// window (the Mac app opens at that size) and the frame is about 950px: the workspace would fold although
+		// the window has room for it. So each time the frame goes narrow, once, the shell opens it with the kernel's
+		// own toggle (in a narrow frame that is the kernel's "open anyway", which the kernel drops by itself when the
+		// right sidebar opens). One the person folded while the frame was wide stays folded; one they fold while
+		// it is narrow, too. The kernel collapses it a moment after the frame narrows: a narrow frame that is
+		// still open is waited out.
+		function workspaceKeeper(toggle) {
+			let side = "";
+			let wideFolded = false;
+			return function (frameWidth, folded) {
+				if (!(frameWidth > 0)) return;
+				if (frameWidth >= 1024) {
+					side = "wide";
+					wideFolded = folded;
+					return;
+				}
+				if (side === "narrow" || !folded) return;
+				side = "narrow";
+				if (!wideFolded && typeof toggle === "function") toggle();
+			};
+		}
+		function keepWorkspaceOpen(toggle) {
+			const look = workspaceKeeper(toggle);
+			let frame = null;
+			let ro = null;
+			let mo = null;
+			let timer = 0;
+			let tries = 0;
+			function check() {
+				try {
+					if (frame && frame.isConnected) look(frame.getBoundingClientRect().width, frame.hasAttribute("data-sidebar-collapsed"));
+				} catch (err) {}
+			}
+			function find() {
+				timer = 0;
+				// The frame is the element that holds the kernel's overlay layer.
+				const overlay = document.querySelector("[data-shell-overlay]");
+				frame = overlay ? overlay.parentElement : null;
+				if (!frame) {
+					if (++tries < 20) timer = setTimeout(find, 250);
+					return;
+				}
+				if (typeof ResizeObserver !== "undefined") {
+					ro = new ResizeObserver(check);
+					ro.observe(frame);
+				}
+				if (typeof MutationObserver !== "undefined") {
+					mo = new MutationObserver(check);
+					mo.observe(frame, { attributes: true, attributeFilter: ["data-sidebar-collapsed"] });
+				}
+				check();
+			}
+			find();
+			return function () {
+				if (timer) clearTimeout(timer);
+				if (ro) ro.disconnect();
+				if (mo) mo.disconnect();
+			};
+		}
+		// company-dock-art-v1: the kernel's right column, by its own buttons and markers (stable across its builds).
+		let lastUserAct = 0;
+		try {
+			const mark = function () { lastUserAct = Date.now(); };
+			window.addEventListener("pointerdown", mark, true);
+			window.addEventListener("keydown", mark, true);
+		} catch (err) {}
+		// The kernel's right-sidebar service (ctx.sidebarRight), for opening the artifact list itself.
+		let rightbarService = null;
+		// The user (2026-11-24: 「工件直接就放工件列表，不要放侧边栏列表」): 工件 opens dsh-artifact's list tab, not the
+		// sidebar's start page; the plain toggle only when that is not possible.
+		function rightbarOpenArtifacts() {
+			const show = function () {
+				try { if (rightbarService && typeof rightbarService.openTab === "function") rightbarService.openTab("artifact"); } catch (err) {}
+			};
+			// openTab places the tab but does not unfold a folded column: unfold it first, then show the list.
+			if (!rightbarOpen()) { rightbarToggle(true); setTimeout(show, 150); } else show();
+		}
+		function rightbarOpen() {
+			try { return !!document.querySelector('[data-sidebar-right-open="true"]'); } catch (err) { return false; }
+		}
+		function rightbarToggle(open) {
+			try {
+				const b = document.querySelector('button[aria-label="' + (open ? "打开右侧边栏" : "收起右侧边栏") + '"], button[aria-label="' + (open ? "Open right sidebar" : "Collapse right sidebar") + '"]');
+				if (b) b.click();
+			} catch (err) {}
+		}
+		// "280px minmax(400px, 1fr) minmax(0px, 471px)" -> its three tracks (spaces inside parentheses kept).
+		function gridTracks(text) {
+			const out = [];
+			let depth = 0;
+			let cur = "";
+			String(text || "").split("").forEach(function (ch) {
+				if (ch === "(") depth++;
+				if (ch === ")") depth--;
+				if (ch === " " && depth === 0) { if (cur) out.push(cur); cur = ""; return; }
+				cur += ch;
+			});
+			if (cur) out.push(cur);
+			return out;
+		}
+		// company-dock-art-v2 (the user, 2026-11-24: 「工件截面点开是这样的，而不是把过往工件都缓存进来并风格跟我们的整体风格
+		// 匹配」「缓存很慢，缓存出来的视觉风格也不对」): 工件 is this plugin's own list, in the column's glass cards. The last
+		// list is kept in this browser and shown at once; dsh-artifact's listArtifacts (it reads every file's head on the
+		// share, seconds through a relay) refreshes it behind. A card opens that artifact in the kernel's right column,
+		// laid over the page under a 「全部工件」 bar.
+		let artifactRemoteGet = null;
+		const ART_CACHE = "cs-art-cache-v1";
+		function artCacheRead() {
+			try { const j = JSON.parse(localStorage.getItem(ART_CACHE) || "null"); return Array.isArray(j) ? j : null; } catch (err) { return null; }
+		}
+		function artCacheWrite(list) {
+			try { localStorage.setItem(ART_CACHE, JSON.stringify(list.slice(0, 300))); } catch (err) {}
+		}
+		function artFetch() {
+			let remote = null;
+			try { remote = artifactRemoteGet ? artifactRemoteGet() : null; } catch (err) { remote = null; }
+			if (!remote || typeof remote.listArtifacts !== "function") return Promise.reject(new Error("no-artifacts"));
+			return Promise.resolve(remote.listArtifacts({})).then(function (reply) {
+				// The gateway wraps the host's own { ok, value } in one more { ok, value }: unwrap to the business answer.
+				let r = reply;
+				for (let k = 0; k < 3 && r && r.ok === true && r.value && typeof r.value === "object" && "ok" in r.value; k++) r = r.value;
+				if (!r || r.ok !== true) throw new Error((r && r.error && r.error.code) || "list-failed");
+				const items = (r.value && Array.isArray(r.value.artifacts)) ? r.value.artifacts : [];
+				return items.filter(function (a) { return a && typeof a.path === "string"; }).map(function (a) {
+					return { path: a.path, name: String(a.name || ""), title: String(a.title || a.name || ""), modified: Number(a.modified) || 0 };
+				});
+			});
+		}
+		// The user (2026-11-24: 「缓存时间还是好久啊」): the list is fetched in the background from start-up (and every
+		// 5 minutes, and on coming back to the window at most once a minute), so 工件 opens on a list already there.
+		const artStore = { list: artCacheRead(), busy: false, fail: "", at: 0, subs: new Set() };
+		function artEmit() { artStore.snap = { list: artStore.list, busy: artStore.busy, fail: artStore.fail }; artStore.subs.forEach(function (f) { try { f(); } catch (err) {} }); }
+		artStore.snap = { list: artStore.list, busy: false, fail: "" };
+		function artSubscribe(f) { artStore.subs.add(f); return function () { artStore.subs.delete(f); }; }
+		function artSnapshot() { return artStore.snap; }
+		function artRefresh() {
+			if (artStore.busy) return;
+			artStore.busy = true;
+			artEmit();
+			artFetch().then(function (list) {
+				artStore.list = list;
+				artStore.fail = "";
+				artStore.at = Date.now();
+				artCacheWrite(list);
+				artPrefetch(list);
+			}, function (err) {
+				artStore.fail = String((err && err.message) || err);
+			}).then(function () { artStore.busy = false; artEmit(); });
+		}
+		// The user (2026-11-24: 「点开依然是在我们的UI里的，能不能完美融合而不是单独又打开了侧边栏」): an artifact opens in this
+		// page — dsh-artifact's readArtifact, the HTML in a sandboxed frame (its scripts run, it cannot reach the desk).
+		// company-art-cache-v1 (the user, 2026-11-24: 「工件列表现在出来很快，但是打开还是缓存很久」): every artifact read is
+		// kept in this browser (IndexedDB, by path, with the list's modified time), and after each list refresh the
+		// newest ones are read ahead, one at a time, so a card opens on a body already here. A kept body is shown at
+		// once even when the file has changed since; the new one replaces it when it arrives.
+		const artBodies = new Map();
+		const ART_DB = "cs-art-bodies";
+		const ART_KEEP = 80;
+		const ART_AHEAD = 8;
+		const ART_BIG = 6 * 1024 * 1024;
+		let artDbP = null;
+		function artDb() {
+			if (artDbP) return artDbP;
+			artDbP = new Promise(function (res) {
+				try {
+					const r = indexedDB.open(ART_DB, 1);
+					r.onupgradeneeded = function () { try { r.result.createObjectStore("b", { keyPath: "path" }); } catch (err) {} };
+					r.onsuccess = function () { res(r.result); };
+					r.onerror = function () { res(null); };
+					r.onblocked = function () { res(null); };
+				} catch (err) { res(null); }
+			});
+			return artDbP;
+		}
+		function artDbGet(path) {
+			return artDb().then(function (db) {
+				if (!db) return null;
+				return new Promise(function (res) {
+					try {
+						const q = db.transaction("b").objectStore("b").get(path);
+						q.onsuccess = function () { res(q.result || null); };
+						q.onerror = function () { res(null); };
+					} catch (err) { res(null); }
+				});
+			});
+		}
+		function artDbPut(rec) {
+			if (!rec || rec.content.length > ART_BIG) return;
+			artDb().then(function (db) {
+				if (!db) return;
+				try { db.transaction("b", "readwrite").objectStore("b").put(rec); } catch (err) {}
+			});
+		}
+		function artDbPrune(keep) {
+			artDb().then(function (db) {
+				if (!db) return;
+				try {
+					const store = db.transaction("b", "readwrite").objectStore("b");
+					const q = store.getAllKeys();
+					q.onsuccess = function () { (q.result || []).forEach(function (k) { if (!keep.has(k)) { try { store.delete(k); } catch (err) {} } }); };
+				} catch (err) {}
+			});
+		}
+		function artRemote(path, modified) {
+			let remote = null;
+			try { remote = artifactRemoteGet ? artifactRemoteGet() : null; } catch (err) { remote = null; }
+			if (!remote || typeof remote.readArtifact !== "function") return Promise.reject(new Error("no-artifacts"));
+			return Promise.resolve(remote.readArtifact({ path: path })).then(function (reply) {
+				let r = reply;
+				for (let k = 0; k < 3 && r && r.ok === true && r.value && typeof r.value === "object" && "ok" in r.value; k++) r = r.value;
+				if (!r || r.ok !== true || !r.value || typeof r.value.content !== "string") throw new Error((r && r.error && r.error.code) || "read-failed");
+				const body = { path: path, modified: Number(modified) || 0, content: r.value.content, title: String(r.value.title || ""), at: Date.now() };
+				artKeep(body);
+				artDbPut(body);
+				return body;
+			});
+		}
+		function artKeep(body) {
+			artBodies.delete(body.path);
+			artBodies.set(body.path, body);
+			if (artBodies.size > 30) artBodies.delete(artBodies.keys().next().value);
+		}
+		// What this browser already has for a path (any age): memory, then IndexedDB.
+		function artPeek(path) {
+			if (artBodies.has(path)) return Promise.resolve(artBodies.get(path));
+			return artDbGet(path).then(function (rec) {
+				if (rec && typeof rec.content === "string") { artKeep(rec); return rec; }
+				return null;
+			});
+		}
+		function artFresh(body, modified) { return !!body && (!Number(modified) || body.modified === Number(modified)); }
+		let artAheadRun = 0;
+		function artPrefetch(list) {
+			const run = ++artAheadRun;
+			const items = (list || []).slice(0, ART_AHEAD);
+			artDbPrune(new Set((list || []).slice(0, ART_KEEP).map(function (a) { return a.path; })));
+			let i = 0;
+			(function next() {
+				if (run !== artAheadRun || i >= items.length) return;
+				const a = items[i++];
+				artPeek(a.path).then(function (b) {
+					if (artFresh(b, a.modified)) return null;
+					return artRemote(a.path, a.modified);
+				}).catch(function () { return null; }).then(function () { setTimeout(next, 150); });
+			})();
+		}
+		// company-art-dark-v1: put at the top of every artifact's page. It turns the page to dark at night (its own
+		// background gives way to the column's gradient, colours inverted, pictures kept as they are) and follows the
+		// desk when the theme changes (a message from this page; the frame has no other way in).
+		function artThemeShim(dark) {
+			return "<style id=\"tdh-art-theme\">html.tdh-dark{background:transparent!important;filter:invert(.92) hue-rotate(180deg)}" +
+				"html.tdh-dark body{background:transparent!important}" +
+				"html.tdh-dark img,html.tdh-dark video,html.tdh-dark picture,html.tdh-dark canvas,html.tdh-dark iframe,html.tdh-dark [style*=\"background-image\"]{filter:invert(1) hue-rotate(180deg)}" +
+				"html.tdh-dark ::-webkit-scrollbar-thumb{background:rgba(0,0,0,.25)}</style>" +
+				"<script>(function(){var h=document.documentElement;function s(d){h.classList.toggle(\"tdh-dark\",!!d)}s(" + (dark ? "1" : "0") + ");" +
+				"addEventListener(\"message\",function(e){if(e.source===parent&&e.data&&e.data.type===\"tdh-theme\")s(e.data.theme===\"dark\")})})();<\/script>";
+		}
+		function artWithTheme(content, dark) {
+			const shim = artThemeShim(dark);
+			const text = String(content || "");
+			const at = function (re) { const m = re.exec(text); return m ? m.index + m[0].length : -1; };
+			let k = at(/<head\b[^>]*>/i);
+			if (k < 0) k = at(/<html\b[^>]*>/i);
+			if (k < 0) k = at(/^\s*<!doctype[^>]*>/i);
+			return k < 0 ? shim + text : text.slice(0, k) + shim + text.slice(k);
+		}
+		// company-chat-forward-v1 (the user, 2026-11-25: 「电脑客户端也还没有工件的转发功能」「把刷新按钮改成转发按钮…转发
+		// 列表看看怎么样能更便捷有效转发给有效的人」「工件列表可以直接拖拽到对话窗口 聊天界面也可以直接拖拽工件和文件」「从聊天窗口能
+		// 直接拖拽文件或者工件到助手对话框 然后可以直接要求比如说把这个工件做成PDF」): an artifact goes into chats as this person
+		// (the desk's host uploads it and posts it, chat-relay.js forwardFile), or into the assistant's composer as a file.
+		const CHAT_H = { "x-tdh-chat": "1" };
+		function chatTopicsGet() {
+			return fetch("/company/chat/topics", { headers: CHAT_H, credentials: "same-origin", cache: "no-store" })
+				.then(function (r) { return r.json(); })
+				.then(function (j) { return { live: !!(j && j.live), topics: (j && j.ok && Array.isArray(j.topics)) ? j.topics : [] }; })
+				.catch(function () { return { live: false, topics: [] }; });
+		}
+		function artBodyFor(a) {
+			return artPeek(a.path).then(function (kept) {
+				if (kept && artFresh(kept, a.modified)) return kept;
+				return artRemote(a.path, a.modified).catch(function (err) { if (kept) return kept; throw err; });
+			});
+		}
+		function artFileName(a, body) {
+			let n = String(a.name || "").trim() || String((body && body.title) || a.title || "工件").trim();
+			n = n.replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ").trim().slice(0, 120) || "工件";
+			if (!/\.html?$/i.test(n)) n += ".html";
+			return n;
+		}
+		function forwardArtifact(a, topics, note) {
+			return artBodyFor(a).then(function (body) {
+				return fetch("/company/chat/forward", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: Object.assign({ "content-type": "application/json" }, CHAT_H),
+					body: JSON.stringify({ topics: topics, name: artFileName(a, body), mime: "text/html", title: (body && body.title) || a.title || a.name, note: note || "", content: body.content })
+				}).then(function (r) { return r.json().catch(function () { return { ok: false, error: "bad-json" }; }); });
+			});
+		}
+		function artifactAsFile(a) {
+			return artBodyFor(a).then(function (body) { return new File([body.content], artFileName(a, body), { type: "text/html" }); });
+		}
+		// Into the conversation as a file card (the same intake as a file dropped there): then 「做成 PDF」「这里怎么改」.
+		function giveArtifactToAssistant(a) {
+			return artifactAsFile(a).then(function (f) { return landDeskFiles([f]); }).then(function (n) {
+				if (n) csToast("已放进助手对话框，说说要怎么处理它，比如「做成 PDF」");
+				return n;
+			}, function () { csToast("工件没读出来，稍后再试"); return 0; });
+		}
+		function csToast(text) {
+			try {
+				const el = document.createElement("div");
+				el.className = "cs-toast";
+				el.setAttribute("role", "status");
+				el.textContent = text;
+				document.body.appendChild(el);
+				setTimeout(function () { el.classList.add("is-out"); setTimeout(function () { el.remove(); }, 320); }, 2600);
+			} catch (err) {}
+		}
+		function fwdColor(name) {
+			const hues = [212, 262, 330, 18, 150, 190, 40, 280];
+			let h = 0;
+			for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+			return "hsl(" + hues[h % hues.length] + " 62% 58%)";
+		}
+		function fwdInitial(name) {
+			const t = String(name || "").trim();
+			if (!t) return "?";
+			const cjk = t.match(/[一-鿿]/g);
+			return cjk ? cjk[cjk.length >= 2 ? cjk.length - 2 : 0] + (cjk.length >= 2 ? cjk[cjk.length - 1] : "") : t.slice(0, 1).toUpperCase();
+		}
+		function fwdNames(list, ids) {
+			const names = ids.map(function (id) { const t = list.find(function (x) { return x.topic === id; }); return t ? t.name : ""; }).filter(Boolean);
+			return names.length > 3 ? names.slice(0, 3).join("、") + " 等 " + names.length + " 个" : names.join("、");
+		}
+		function ForwardSheet(props) {
+			const a = props.item;
+			const [data, setData] = React.useState(null);
+			const [q, setQ] = React.useState("");
+			const [picked, setPicked] = React.useState([]);
+			const [note, setNote] = React.useState("");
+			const [busy, setBusy] = React.useState(false);
+			const [err, setErr] = React.useState("");
+			const search = React.useRef(null);
+			React.useEffect(function () {
+				let live = true;
+				chatTopicsGet().then(function (d) { if (live) setData(d); });
+				try { setTimeout(function () { if (search.current) search.current.focus(); }, 60); } catch (e) {}
+				const onKey = function (e) { if (e.key === "Escape") props.onClose(); };
+				window.addEventListener("keydown", onKey);
+				return function () { live = false; window.removeEventListener("keydown", onKey); };
+			}, []);
+			const all = (data && data.topics) || [];
+			const term = q.trim().toLowerCase();
+			const rows = term ? all.filter(function (t) { return t.name.toLowerCase().indexOf(term) >= 0; }) : all;
+			const toggle = function (id) {
+				setErr("");
+				setPicked(function (cur) { return cur.indexOf(id) >= 0 ? cur.filter(function (x) { return x !== id; }) : cur.concat([id]); });
+			};
+			const send = function () {
+				if (!picked.length || busy) return;
+				setBusy(true);
+				setErr("");
+				(props.send ? props.send(picked, note) : forwardArtifact(a, picked, note)).then(function (j) {
+					setBusy(false);
+					if (j && j.ok) {
+						const miss = (j.failed || []).length;
+						csToast("已转发给 " + fwdNames(all, j.sent || picked) + (miss ? "（" + miss + " 个没发出去）" : ""));
+						props.onClose();
+					} else {
+						setErr("转发没成功：" + ((j && j.error) || "请稍后再试"));
+					}
+				}, function () { setBusy(false); setErr(props.send ? "文件没读出来，稍后再试" : "工件没读出来，稍后再试"); });
+			};
+			const el = React.createElement;
+			const row = function (t) {
+				const on = picked.indexOf(t.topic) >= 0;
+				return el("button", { key: t.topic, type: "button", className: "cs-fwd-row" + (on ? " is-on" : ""), onClick: function () { toggle(t.topic); } },
+					el("span", { className: "cs-fwd-av" + (t.group ? " is-grp" : ""), style: { background: fwdColor(t.name) } }, fwdInitial(t.name)),
+					el("span", { className: "cs-fwd-name" }, t.name),
+					t.group ? el("span", { className: "cs-fwd-tag" }, "群") : null,
+					el("span", { className: "cs-fwd-tick" }, on ? el("svg", { width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "#fff", strokeWidth: 3.2, strokeLinecap: "round", strokeLinejoin: "round" }, el("path", { d: "M5 12l5 5 9-10" })) : null));
+			};
+			const recent = term ? [] : all.slice(0, 5);
+			const rest = term ? rows : all.slice(5);
+			const sheet = el("div", { className: "cs-fwd-mask", onMouseDown: function (e) { if (e.target === e.currentTarget) props.onClose(); } },
+				el("div", { className: "cs-fwd", role: "dialog", "aria-label": "转发" },
+					el("div", { className: "cs-fwd-head" },
+						el("b", null, "转发「" + (a.title || a.name) + "」"),
+						el("button", { type: "button", className: "cs-fwd-x", "aria-label": "关闭", onClick: props.onClose },
+							el("svg", { width: 13, height: 13, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2.4, strokeLinecap: "round" }, el("path", { d: "M6 6l12 12M18 6L6 18" })))),
+					el("input", { ref: search, className: "cs-fwd-search", placeholder: "搜索同事或群", value: q,
+						onChange: function (e) { setQ(e.target.value); },
+						onKeyDown: function (e) { if (e.key === "Enter" && rows.length === 1) { toggle(rows[0].topic); setQ(""); } } }),
+					picked.length ? el("div", { className: "cs-fwd-picked" }, picked.map(function (id) {
+						const t = all.find(function (x) { return x.topic === id; });
+						return el("button", { key: id, type: "button", className: "cs-fwd-chip", title: "取消", onClick: function () { toggle(id); } }, (t ? t.name : id) + " ×");
+					})) : null,
+					el("div", { className: "cs-fwd-list" },
+						!data ? el("div", { className: "cs-fwd-empty" }, "正在取聊天列表…") :
+						!all.length ? el("div", { className: "cs-fwd-empty" }, data.live ? "还没有聊天，先在「聊天」里找同事说句话。" : "聊天还没连上，稍后再试。") :
+						el(React.Fragment, null,
+							recent.length ? el("div", { className: "cs-fwd-sec" }, "最近聊天") : null,
+							recent.map(row),
+							rest.length ? el("div", { className: "cs-fwd-sec" }, term ? "搜索结果" : "全部") : null,
+							rest.map(row),
+							term && !rows.length ? el("div", { className: "cs-fwd-empty" }, "没找到「" + q.trim() + "」") : null)),
+					err ? el("div", { className: "cs-fwd-err" }, err) : null,
+					el("div", { className: "cs-fwd-foot" },
+						el("input", { className: "cs-fwd-note", placeholder: "留言（可不填）", value: note, maxLength: 500,
+							onChange: function (e) { setNote(e.target.value); }, onKeyDown: function (e) { if (e.key === "Enter") send(); } }),
+						el("button", { type: "button", className: "cs-fwd-send", disabled: !picked.length || busy, onClick: send },
+							busy ? "发送中…" : picked.length > 1 ? "发送（" + picked.length + "）" : "发送"))));
+			return document.body ? ReactDOM.createPortal(sheet, document.body) : sheet;
+		}
+		// Dragging an artifact card: into the conversation it lands as a file; onto 聊天 it goes to the chat that is open
+		// there. A drop on the chat (another origin's frame) may never reach this page, so where the drag ended decides.
+		let artDrag = null;
+		let chatTopicNow = "";
+		function chatFrameEl() { try { return document.querySelector("[data-company-chat] iframe"); } catch (err) { return null; } }
+		function inRect(el, x, y) {
+			if (!el) return false;
+			const r = el.getBoundingClientRect();
+			return r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+		}
+		function artDragStart(e, a) {
+			artDrag = { a: a, at: Date.now(), done: false };
+			try {
+				e.dataTransfer.effectAllowed = "copy";
+				e.dataTransfer.setData("application/x-tdh-artifact", JSON.stringify({ path: a.path, title: a.title, name: a.name, modified: a.modified }));
+				e.dataTransfer.setData("text/plain", a.title || a.name || "工件");
+			} catch (err) {}
+			try { e.currentTarget.classList.add("is-dragging"); document.documentElement.classList.add("cs-art-dragging"); } catch (err) {}
+			try { const f = chatFrameEl(); if (f && f.contentWindow) f.contentWindow.postMessage({ type: "tdh-art-drag", on: true }, "*"); } catch (err) {}
+		}
+		function artDragEnd(e) {
+			try { e.currentTarget.classList.remove("is-dragging"); document.documentElement.classList.remove("cs-art-dragging"); } catch (err) {}
+			try { const f = chatFrameEl(); if (f && f.contentWindow) f.contentWindow.postMessage({ type: "tdh-art-drag", on: false }, "*"); } catch (err) {}
+			const d = artDrag;
+			if (!d || d.done) return;
+			const x = e.clientX, y = e.clientY;
+			if (inRect(chatFrameEl(), x, y)) { d.done = true; artToOpenChat(d.a); return; }
+			// The conversation (the center column) took it only if this page's drop handler ran; otherwise land it now.
+			if (inRect(document.querySelector("[data-dsh-center-col]"), x, y)) { d.done = true; giveArtifactToAssistant(d.a); }
+		}
+		function artToOpenChat(a) {
+			if (!chatTopicNow) { csToast("先在聊天里打开一个对话，再把工件拖进去"); return; }
+			forwardArtifact(a, [chatTopicNow], "").then(function (j) {
+				csToast(j && j.ok ? "已发到当前聊天" : "没发出去：" + ((j && j.error) || "请稍后再试"));
+			}, function () { csToast("工件没读出来，稍后再试"); });
+		}
+		// What the chat page says (chat-relay.js chatDnd): the chat open there, a drag starting from it (a file or a
+		// picture, its bytes when only that page can read them), where that drag ended, a drop onto it.
+		let chatDrag = null;
+		if (typeof window !== "undefined" && window.addEventListener) {
+			window.addEventListener("message", function (e) {
+				const f = chatFrameEl();
+				if (!f || e.source !== f.contentWindow) return;
+				const m = e.data || {};
+				if (m.type === "tdh-chat-view" && m.buf) { viewOpen(m); return; }
+				if (m.type === "tdh-chat-topic") chatTopicNow = /^(usr|grp|p2p)[A-Za-z0-9_-]{2,60}$/.test(String(m.topic || "")) ? String(m.topic) : "";
+				else if (m.type === "tdh-chat-drag") chatDrag = { id: m.id, href: String(m.href || ""), name: String(m.name || "文件"), mime: String(m.mime || ""), bytes: null, at: Date.now(), done: false };
+				else if (m.type === "tdh-chat-drag-bytes" && chatDrag && chatDrag.id === m.id && m.buf) chatDrag.bytes = m.buf;
+				else if (m.type === "tdh-chat-dragend" && chatDrag && chatDrag.id === m.id && !chatDrag.done) {
+					const r = f.getBoundingClientRect();
+					const x = r.left + Number(m.x || 0), y = r.top + Number(m.y || 0);
+					if (!inRect(f, x, y) && inRect(document.querySelector("[data-dsh-center-col]"), x, y)) landChatDrag();
+				} else if (m.type === "tdh-chat-drop" && artDrag && !artDrag.done && Date.now() - artDrag.at < 60000) {
+					artDrag.done = true;
+					if (m.topic) chatTopicNow = String(m.topic);
+					artToOpenChat(artDrag.a);
+				}
+			});
+		}
+		function chatDragFile() {
+			const d = chatDrag;
+			if (!d) return Promise.reject(new Error("none"));
+			let pathName = "";
+			try { pathName = new URL(d.href, "http://x").pathname; } catch (err) {}
+			if (/^\/v0\/file\/s\//.test(pathName)) {
+				return fetch("/company/chat/file?path=" + encodeURIComponent(pathName), { headers: CHAT_H, credentials: "same-origin", cache: "no-store" }).then(function (r) {
+					if (!r.ok) throw new Error("status " + r.status);
+					return r.blob();
+				}).then(function (b) { return new File([b], d.name, { type: b.type || d.mime || "application/octet-stream" }); });
+			}
+			if (d.bytes) return Promise.resolve(new File([d.bytes], d.name, { type: d.mime || "application/octet-stream" }));
+			return Promise.reject(new Error("no-bytes"));
+		}
+		function landChatDrag() {
+			if (!chatDrag || chatDrag.done || Date.now() - chatDrag.at > 120000) return Promise.resolve(0);
+			chatDrag.done = true;
+			return chatDragFile().then(function (f) { return landDeskFiles([f]); }).then(function (n) {
+				if (n) csToast("已放进助手对话框，说说要怎么处理它");
+				return n;
+			}, function () { csToast("没拿到这个文件，在聊天里先下载一次再拖"); return 0; });
+		}
+		// company-chat-view-v1 (the user, 2026-11-25: 「点击以后展开一个子窗口 然后可以查看 像微信那样」「子窗口也有转发按钮
+		// 并且可拖拽进助手对话框」「点击不要保存 也不需要保存 只展开就行」): a file clicked in 聊天 (chat-relay.js chatViewer
+		// hands its bytes over) opens in a window of its own over the desk — moved by its title bar, the file shown when
+		// this page can show it (a page, PDF, picture, text, sound or film), with 转发 and 交给助手; its file chip drags
+		// into the conversation.
+		const viewStore = { cur: null, subs: new Set(), files: new Map(), seq: 0 };
+		function viewSet(v) { viewStore.cur = v; viewStore.subs.forEach(function (f) { try { f(); } catch (err) {} }); }
+		function viewSubscribe(f) { viewStore.subs.add(f); return function () { viewStore.subs.delete(f); }; }
+		function viewSnapshot() { return viewStore.cur; }
+		function viewKind(name, mime) {
+			const n = String(name || "").toLowerCase();
+			const m = String(mime || "").toLowerCase();
+			if (/^image\//.test(m) || /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(n)) return "image";
+			if (m === "application/pdf" || /\.pdf$/.test(n)) return "pdf";
+			if (m === "text/html" || /\.html?$/.test(n)) return "html";
+			if (/^video\//.test(m) || /\.(mp4|mov|webm|m4v)$/.test(n)) return "video";
+			if (/^audio\//.test(m) || /\.(mp3|m4a|wav|aac|ogg|amr)$/.test(n)) return "audio";
+			if (/^text\//.test(m) || /json|xml|csv/.test(m) || /\.(txt|md|csv|json|log|xml|ya?ml|ini|py|js|ts|sql)$/.test(n)) return "text";
+			return "other";
+		}
+		function viewMime(name, mime) {
+			if (mime) return mime;
+			const k = viewKind(name, "");
+			const ext = String(name || "").toLowerCase().split(".").pop();
+			if (k === "image") return "image/" + (ext === "jpg" ? "jpeg" : ext === "svg" ? "svg+xml" : ext);
+			return k === "pdf" ? "application/pdf" : k === "html" ? "text/html" : k === "text" ? "text/plain" : "application/octet-stream";
+		}
+		function viewOpen(m) {
+			try {
+				const name = String(m.name || "文件");
+				const mime = viewMime(name, String(m.mime || ""));
+				const file = new File([m.buf], name, { type: mime });
+				const id = "v" + (++viewStore.seq);
+				viewStore.files.set(id, file);
+				if (viewStore.files.size > 20) viewStore.files.delete(viewStore.files.keys().next().value);
+				const old = viewStore.cur;
+				if (old && old.url) { try { URL.revokeObjectURL(old.url); } catch (err) {} }
+				viewSet({ id: id, name: name, mime: mime, kind: viewKind(name, mime), file: file, url: URL.createObjectURL(file) });
+			} catch (err) { csToast("这个文件打不开"); }
+		}
+		function bytesToBase64(buf) {
+			const b = new Uint8Array(buf);
+			let s = "";
+			for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+			return btoa(s);
+		}
+		function forwardFile(file, topics, note) {
+			if (file.size > 32 * 1024 * 1024) return Promise.resolve({ ok: false, error: "文件超过 32 MB" });
+			return file.arrayBuffer().then(function (buf) {
+				return fetch("/company/chat/forward", {
+					method: "POST",
+					credentials: "same-origin",
+					headers: Object.assign({ "content-type": "application/json" }, CHAT_H),
+					body: JSON.stringify({ topics: topics, name: file.name, mime: file.type || "application/octet-stream", title: file.name, note: note || "", base64: bytesToBase64(buf) })
+				}).then(function (r) { return r.json().catch(function () { return { ok: false, error: "bad-json" }; }); });
+			});
+		}
+		function ViewBody(props) {
+			const v = props.v;
+			const el = React.createElement;
+			const [text, setText] = React.useState(null);
+			React.useEffect(function () {
+				let live = true;
+				setText(null);
+				if (v.kind === "html" || v.kind === "text") v.file.text().then(function (t) { if (live) setText(t); });
+				return function () { live = false; };
+			}, [v.id]);
+			if (v.kind === "image") return el("div", { className: "cs-view-media" }, el("img", { src: v.url, alt: v.name, draggable: false }));
+			if (v.kind === "pdf") return el("iframe", { className: "cs-view-frame", src: v.url, title: v.name });
+			if (v.kind === "video") return el("div", { className: "cs-view-media" }, el("video", { src: v.url, controls: true, autoPlay: false }));
+			if (v.kind === "audio") return el("div", { className: "cs-view-media" }, el("audio", { src: v.url, controls: true }));
+			if (v.kind === "html") return text == null ? el("div", { className: "cs-view-empty" }, "正在打开…") :
+				el("iframe", { className: "cs-view-frame", title: v.name, sandbox: "allow-scripts allow-popups allow-forms allow-modals", srcDoc: text, referrerPolicy: "no-referrer" });
+			if (v.kind === "text") return text == null ? el("div", { className: "cs-view-empty" }, "正在打开…") : el("pre", { className: "cs-view-text" }, text.slice(0, 400000));
+			return el("div", { className: "cs-view-empty" },
+				el("b", null, v.name),
+				el("span", null, "这种文件这里看不了。可以「交给助手」让它读，或「转发」给同事。"));
+		}
+		function ChatViewerHost() {
+			const v = React.useSyncExternalStore(viewSubscribe, viewSnapshot);
+			const [pos, setPos] = React.useState(null);
+			const [fwd, setFwd] = React.useState(false);
+			const drag = React.useRef(null);
+			React.useEffect(function () {
+				if (!v) return undefined;
+				const onKey = function (e) { if (e.key === "Escape" && !fwd) viewSet(null); };
+				window.addEventListener("keydown", onKey);
+				return function () { window.removeEventListener("keydown", onKey); };
+			}, [v, fwd]);
+			if (!v) return null;
+			const el = React.createElement;
+			const W = Math.min(620, window.innerWidth - 40);
+			const H = Math.min(Math.round(window.innerHeight * 0.68), 720);
+			// Beside the chat column and high, so the conversation's composer stays in sight for a drag into it.
+			const dock = document.querySelector("aside.cs-chat-dock");
+			const dockLeft = dock ? dock.getBoundingClientRect().left : window.innerWidth;
+			const at = pos || { x: Math.max(20, Math.round(dockLeft - W - 16)), y: Math.max(16, Math.round(window.innerHeight * 0.07)) };
+			const onDown = function (e) {
+				if (e.button !== 0 || (e.target && e.target.closest && e.target.closest("button, [draggable='true']"))) return;
+				drag.current = { dx: e.clientX - at.x, dy: e.clientY - at.y };
+				const move = function (ev) {
+					const d = drag.current;
+					if (!d) return;
+					setPos({ x: Math.min(window.innerWidth - 80, Math.max(-W + 120, ev.clientX - d.dx)), y: Math.min(window.innerHeight - 50, Math.max(0, ev.clientY - d.dy)) });
+				};
+				const up = function () { drag.current = null; window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); document.documentElement.classList.remove("cs-view-moving"); };
+				window.addEventListener("pointermove", move);
+				window.addEventListener("pointerup", up);
+				document.documentElement.classList.add("cs-view-moving");
+			};
+			const icon = function (d) {
+				return el("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
+					d.map(function (x, i) { return el("path", { key: i, d: x }); }));
+			};
+			const win = el("div", { className: "cs-view", role: "dialog", "aria-label": v.name, style: { left: at.x + "px", top: at.y + "px", width: W + "px", height: H + "px" } },
+				el("div", { className: "cs-view-bar", onPointerDown: onDown },
+					el("span", { className: "cs-view-chip", draggable: true, title: "拖进对话框，交给助手处理",
+						onDragStart: function (e) {
+							try {
+								e.dataTransfer.effectAllowed = "copy";
+								e.dataTransfer.setData("application/x-tdh-file", v.id);
+								e.dataTransfer.setData("text/plain", v.name);
+							} catch (err) {}
+						} },
+						el("span", { className: "cs-view-ext" }, (String(v.name).split(".").pop() || "文件").slice(0, 4).toUpperCase()),
+						el("span", { className: "cs-view-name" }, v.name)),
+					el("button", { type: "button", className: "cs-art-refresh", title: "交给助手（放进对话框，再说要怎么处理）", "aria-label": "交给助手",
+						onClick: function () { landDeskFiles([v.file]).then(function (n) { if (n) csToast("已放进助手对话框，说说要怎么处理它"); }); } },
+						icon(["M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z", "M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"])),
+					el("button", { type: "button", className: "cs-art-refresh", title: "转发到聊天", "aria-label": "转发", onClick: function () { setFwd(true); } },
+						icon(["M14 5l7 7-7 7", "M21 12H9a6 6 0 0 0-6 6v1"])),
+					el("button", { type: "button", className: "cs-art-refresh", title: "关闭（Esc）", "aria-label": "关闭", onClick: function () { viewSet(null); setPos(null); } },
+						icon(["M6 6l12 12", "M18 6L6 18"]))),
+				el("div", { className: "cs-view-sheet" }, el(ViewBody, { v: v })));
+			return el(React.Fragment, null,
+				document.body ? ReactDOM.createPortal(win, document.body) : win,
+				fwd ? el(ForwardSheet, { item: { title: v.name, name: v.name }, send: function (topics, note) { return forwardFile(v.file, topics, note); }, onClose: function () { setFwd(false); } }) : null);
+		}
+		function ArtView(props) {
+			const a = props.item;
+			const stHook = React.useState(artBodies.get(a.path) || null);
+			const failHook = React.useState("");
+			const fullHook = React.useState(false);
+			const full = fullHook[0];
+			const fwdHook = React.useState(false);
+			const dark = React.useSyncExternalStore(subscribeBodyDark, bodyDark);
+			// The theme the frame was written with; later flips go in as a message, so the page is not reloaded.
+			const darkAtLoad = React.useRef(dark);
+			const frame = React.useRef(null);
+			const load = React.useCallback(function (fresh) {
+				let live = true;
+				failHook[1]("");
+				if (fresh) {
+					artRemote(a.path, a.modified).then(function (b) { if (live) stHook[1](b); }, function (err) { if (live) failHook[1](String((err && err.message) || err)); });
+					return function () { live = false; };
+				}
+				artPeek(a.path).then(function (kept) {
+					if (!live) return;
+					if (kept) stHook[1](kept);
+					if (artFresh(kept, a.modified)) return;
+					artRemote(a.path, a.modified).then(function (b) { if (live) stHook[1](b); }, function (err) { if (live && !kept) failHook[1](String((err && err.message) || err)); });
+				});
+				return function () { live = false; };
+			}, [a.path, a.modified]);
+			React.useEffect(function () { return load(false); }, [load]);
+			React.useEffect(function () {
+				try { if (frame.current && frame.current.contentWindow) frame.current.contentWindow.postMessage({ type: "tdh-theme", theme: dark ? "dark" : "light" }, "*"); } catch (err) {}
+			}, [dark]);
+			React.useEffect(function () {
+				if (!full) return undefined;
+				const onKey = function (e) { if (e.key === "Escape") flowSwap(function () { fullHook[1](false); }); };
+				window.addEventListener("keydown", onKey);
+				return function () { window.removeEventListener("keydown", onKey); };
+			}, [full]);
+			const body = stHook[0];
+			const srcDoc = React.useMemo(function () { darkAtLoad.current = dark; return body ? artWithTheme(body.content, dark) : ""; }, [body, full]);
+			const icon = function (d) {
+				return React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
+					d.map(function (x, i) { return React.createElement("path", { key: i, d: x }); }));
+			};
+			const view = React.createElement("div", { className: "cs-art-view" },
+				React.createElement("div", { className: "cs-art-bar" },
+					React.createElement("button", { type: "button", className: "cs-art-bar-back", "aria-label": full ? "退出全屏" : "返回全部工件",
+						onClick: full ? function () { flowSwap(function () { fullHook[1](false); }); } : props.onBack },
+						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M15 18l-6-6 6-6" }))),
+					React.createElement("span", { className: "cs-art-bar-title", title: "拖进对话框交给助手，或拖到聊天里发给对方", draggable: true,
+						onDragStart: function (e) { artDragStart(e, a); }, onDragEnd: artDragEnd }, (body && body.title) || a.title),
+					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "交给助手", title: "交给助手（放进对话框，再说要怎么改）", onClick: function () { giveArtifactToAssistant(a); } },
+						icon(["M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z", "M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"])),
+					React.createElement("button", { type: "button", className: "cs-art-refresh", "aria-label": "转发", title: "转发到聊天", onClick: function () { fwdHook[1](true); } },
+						icon(["M14 5l7 7-7 7", "M21 12H9a6 6 0 0 0-6 6v1"])),
+					React.createElement("button", { type: "button", className: "cs-art-refresh cs-art-full-btn", "aria-label": full ? "退出全屏" : "全屏", title: full ? "退出全屏（Esc）" : "全屏",
+						onClick: function () { flowSwap(function () { fullHook[1](!full); }); } },
+						full ? icon(["M9 4v5H4", "M15 4v5h5", "M9 20v-5H4", "M15 20v-5h5"]) : icon(["M4 9V4h5", "M20 9V4h-5", "M4 15v5h5", "M20 15v5h-5"]))),
+				React.createElement("div", { className: "cs-art-sheet" },
+					body ? React.createElement("iframe", { key: a.path + (full ? ":full" : ""), ref: frame, title: a.title, sandbox: "allow-scripts allow-popups allow-forms allow-modals", srcDoc: srcDoc, referrerPolicy: "no-referrer",
+						onLoad: function () { if (darkAtLoad.current !== bodyDark()) { try { frame.current.contentWindow.postMessage({ type: "tdh-theme", theme: bodyDark() ? "dark" : "light" }, "*"); } catch (err) {} } } }) :
+					failHook[0] ? React.createElement("div", { className: "cs-art-empty" }, React.createElement("b", null, "这个工件没有读出来"), React.createElement("span", null, "公司盘可能还没连上，稍后返回再打开一次。")) :
+					React.createElement("div", { className: "cs-art-loading", "data-chat-running": "" },
+						React.createElement("span", { className: "cs-art-lava", ref: function (el) { if (el && !el.firstChild) el.appendChild(lavaNode()); } }),
+						React.createElement("span", null, "正在打开…"))));
+			const fwd = fwdHook[0] ? React.createElement(ForwardSheet, { item: a, onClose: function () { fwdHook[1](false); } }) : null;
+			if (!full || !document.body) return fwd ? React.createElement(React.Fragment, null, view, fwd) : view;
+			return React.createElement(React.Fragment, null,
+				React.createElement("div", { className: "cs-art-empty" }, React.createElement("b", null, "正在全屏查看"), React.createElement("span", null, "按 Esc 或右上角按钮退出全屏。")),
+				ReactDOM.createPortal(React.createElement("div", { className: "cs-art-full", role: "dialog", "aria-label": a.title }, view), document.body), fwd);
+		}
+		function artWhen(ms) {
+			if (!ms) return "";
+			const d = new Date(ms);
+			const now = Date.now();
+			const mins = Math.floor((now - ms) / 60000);
+			if (mins < 1) return "刚刚";
+			if (mins < 60) return mins + " 分钟前";
+			const today = new Date(); today.setHours(0, 0, 0, 0);
+			if (ms >= today.getTime()) return Math.floor(mins / 60) + " 小时前";
+			if (ms >= today.getTime() - 86400000) return "昨天 " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+			return (d.getMonth() + 1) + " 月 " + d.getDate() + " 日";
+		}
+		function artGroup(ms) {
+			const today = new Date(); today.setHours(0, 0, 0, 0);
+			if (ms >= today.getTime()) return "今天";
+			if (ms >= today.getTime() - 86400000) return "昨天";
+			if (ms >= today.getTime() - 6 * 86400000) return "最近一周";
+			return "更早";
+		}
+		function ArtPane() {
+			const snap = React.useSyncExternalStore(artSubscribe, artSnapshot);
+			const openHook = React.useState(null);
+			const refresh = artRefresh;
+			React.useEffect(function () { if (Date.now() - artStore.at > 60000) artRefresh(); }, []);
+			const list = snap.list;
+			const busy = snap.busy;
+			const failHook = [snap.fail];
+			const groups = [];
+			(list || []).forEach(function (a) {
+				const g = artGroup(a.modified);
+				let row = groups.find(function (x) { return x.name === g; });
+				if (!row) { row = { name: g, items: [] }; groups.push(row); }
+				row.items.push(a);
+			});
+			if (openHook[0]) return React.createElement(ArtView, { item: openHook[0], onBack: function () { flowSwap(function () { openHook[1](null); }); } });
+			return React.createElement("div", { className: "cs-art" },
+				React.createElement("div", { className: "cs-art-head" },
+					React.createElement("b", null, "全部工件"),
+					list ? React.createElement("small", null, list.length + " 个") : null,
+					React.createElement("button", { type: "button", className: "cs-art-refresh" + (busy ? " is-busy" : ""), "aria-label": "刷新工件", title: "刷新", onClick: refresh },
+						React.createElement("svg", { width: 15, height: 15, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
+							React.createElement("path", { d: "M20 11a8 8 0 1 0-2.3 5.7" }), React.createElement("path", { d: "M20 4v7h-7" })))),
+				!list && busy ? React.createElement("div", { className: "cs-art-list" },
+					[0, 1, 2, 3].map(function (i) { return React.createElement("div", { key: i, className: "cs-art-card is-ghost" }, React.createElement("i"), React.createElement("i")); })) : null,
+				list && list.length === 0 && !busy ? React.createElement("div", { className: "cs-art-empty" },
+					React.createElement("b", null, "还没有工件"),
+					React.createElement("span", null, "让助手做一份报告、表格或图表，它会出现在这里。")) : null,
+				!list && !busy && failHook[0] ? React.createElement("div", { className: "cs-art-empty" },
+					React.createElement("b", null, "工件没有读出来"),
+					React.createElement("span", null, "公司盘可能还没连上，稍后点右上角刷新。")) : null,
+				list && list.length ? React.createElement("div", { className: "cs-art-list" },
+					groups.map(function (g) {
+						return React.createElement(React.Fragment, { key: g.name },
+							React.createElement("div", { className: "cs-art-group" }, g.name),
+							g.items.map(function (a) {
+								return React.createElement("button", { key: a.path, type: "button", className: "cs-art-card", title: a.title + "（可拖进对话框或聊天）", draggable: true,
+									onDragStart: function (e) { artDragStart(e, a); }, onDragEnd: artDragEnd,
+									onClick: function () { flowSwap(function () { openHook[1](a); }); } },
+									React.createElement("span", { className: "cs-art-icon", "aria-hidden": "true" },
+										React.createElement("svg", { width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" },
+											React.createElement("path", { d: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" }), React.createElement("path", { d: "M14 3v5h5M9 13h6M9 17h4" }))),
+									React.createElement("span", { className: "cs-art-text" },
+										React.createElement("b", null, a.title),
+										React.createElement("small", null, a.name)),
+									React.createElement("span", { className: "cs-art-when" }, artWhen(a.modified)));
+							}));
+					})) : null);
+		}
+		function ChatDock(props) {
+			const wide = React.useSyncExternalStore(chatDockSubscribe, chatDockWide);
+			React.useEffect(function () {
+				if (!wide) return undefined;
+				const root = document.documentElement;
+				chatDockHolders++;
+				root.setAttribute("data-company-chat-dock", "1");
+				chatDockPing();
+				// The chat is in its column now: the same chat in the main area would be a second one.
+				try {
+					if (props.panelInfo && props.panelInfo.getSnapshot().activePanelId === CHAT_PANEL && props.selectPanel) props.selectPanel(null);
+				} catch (err) {}
+				const stopKeeping = keepWorkspaceOpen(props.toggleSidebar);
+				return function () {
+					stopKeeping();
+					chatDockHolders = Math.max(0, chatDockHolders - 1);
+					if (!chatDockHolders) root.removeAttribute("data-company-chat-dock");
+					chatDockPing();
+				};
+			}, [wide]);
+			const pageHook = React.useState("today");
+			const page = pageHook[0];
+			const pageRef = React.useRef(page);
+			pageRef.current = page;
+			// company-dock-art-v1 (the user, 2026-11-24: 「任务就不展开了，如果有工件，展开在今天 / 聊天 / 工件这边」「deepseek
+			// harness 底层那个侧边栏默认再也不打开」): the kernel's right column (files, artifacts, browser, terminal) is the
+			// column's third page, 工件, laid over it (CSS: [data-rightbar-col]); it no longer takes a column of its own.
+			// Going to 工件 opens it; leaving closes it. When the kernel opens it right after a click or a key (an artifact
+			// link), the column turns to 工件; when it opens by itself (a restored session, a job), it is closed again.
+			const artHook = React.useState(rightbarOpen());
+			React.useEffect(function () {
+				if (!wide) return undefined;
+				const root = document.documentElement;
+				root.setAttribute("data-cs-dock-page", page);
+				if (page !== "art" && rightbarOpen()) rightbarToggle(false);
+				return function () { root.removeAttribute("data-cs-dock-page"); };
+			}, [wide, page]);
+			React.useEffect(function () {
+				if (!wide || typeof MutationObserver === "undefined" || !document.body) return undefined;
+				let was = rightbarOpen();
+				const mo = new MutationObserver(function () {
+					const now = rightbarOpen();
+					if (now === was) return;
+					was = now;
+					artHook[1](now);
+					if (!now || pageRef.current === "art") return;
+					if (Date.now() - lastUserAct < 1500) flowSwap(function () { pageHook[1]("art"); });
+					else rightbarToggle(false);
+				});
+				mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-sidebar-right-open"] });
+				// The artifact list, fetched before anyone asks for it.
+				const first = setTimeout(artRefresh, 2500);
+				const every = setInterval(artRefresh, 5 * 60000);
+				const onFocus = function () { if (Date.now() - artStore.at > 60000) artRefresh(); };
+				window.addEventListener("focus", onFocus);
+				// The frame keeps no column for it: its third track is set to nothing whenever the kernel writes it.
+				let frame = null;
+				let fmo = null;
+				function squeeze() {
+					const f = document.querySelector('[class*="_frame"]');
+					if (f !== frame) {
+						if (fmo) fmo.disconnect();
+						frame = f;
+						fmo = f ? new MutationObserver(squeeze) : null;
+						if (fmo) fmo.observe(f, { attributes: true, attributeFilter: ["style"] });
+					}
+					if (!f || !document.documentElement.hasAttribute("data-company-chat-dock")) return;
+					const tracks = gridTracks(f.style.gridTemplateColumns);
+					if (tracks.length === 3 && tracks[2] !== "0px") f.style.gridTemplateColumns = tracks[0] + " minmax(0px, 1fr) 0px";
+				}
+				squeeze();
+				const tick = setInterval(squeeze, 1500);
+				return function () { mo.disconnect(); if (fmo) fmo.disconnect(); clearInterval(tick); clearTimeout(first); clearInterval(every); window.removeEventListener("focus", onFocus); };
+			}, [wide]);
+			const segBox = React.useRef(null);
+			const segThumb = React.useRef(null);
+			React.useLayoutEffect(function () {
+				const b = segBox.current;
+				const th = segThumb.current;
+				if (!b || !th) return;
+				const el = b.querySelector('[data-page="' + page + '"]');
+				if (!el) return;
+				th.style.left = el.offsetLeft + "px";
+				th.style.width = el.offsetWidth + "px";
+			});
+			// company-dock-grip-v1 (the user, 2026-11-24: 「工件页面能不能拖拽拉开，我希望左侧可以拖拽拉开，否则很多工件看不完整」):
+			// the column's width is the person's, kept in this browser; the kernel's columns give way to it.
+			React.useEffect(function () {
+				const root = document.documentElement;
+				if (!wide || !root || !root.style || typeof window.addEventListener !== "function") return undefined;
+				let saved = 0;
+				try { saved = Number(localStorage.getItem(DOCK_W_KEY)) || 0; } catch (err) {}
+				if (saved) root.style.setProperty("--company-chat-dock-width", dockClamp(saved) + "px");
+				const onResize = function () {
+					const cur = parseFloat(root.style.getPropertyValue("--company-chat-dock-width")) || 0;
+					if (cur) root.style.setProperty("--company-chat-dock-width", dockClamp(cur) + "px");
+				};
+				window.addEventListener("resize", onResize);
+				return function () { window.removeEventListener("resize", onResize); root.style.removeProperty("--company-chat-dock-width"); };
+			}, [wide]);
+			const onGrip = React.useCallback(function (e) {
+				if (e.button !== 0) return;
+				e.preventDefault();
+				const root = document.documentElement;
+				const grip = e.currentTarget;
+				try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+				root.classList.add("cs-dock-dragging");
+				let w = 0;
+				let raf = 0;
+				const move = function (ev) {
+					w = dockClamp(window.innerWidth - 10 - ev.clientX);
+					if (raf) return;
+					raf = requestAnimationFrame(function () { raf = 0; root.style.setProperty("--company-chat-dock-width", w + "px"); });
+				};
+				const up = function () {
+					grip.removeEventListener("pointermove", move);
+					grip.removeEventListener("pointerup", up);
+					grip.removeEventListener("pointercancel", up);
+					root.classList.remove("cs-dock-dragging");
+					if (w) { try { localStorage.setItem(DOCK_W_KEY, String(w)); } catch (err) {} }
+					window.dispatchEvent(new Event("resize"));
+				};
+				grip.addEventListener("pointermove", move);
+				grip.addEventListener("pointerup", up);
+				grip.addEventListener("pointercancel", up);
+			}, []);
+			const onGripReset = React.useCallback(function () {
+				document.documentElement.style.removeProperty("--company-chat-dock-width");
+				try { localStorage.removeItem(DOCK_W_KEY); } catch (err) {}
+				window.dispatchEvent(new Event("resize"));
+			}, []);
+			const unread = React.useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot).count;
+			if (!wide || !document.body) return null;
+			// company-look-today-v1: the column is a page of its own (the gradient), with 今天 and 聊天; the chat stays
+			// mounted under 今天, so it keeps its place and keeps ringing.
+			return ReactDOM.createPortal(
+				React.createElement("aside", { className: "cs-chat-dock cs-look-dock", "data-company-chat-dock": "1", "aria-label": "聊天" },
+					React.createElement("div", { className: "cs-dock-grip", role: "separator", "aria-orientation": "vertical", "aria-label": "拖动调整宽度，双击还原", title: "拖动调整宽度，双击还原",
+						onPointerDown: onGrip, onDoubleClick: onGripReset }),
+					React.createElement("div", { className: "cs-dock-head" },
+						React.createElement("div", { className: "cs-dock-seg", ref: segBox, role: "tablist" },
+							React.createElement("span", { className: "cs-dock-thumb", ref: segThumb, "aria-hidden": "true" }),
+							[["today", "今天"], ["chat", "聊天"], ["art", "工件"]].map(function (x) {
+								return React.createElement("button", {
+									key: x[0], type: "button", role: "tab", "data-page": x[0], "aria-selected": page === x[0],
+									className: "cs-dock-tab" + (page === x[0] ? " is-on" : ""),
+									onClick: function () { if (page !== x[0]) flowSwap(function () { pageHook[1](x[0]); }); }
+								}, x[1], x[0] === "chat" && unread > 0 && page !== "chat" ? React.createElement("i", { className: "cs-dock-dot" }) : null);
+							}))),
+					React.createElement("div", { className: "cs-dock-body" + (page === "today" ? " is-today" : "") },
+						page === "today" ? React.createElement(TodayPane) : null,
+						page === "art" ? React.createElement(ArtPane) : null,
+						page === "art" && artHook[0] ? React.createElement("button", { type: "button", className: "cs-art-back", onClick: function () { rightbarToggle(false); } },
+							React.createElement("svg", { width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, React.createElement("path", { d: "M15 18l-6-6 6-6" })),
+							"全部工件") : null,
+						React.createElement("div", { className: "cs-dock-chat", style: page === "chat" ? null : { visibility: "hidden" } }, React.createElement(ChatFrame)))
+				),
+				document.body
+			);
+		}
+
+		// company-erp-desk-v1: ERPNext (on the company server, the tailnet only) under 聊天 in the left column.
+		// company-erp-desk-v2 (the user, 2026-11-21: "能不能直接在TDH里打开"): in this page, through this desk's host's
+		// relay (erp-relay.js, as the chat's): the relay's address for a one-time link that logs the person in with
+		// their TDH account. No button for the browser (the user, same day: "不要这个按钮").
+		const ERP_PANEL = "company-erp";
+		const ERP_WHY = {
+			"erp-off": "ERPNext 还没接好，请找管理员。",
+			"bad-token": "TDH 的登录过期了，请重新打开 TDH 再试。",
+			"header": "这个页面不能打开 ERPNext。",
+			"relay": "本机的 ERPNext 转发没起来，请重启 TDH 再试。",
+		};
+		function erpWhere() {
+			return fetch("/company/erp/where", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Accept": "application/json", "X-TDH-ERP": "1" }
+			}).then(function (res) {
+				return res.json().then(function (j) {
+					if (res.ok && j && j.ok && j.url) return String(j.url);
+					throw new Error((j && j.error) || "open");
+				});
+			});
+		}
+		function erpOpen() {
+			return fetch("/company/erp/open", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Accept": "application/json", "X-TDH-ERP": "1" }
+			}).then(function (res) {
+				return res.json().then(function (j) {
+					if (res.ok && j && j.ok) return true;
+					throw new Error((j && j.error) || "open");
+				});
+			});
+		}
+		function ErpGlyph(props) {
+			const size = (props && props.size) || 16;
+			return React.createElement("svg", {
+				width: size, height: size, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3,
+				strokeLinejoin: "round", strokeLinecap: "round", "aria-hidden": true
+			},
+				React.createElement("rect", { x: 2, y: 2.5, width: 12, height: 11, rx: 1.5 }),
+				React.createElement("path", { d: "M2 6h12M6 6v7.5M8.5 8.5h3M8.5 11h3" })
+			);
+		}
+		function ErpPage() {
+			const [url, setUrl] = React.useState("");
+			const [why, setWhy] = React.useState("");
+			const [round, setRound] = React.useState(0);
+			// company-erp-dark-v1: ERPNext wears the desk's day or night (erp-relay.js THEME_SHIM takes the message).
+			const dark = React.useSyncExternalStore(subscribeBodyDark, bodyDark);
+			const erpFrame = React.useRef(null);
+			const tellErp = function () {
+				try { if (erpFrame.current && erpFrame.current.contentWindow) erpFrame.current.contentWindow.postMessage({ type: "tdh-theme", theme: bodyDark() ? "dark" : "light" }, "*"); } catch (err) {}
+			};
+			React.useEffect(function () {
+				// The frame's load event waits for all of ERPNext; its first lines listen much earlier, so say it a few times.
+				tellErp();
+				const ts = [400, 1200, 2500, 5000].map(function (ms) { return setTimeout(tellErp, ms); });
+				return function () { ts.forEach(clearTimeout); };
+			}, [dark, url]);
+			React.useEffect(function () {
+				let live = true;
+				setUrl("");
+				setWhy("");
+				erpWhere().then(function (u) {
+					if (live) setUrl(u);
+				}, function (err) {
+					if (live) setWhy(ERP_WHY[String((err && err.message) || "")] || "没打开：这台电脑连不上公司服务器，或 ERPNext 没在运行。");
+				});
+				return function () { live = false; };
+			}, [round]);
+			const bar = React.createElement("div", {
+				style: {
+					height: 36, flex: "none", display: "flex", alignItems: "center", gap: 8, padding: "0 10px",
+					borderBottom: "0.5px solid " + T.border1, color: T.label2, fontSize: 12, boxSizing: "border-box"
+				}
+			},
+				React.createElement(ErpGlyph, { size: 14 }),
+				React.createElement("span", { style: { color: T.label, fontWeight: 600, fontSize: 13 } }, "ERPNext"),
+				React.createElement("span", { style: { flex: 1 } }),
+				React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: function () { setRound(round + 1); } }, "重新打开")
+			);
+			const box = { width: "100%", height: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+				background: T.base, fontFamily: FONT };
+			return React.createElement("div", { "data-company-erp": url ? "framed" : why ? "failed" : "opening", style: box },
+				bar,
+				url ? React.createElement("iframe", {
+					key: url,
+					src: url,
+					ref: erpFrame,
+					onLoad: tellErp,
+					title: "ERPNext",
+					style: { flex: 1, width: "100%", minHeight: 0, border: 0, display: "block", background: dark ? "transparent" : "#fff" },
+					allow: "clipboard-read; clipboard-write; fullscreen"
+				}) : React.createElement("div", {
+					style: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
+						color: T.label2, fontSize: 13, textAlign: "center", padding: 24, boxSizing: "border-box" }
+				},
+					React.createElement(ErpGlyph, { size: 28 }),
+					React.createElement("div", null, why || "正在用你的 TDH 账号打开 ERPNext…"),
+					why ? React.createElement(P.Button, { variant: "outline", size: "sm", type: "button", onClick: function () { setRound(round + 1); } }, "重试") : null
+				)
+			);
+		}
+		// company-mail-v1: 邮箱 (the user, 2026-11-21: "在TDH做一个邮箱管理系统 放在左上角跟ERP 工件 插件 定时任务 放在一起
+		// 叫邮箱 ... 登陆多个企业邮箱 ... 可以可视化 也可以直接让AI帮忙管理邮件和回复邮件"). The person's mailboxes (every
+		// one for an admin) at the company server's mail layer (server/mail_api.py, over the provider's IMAP and SMTP),
+		// through this desk's host (/company/mail/call, a header a page elsewhere cannot send here without asking).
+		// Three columns: mailboxes and folders, the list, the mail; writing in place of the mail. 让助手回复 opens a
+		// session with the mail named; the agent shows a preview before it sends (company-mail skill).
+		const MAIL_PANEL = "company-mail";
+		const MAIL_UPLOAD_MAX = 11 * 1024 * 1024;
+		let mailAskFn = null;
+		function mailCall(route, body) {
+			return fetch("/company/mail/call", {
+				method: "POST",
+				credentials: "same-origin",
+				headers: { "Accept": "application/json", "Content-Type": "application/json", "X-TDH-Mail": "1" },
+				body: JSON.stringify({ route: "/" + route, body: body || {} })
+			}).then(function (res) {
+				return res.json().catch(function () { return { ok: false, error: "这台电脑连不上公司服务器。" }; }).then(function (j) {
+					if (j && j.error === "bad-token") j.error = "TDH 的登录过期了，请重新打开 TDH。";
+					if (j && j.error === "header") j.error = "这个页面不能打开邮箱。";
+					return j || { ok: false, error: "没有回答" };
+				});
+			}, function () { return { ok: false, error: "这台电脑连不上公司服务器。" }; });
+		}
+		function mailWho(a) {
+			if (!a) return "";
+			return a.name || a.address || "";
+		}
+		function mailAddr(a) {
+			if (!a || !a.address) return "";
+			return a.name ? a.name + " <" + a.address + ">" : a.address;
+		}
+		function mailWhen(d) {
+			const s = String(d || "");
+			if (!s) return "";
+			const now = new Date();
+			const pad = function (n) { return (n < 10 ? "0" : "") + n; };
+			const today = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+			if (s.slice(0, 10) === today) return s.slice(11, 16);
+			if (s.slice(0, 4) === String(now.getFullYear())) return s.slice(5, 10);
+			return s.slice(0, 10);
+		}
+		function mailSize(n) {
+			n = Number(n) || 0;
+			if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+			if (n >= 1024) return Math.round(n / 1024) + " KB";
+			return n + " B";
+		}
+		function mailAsk(line) {
+			if (mailAskFn) mailAskFn(line);
+		}
+		const MAIL_CSS = [
+			".tm-root { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; overflow: hidden; background: " + T.base + "; color: " + T.label + "; font-family: " + FONT + "; font-size: 13px; }",
+			".tm-col { display: flex; flex-direction: column; min-height: 0; border-right: 0.5px solid " + T.border1 + "; box-sizing: border-box; }",
+			".tm-read { flex: 1; min-width: 0; border-right: 0; }",
+			".tm-head { height: 44px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-bottom: 0.5px solid " + T.border1 + "; box-sizing: border-box; }",
+			".tm-title { font-weight: 600; font-size: 14px; }",
+			".tm-scroll { flex: 1; min-height: 0; overflow-y: auto; }",
+			".tm-btn { height: 28px; padding: 0 10px; border-radius: 7px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }",
+			".tm-btn:hover { background: " + QUIET + "; }",
+			".tm-btn:disabled { opacity: .5; cursor: default; }",
+			".tm-btn.is-main { background: " + T.brand + "; border-color: " + T.brand + "; color: #fff; }",
+			".tm-btn.is-main:hover { filter: brightness(1.06); }",
+			".tm-btn.is-danger { color: " + T.err + "; }",
+			".tm-icon { width: 28px; padding: 0; justify-content: center; }",
+			".tm-count { font-size: 11px; color: " + T.label2 + "; }",
+			".tm-search { flex: 1; min-width: 0; height: 28px; border-radius: 7px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 12.5px; padding: 0 8px; box-sizing: border-box; outline: none; }",
+			".tm-search:focus { border-color: " + T.brand + "; }",
+			".tm-empty { padding: 28px 16px; color: " + T.label2 + "; text-align: center; line-height: 1.7; }",
+			".tm-err { margin: 8px 10px; padding: 8px 10px; border-radius: 8px; background: " + tint(T.err, 10) + "; color: " + T.err + "; font-size: 12px; line-height: 1.6; }",
+			".tm-ok { margin: 8px 10px; padding: 8px 10px; border-radius: 8px; background: " + tint(T.ok, 12) + "; color: " + T.ok + "; font-size: 12px; }",
+			".tm-subject { font-size: 17px; font-weight: 600; line-height: 1.4; padding: 14px 18px 4px; word-break: break-word; }",
+			".tm-hdr { padding: 2px 18px; font-size: 12px; color: " + T.label2 + "; line-height: 1.7; word-break: break-all; }",
+			".tm-hdr b { color: " + T.label + "; font-weight: 500; }",
+			".tm-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 18px; border-bottom: 0.5px solid " + T.border1 + "; }",
+			".tm-atts { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 18px 0; }",
+			".tm-att { max-width: 260px; height: 30px; padding: 0 10px; border-radius: 8px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }",
+			".tm-att:hover { background: " + QUIET + "; }",
+			".tm-att span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+			".tm-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }",
+			".tm-text { padding: 16px 18px 28px; white-space: pre-wrap; word-break: break-word; line-height: 1.7; font-size: 14px; }",
+			".tm-frame { flex: 1; width: 100%; min-height: 0; border: 0; display: block; background: #fff; }",
+			".tm-imgbar { margin: 10px 18px 0; padding: 6px 10px; border-radius: 8px; background: " + QUIET + "; font-size: 12px; color: " + T.label2 + "; display: flex; align-items: center; gap: 8px; }",
+			".tm-form { padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; min-height: 0; }",
+			".tm-field { display: flex; align-items: center; gap: 8px; }",
+			".tm-field > label { width: 64px; flex: none; color: " + T.label2 + "; font-size: 12.5px; }",
+			".tm-in { flex: 1; min-width: 0; height: 30px; border-radius: 7px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 13px; padding: 0 8px; box-sizing: border-box; outline: none; }",
+			".tm-in:focus, .tm-area:focus { border-color: " + T.brand + "; }",
+			"select.tm-in { padding: 0 4px; }",
+			".tm-area { flex: 1; min-height: 220px; border-radius: 7px; border: 0.5px solid " + T.border2 + "; background: transparent; color: " + T.label + "; font: inherit; font-size: 14px; line-height: 1.7; padding: 8px 10px; box-sizing: border-box; outline: none; resize: none; }",
+			".tm-note { font-size: 12px; color: " + T.label2 + "; line-height: 1.6; }",
+			".tm-chips { display: flex; flex-wrap: wrap; gap: 6px; }",
+			".tm-chip { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 9px; border-radius: 13px; background: " + QUIET + "; font-size: 12px; }",
+			".tm-chip button { border: 0; background: transparent; color: " + T.label2 + "; cursor: pointer; font-size: 13px; }",
+			".tm-mask { position: absolute; inset: 0; background: rgba(0,0,0,.28); display: flex; align-items: center; justify-content: center; z-index: 20; }",
+			".tm-dialog { width: min(460px, calc(100% - 32px)); max-height: calc(100% - 40px); overflow-y: auto; border-radius: 12px; background: " + T.base + "; border: 0.5px solid " + T.border2 + "; box-shadow: 0 12px 40px rgba(0,0,0,.25); padding: 18px 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; }",
+			".tm-dialog h3 { margin: 0 0 4px; font-size: 15px; }",
+			".tm-row-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }",
+			".tm-more { display: block; width: calc(100% - 24px); margin: 10px 12px 16px; }",
+			".tm-page { flex: 1; min-width: 0; border-right: 0; }",
+			".tm-wrap { flex-wrap: wrap; height: auto; min-height: 44px; padding: 7px 12px; row-gap: 6px; }",
+			".tm-acct-pick { flex: 0 1 280px; height: 28px; font-size: 12.5px; }",
+			".tm-searchbox { display: flex; flex: 0 1 220px; min-width: 120px; }",
+			".tm-tabs { flex: none; display: flex; gap: 2px; padding: 0 8px; border-bottom: 0.5px solid " + T.border1 + "; overflow-x: auto; scrollbar-width: none; }",
+			".tm-tab { flex: none; height: 34px; padding: 0 10px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: " + T.label2 + "; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; box-sizing: border-box; }",
+			".tm-tab:hover { color: " + T.label + "; }",
+			".tm-tab.is-on { color: " + T.label + "; font-weight: 600; border-bottom-color: " + T.brand + "; }",
+			".tm-count { font-size: 11px; color: " + T.label2 + "; font-weight: 400; }",
+			".tm-tab.is-on .tm-count { color: " + T.brand + "; }",
+			".tm-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 16px 10px 26px; border: 0; border-bottom: 0.5px solid " + T.border1 + "; background: transparent; color: " + T.label + "; font: inherit; text-align: left; cursor: pointer; position: relative; box-sizing: border-box; }",
+			".tm-row:hover { background: " + QUIET + "; }",
+			".tm-row.is-on { background: " + tint(T.brand, 10) + "; }",
+			".tm-row.is-new::before { content: ''; position: absolute; left: 11px; top: 50%; margin-top: -3.5px; width: 7px; height: 7px; border-radius: 50%; background: " + T.brand + "; }",
+			".tm-row.is-new .tm-from, .tm-row.is-new .tm-subj { font-weight: 600; }",
+			".tm-from { width: 168px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }",
+			".tm-subj { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }",
+			".tm-date { flex: none; font-size: 11.5px; color: " + T.label2 + "; }",
+			".tm-meta { font-size: 11px; color: " + T.label2 + "; font-weight: 400; }",
+			".tm-root { container-type: inline-size; }",
+			"@container (max-width: 560px) { .tm-row { flex-wrap: wrap; row-gap: 2px; } .tm-from { width: auto; flex: 1; } .tm-subj { order: 3; flex-basis: 100%; } }"
+		].join("\n");
+		function MailGlyph(props) {
+			const size = (props && props.size) || 16;
+			return React.createElement("svg", {
+				width: size, height: size, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.3,
+				strokeLinejoin: "round", strokeLinecap: "round", "aria-hidden": true
+			},
+				React.createElement("rect", { x: 1.8, y: 3.2, width: 12.4, height: 9.6, rx: 1.6 }),
+				React.createElement("path", { d: "M2.3 4.2 8 8.6l5.7-4.4" })
+			);
+		}
+		function mailFrameDoc(html, images) {
+			const csp = "default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:" + (images ? " https: http:" : "");
+			return "<!doctype html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"" + csp + "\">" +
+				"<base target=\"_blank\"><style>body{margin:16px 18px 28px;font-family:-apple-system,BlinkMacSystemFont,\"PingFang SC\",\"Microsoft YaHei\",sans-serif;" +
+				"font-size:14px;line-height:1.6;color:#1f1f1f;background:#fff;word-break:break-word}img{max-width:100%;height:auto}" +
+				"pre{white-space:pre-wrap}blockquote{margin:0 0 0 6px;padding-left:10px;border-left:3px solid #ddd;color:#555}</style></head><body>" +
+				html + "</body></html>";
+		}
+		function MailAccountDialog(props) {
+			const info = props.info || {};
+			const edit = props.edit || null;
+			const presets = info.presets || [];
+			const [provider, setProvider] = React.useState(edit ? edit.provider : "exmail");
+			const [address, setAddress] = React.useState(edit ? edit.address : "");
+			const [password, setPassword] = React.useState("");
+			const [label, setLabel] = React.useState(edit ? edit.label : "");
+			const [owner, setOwner] = React.useState(edit ? edit.owner : info.me);
+			const [imapHost, setImapHost] = React.useState(edit ? edit.imap_host : "");
+			const [smtpHost, setSmtpHost] = React.useState(edit ? edit.smtp_host : "");
+			const [busy, setBusy] = React.useState(false);
+			const [err, setErr] = React.useState("");
+			function submit(ev) {
+				if (ev) ev.preventDefault();
+				setErr("");
+				setBusy(true);
+				const body = edit ? { account: edit.id, label: label } : { address: address, password: password, provider: provider, label: label, owner: owner };
+				if (edit && password) body.password = password;
+				if (edit && info.admin && owner !== edit.owner) body.owner = owner;
+				if (provider === "custom") { body.provider = "custom"; body.imap_host = imapHost; body.smtp_host = smtpHost; }
+				mailCall(edit ? "update" : "add", body).then(function (j) {
+					setBusy(false);
+					if (j && j.ok) props.onDone(j.account && j.account.id);
+					else setErr((j && j.error) || "没加上");
+				});
+			}
+			function remove() {
+				if (!window.confirm("从 TDH 里移除 " + edit.address + "？邮箱里的邮件不会动。")) return;
+				setBusy(true);
+				mailCall("remove", { account: edit.id }).then(function (j) {
+					setBusy(false);
+					if (j && j.ok) props.onDone(null);
+					else setErr((j && j.error) || "没移除");
+				});
+			}
+			const h = React.createElement;
+			return h("div", { className: "tm-mask", onMouseDown: function (e) { if (e.target === e.currentTarget && !busy) props.onClose(); } },
+				h("form", { className: "tm-dialog", onSubmit: submit, "data-company-mail-dialog": edit ? "edit" : "add" },
+					h("h3", null, edit ? "邮箱设置" : "添加邮箱"),
+					edit ? null : h("div", { className: "tm-note" },
+						"腾讯企业邮箱：先在网页版「设置 → 客户端设置」里打开 IMAP/SMTP；开了微信安全登录的，到「设置 → 账户 → 客户端专用密码」生成一个，填在下面。密码只存在公司服务器上，加密保存，谁也看不到。"),
+					h("div", { className: "tm-field" }, h("label", null, "服务商"),
+						h("select", { className: "tm-in", value: provider, disabled: !!edit, onChange: function (e) { setProvider(e.target.value); } },
+							presets.map(function (p) { return h("option", { key: p.id, value: p.id }, p.name); }))),
+					h("div", { className: "tm-field" }, h("label", null, "邮箱地址"),
+						h("input", { className: "tm-in", value: address, disabled: !!edit, placeholder: "name@company.com", autoFocus: !edit,
+							onChange: function (e) { setAddress(e.target.value.trim()); } })),
+					h("div", { className: "tm-field" }, h("label", null, edit ? "新密码" : "密码"),
+						h("input", { className: "tm-in", type: "password", value: password, autoComplete: "new-password",
+							placeholder: edit ? "不改就留空" : "客户端专用密码 / 授权码", onChange: function (e) { setPassword(e.target.value); } })),
+					provider === "custom" ? h("div", { className: "tm-field" }, h("label", null, "收信服务器"),
+						h("input", { className: "tm-in", value: imapHost, placeholder: "imap.example.com（端口 993）", onChange: function (e) { setImapHost(e.target.value.trim()); } })) : null,
+					provider === "custom" ? h("div", { className: "tm-field" }, h("label", null, "发信服务器"),
+						h("input", { className: "tm-in", value: smtpHost, placeholder: "smtp.example.com（端口 465）", onChange: function (e) { setSmtpHost(e.target.value.trim()); } })) : null,
+					h("div", { className: "tm-field" }, h("label", null, "显示名称"),
+						h("input", { className: "tm-in", value: label, placeholder: "发信时对方看到的名字，可不填", onChange: function (e) { setLabel(e.target.value); } })),
+					info.admin ? h("div", { className: "tm-field" }, h("label", null, "归谁"),
+						h("select", { className: "tm-in", value: owner, onChange: function (e) { setOwner(e.target.value); } },
+							(info.owners || []).map(function (o) { return h("option", { key: o.login, value: o.login }, o.name + "（" + o.login + "）"); }))) : null,
+					h("div", { className: "tm-note" }, "这个邮箱只有归属人自己和管理员能看。"),
+					err ? h("div", { className: "tm-err", style: { margin: 0 } }, err) : null,
+					h("div", { className: "tm-row-end" },
+						edit ? h("button", { type: "button", className: "tm-btn is-danger", disabled: busy, onClick: remove, style: { marginRight: "auto" } }, "移除") : null,
+						h("button", { type: "button", className: "tm-btn", disabled: busy, onClick: props.onClose }, "取消"),
+						h("button", { type: "submit", className: "tm-btn is-main", disabled: busy || (!edit && (!address || !password)) },
+							busy ? "正在连接邮箱…" : edit ? "保存" : "添加"))
+				)
+			);
+		}
+		function MailCompose(props) {
+			const init = props.init || {};
+			const accounts = props.accounts || [];
+			const [account, setAccount] = React.useState(init.account || (accounts[0] && accounts[0].id) || "");
+			const [to, setTo] = React.useState(init.to || "");
+			const [cc, setCc] = React.useState(init.cc || "");
+			const [bcc, setBcc] = React.useState("");
+			const [showBcc, setShowBcc] = React.useState(false);
+			const [subject, setSubject] = React.useState(init.subject || "");
+			const [text, setText] = React.useState(init.text || "");
+			const [files, setFiles] = React.useState([]);
+			const [busy, setBusy] = React.useState("");
+			const [err, setErr] = React.useState("");
+			const fileRef = React.useRef(null);
+			const h = React.createElement;
+			function pick(ev) {
+				const list = Array.prototype.slice.call((ev.target && ev.target.files) || []);
+				ev.target.value = "";
+				list.forEach(function (f) {
+					const r = new FileReader();
+					r.onload = function () {
+						const s = String(r.result || "");
+						const data = s.slice(s.indexOf(",") + 1);
+						setFiles(function (cur) {
+							const total = cur.reduce(function (n, x) { return n + x.size; }, 0) + f.size;
+							if (total > MAIL_UPLOAD_MAX) {
+								setErr("附件加起来超过 11 MB。大文件请放进公司盘，让 TDH 助手附上。");
+								return cur;
+							}
+							return cur.concat([{ name: f.name, size: f.size, data: data }]);
+						});
+					};
+					r.readAsDataURL(f);
+				});
+			}
+			function body() {
+				const b = { account: account, to: to, cc: cc, bcc: bcc, subject: subject, text: text,
+					attachments: files.map(function (f) { return { name: f.name, data: f.data }; }) };
+				if (init.reply_to) b.reply_to = init.reply_to;
+				if (init.forward) b.forward = init.forward;
+				if (init.draft) b.draft = init.draft;
+				return b;
+			}
+			function send() {
+				setErr("");
+				setBusy("send");
+				mailCall("send", body()).then(function (j) {
+					if (j && j.need_confirm && j.confirm) return mailCall("send", { confirm: j.confirm });
+					return j;
+				}).then(function (j) {
+					setBusy("");
+					if (j && j.ok && j.sent) props.onDone("已发出：" + (j.subject || ""));
+					else setErr((j && j.error) || "没发出去");
+				});
+			}
+			function draft() {
+				setErr("");
+				setBusy("draft");
+				const b = body();
+				if (init.draft) b.replace = init.draft;
+				mailCall("draft", b).then(function (j) {
+					setBusy("");
+					if (j && j.ok) props.onDone("已存进草稿箱");
+					else setErr((j && j.error) || "没存上");
+				});
+			}
+			const title = init.reply_to ? "回复" : init.forward ? "转发" : init.draft ? "编辑草稿" : "写邮件";
+			return h("div", { className: "tm-col tm-read", "data-company-mail-compose": title },
+				h("div", { className: "tm-head" },
+					h("span", { className: "tm-title" }, title),
+					h("span", { style: { flex: 1 } }),
+					h("button", { type: "button", className: "tm-btn", disabled: !!busy, onClick: props.onClose }, "取消"),
+					h("button", { type: "button", className: "tm-btn", disabled: !!busy, onClick: draft }, busy === "draft" ? "正在存…" : "存草稿"),
+					h("button", { type: "button", className: "tm-btn is-main", disabled: !!busy || !account || !(to || cc || bcc || init.reply_to), onClick: send },
+						busy === "send" ? "正在发送…" : "发送")),
+				h("div", { className: "tm-form" },
+					accounts.length > 1 ? h("div", { className: "tm-field" }, h("label", null, "发件邮箱"),
+						h("select", { className: "tm-in", value: account, disabled: !!(init.reply_to || init.forward), onChange: function (e) { setAccount(e.target.value); } },
+							accounts.map(function (a) { return h("option", { key: a.id, value: a.id }, a.address + (a.owner_name ? "（" + a.owner_name + "）" : "")); }))) : null,
+					h("div", { className: "tm-field" }, h("label", null, "收件人"),
+						h("input", { className: "tm-in", value: to, autoFocus: !to, placeholder: "多个用逗号隔开", onChange: function (e) { setTo(e.target.value); } }),
+						showBcc ? null : h("button", { type: "button", className: "tm-btn", onClick: function () { setShowBcc(true); } }, "密送")),
+					h("div", { className: "tm-field" }, h("label", null, "抄送"),
+						h("input", { className: "tm-in", value: cc, onChange: function (e) { setCc(e.target.value); } })),
+					showBcc ? h("div", { className: "tm-field" }, h("label", null, "密送"),
+						h("input", { className: "tm-in", value: bcc, onChange: function (e) { setBcc(e.target.value); } })) : null,
+					h("div", { className: "tm-field" }, h("label", null, "主题"),
+						h("input", { className: "tm-in", value: subject, onChange: function (e) { setSubject(e.target.value); } })),
+					h("div", { className: "tm-field" }, h("label", null, "附件"),
+						h("div", { className: "tm-chips", style: { flex: 1 } },
+							files.map(function (f, i) {
+								return h("span", { key: i, className: "tm-chip" }, f.name + " · " + mailSize(f.size),
+									h("button", { type: "button", "aria-label": "去掉", onClick: function () { setFiles(files.filter(function (_, k) { return k !== i; })); } }, "×"));
+							}),
+							h("button", { type: "button", className: "tm-btn", onClick: function () { if (fileRef.current) fileRef.current.click(); } }, "添加附件"),
+							h("input", { type: "file", multiple: true, ref: fileRef, style: { display: "none" }, onChange: pick }))),
+					init.reply_to ? h("div", { className: "tm-note" }, "原邮件会引用在正文下面。") : null,
+					init.forward ? h("div", { className: "tm-note" }, "原邮件的正文和附件会一起转发。") : null,
+					err ? h("div", { className: "tm-err", style: { margin: 0 } }, err) : null,
+					h("textarea", { className: "tm-area", value: text, autoFocus: !!to, placeholder: "正文", onChange: function (e) { setText(e.target.value); } })
+				)
+			);
+		}
+		function MailPage() {
+			const h = React.createElement;
+			const [info, setInfo] = React.useState(null);
+			const [acct, setAcct] = React.useState("");
+			const [folders, setFolders] = React.useState([]);
+			const [folder, setFolder] = React.useState("");
+			const [list, setList] = React.useState(null);
+			const [sel, setSel] = React.useState(null);
+			const [msg, setMsg] = React.useState(null);
+			const [images, setImages] = React.useState(false);
+			const [q, setQ] = React.useState("");
+			const [searching, setSearching] = React.useState("");
+			const [busy, setBusy] = React.useState("");
+			const [err, setErr] = React.useState("");
+			const [note, setNote] = React.useState("");
+			const [compose, setCompose] = React.useState(null);
+			const [dialog, setDialog] = React.useState(null);
+			const listSeq = React.useRef(0);
+			const accounts = (info && info.accounts) || [];
+			const current = accounts.find(function (a) { return a.id === acct; }) || null;
+			function flash(t) {
+				setNote(t);
+				setTimeout(function () { setNote(function (cur) { return cur === t ? "" : cur; }); }, 4000);
+			}
+			function loadAccounts(pickId) {
+				return mailCall("accounts", {}).then(function (j) {
+					if (!j || !j.ok) { setErr((j && j.error) || "邮箱没打开"); setInfo({ accounts: [], presets: [], owners: [] }); return; }
+					setInfo(j);
+					const ids = (j.accounts || []).map(function (a) { return a.id; });
+					const next = pickId && ids.indexOf(pickId) >= 0 ? pickId : ids.indexOf(acct) >= 0 ? acct : ids[0] || "";
+					setAcct(next);
+					if (!next) { setFolders([]); setList(null); setMsg(null); }
+				});
+			}
+			function loadFolders(id, keep) {
+				return mailCall("folders", { account: id }).then(function (j) {
+					if (!j || !j.ok) { setErr((j && j.error) || "文件夹没打开"); setFolders([]); return ""; }
+					setFolders(j.folders || []);
+					const names = (j.folders || []).map(function (f) { return f.name; });
+					const f = keep && names.indexOf(keep) >= 0 ? keep : ((j.folders || []).find(function (x) { return x.role === "inbox"; }) || {}).name || names[0] || "INBOX";
+					return f;
+				});
+			}
+			function loadList(id, f, before, quiet) {
+				const seq = ++listSeq.current;
+				if (!quiet) setBusy("list");
+				return mailCall("list", { account: id, folder: f, limit: 40, before: before || undefined }).then(function (j) {
+					if (seq !== listSeq.current) return;
+					setBusy("");
+					if (!j || !j.ok) { setErr((j && j.error) || "邮件列表没打开"); if (!before) setList(null); return; }
+					setErr("");
+					const rows = (j.messages || []).map(function (m) { return Object.assign({ folder: j.folder, account: id }, m); });
+					setList(function (cur) {
+						if (before && cur) return Object.assign({}, j, { messages: cur.messages.concat(rows) });
+						return Object.assign({}, j, { messages: rows });
+					});
+				});
+			}
+			function openFolder(id, f) {
+				setFolder(f);
+				setSearching("");
+				setSel(null);
+				setMsg(null);
+				setCompose(null);
+				loadList(id, f);
+			}
+			React.useEffect(function () { loadAccounts(); }, []);
+			React.useEffect(function () {
+				if (!acct) return;
+				setErr("");
+				setList(null);
+				setMsg(null);
+				setSel(null);
+				loadFolders(acct).then(function (f) { if (f) openFolder(acct, f); });
+			}, [acct]);
+			React.useEffect(function () {
+				const t = setInterval(function () {
+					if (document.hidden || !acct || !folder || searching || busy) return;
+					loadList(acct, folder, null, true);
+					loadFolders(acct, folder);
+				}, 120000);
+				return function () { clearInterval(t); };
+			}, [acct, folder, searching, busy]);
+			function openMsg(m) {
+				setSel(m.uid + "@" + m.folder + "@" + m.account);
+				setCompose(null);
+				setImages(false);
+				setMsg({ loading: true, subject: m.subject });
+				if (m.draft || (folders.find(function (f) { return f.name === m.folder; }) || {}).role === "drafts") {
+					mailCall("read", { account: m.account, folder: m.folder, uid: m.uid, view: "page", seen: false }).then(function (j) {
+						if (j && j.ok) {
+							setMsg(null);
+							setCompose({ account: m.account, to: (j.to || []).map(mailAddr).join(", "), cc: (j.cc || []).map(mailAddr).join(", "),
+								subject: j.subject === "（无主题）" ? "" : j.subject, text: j.text || "", draft: m.uid });
+						} else setMsg({ error: (j && j.error) || "没打开" });
+					});
+					return;
+				}
+				mailCall("read", { account: m.account, folder: m.folder, uid: m.uid, view: "page" }).then(function (j) {
+					if (!j || !j.ok) { setMsg({ error: (j && j.error) || "这封邮件没打开" }); return; }
+					setMsg(j);
+					if (!m.seen) {
+						setList(function (cur) {
+							if (!cur) return cur;
+							return Object.assign({}, cur, { messages: cur.messages.map(function (x) { return x === m ? Object.assign({}, x, { seen: true }) : x; }) });
+						});
+						setFolders(function (cur) { return cur.map(function (f) { return f.name === m.folder && f.unread > 0 ? Object.assign({}, f, { unread: f.unread - 1 }) : f; }); });
+					}
+				});
+			}
+			function search(ev) {
+				if (ev) ev.preventDefault();
+				const word = q.trim();
+				if (!word) { if (searching) openFolder(acct, folder); return; }
+				setSearching(word);
+				setSel(null);
+				setMsg(null);
+				setBusy("list");
+				const seq = ++listSeq.current;
+				mailCall("search", { account: acct, q: word, days: 180, limit: 100 }).then(function (j) {
+					if (seq !== listSeq.current) return;
+					setBusy("");
+					if (!j || !j.ok) { setErr((j && j.error) || "没搜到"); return; }
+					setErr("");
+					setList({ messages: j.messages || [], more: false, total: j.found, note: j.note });
+				});
+			}
+			function act(route, body, after) {
+				setBusy(route);
+				return mailCall(route, body).then(function (j) {
+					setBusy("");
+					if (!j || !j.ok) { setErr((j && j.error) || "没做成"); return; }
+					if (after) after(j);
+				});
+			}
+			function removeMsg() {
+				if (!msg || !msg.uid) return;
+				const m = msg;
+				act("move", { account: m.account, folder: m.folder, uids: [m.uid], to: "trash" }, function () {
+					flash("已移到「已删除」");
+					setMsg(null);
+					setSel(null);
+					setList(function (cur) { return cur ? Object.assign({}, cur, { messages: cur.messages.filter(function (x) { return !(x.uid === m.uid && x.folder === m.folder); }) }) : cur; });
+				});
+			}
+			function markUnread() {
+				const m = msg;
+				act("flag", { account: m.account, folder: m.folder, uids: [m.uid], seen: false }, function () {
+					setList(function (cur) { return cur ? Object.assign({}, cur, { messages: cur.messages.map(function (x) { return x.uid === m.uid && x.folder === m.folder ? Object.assign({}, x, { seen: false }) : x; }) }) : cur; });
+					setFolders(function (cur) { return cur.map(function (f) { return f.name === m.folder ? Object.assign({}, f, { unread: (f.unread || 0) + 1 }) : f; }); });
+					flash("已标为未读");
+				});
+			}
+			function download(i, a) {
+				act("attachment", { account: msg.account, folder: msg.folder, uid: msg.uid, index: i }, function (j) {
+					try {
+						const bin = atob(j.data);
+						const bytes = new Uint8Array(bin.length);
+						for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+						const url = URL.createObjectURL(new Blob([bytes], { type: j.type || "application/octet-stream" }));
+						const el = document.createElement("a");
+						el.href = url;
+						el.download = j.name || a.name;
+						document.body.appendChild(el);
+						el.click();
+						el.remove();
+						setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+					} catch (e) { setErr("附件没下载下来，可以点「存到公司盘」。"); }
+				});
+			}
+			function saveAll() {
+				act("save_attachment", { account: msg.account, folder: msg.folder, uid: msg.uid }, function (j) {
+					flash("已存到公司盘：" + (j.files || []).join("、"));
+				});
+			}
+			function reply(all) {
+				const m = msg;
+				const me = String((current && current.address) || "").toLowerCase();
+				const back = (m.reply_to && m.reply_to.length ? m.reply_to : [m.from]).filter(function (a) { return a && a.address; });
+				const have = {};
+				back.forEach(function (a) { have[a.address.toLowerCase()] = 1; });
+				const cc = all ? (m.to || []).concat(m.cc || []).filter(function (a) {
+					const k = String(a.address || "").toLowerCase();
+					if (!k || k === me || have[k]) return false;
+					have[k] = 1;
+					return true;
+				}) : [];
+				const subj = /^(re|回复)\s*[:：]/i.test(m.subject) ? m.subject : "Re: " + m.subject;
+				setCompose({ account: m.account, to: back.map(mailAddr).join(", "), cc: cc.map(mailAddr).join(", "), subject: subj,
+					reply_to: { folder: m.folder, uid: m.uid } });
+			}
+			function forward() {
+				const m = msg;
+				setCompose({ account: m.account, subject: "Fwd: " + m.subject, forward: { folder: m.folder, uid: m.uid } });
+			}
+			function askAgent() {
+				const m = msg;
+				mailAsk("请帮我回复这封邮件：邮箱 " + m.address + "，文件夹 " + m.folder + "，uid " + m.uid + "（主题「" + m.subject + "」，发件人 " +
+					mailAddr(m.from) + "）。先用 company-mail 读这封邮件，按我的口吻写好回复，给我看预览，我确认了再发。");
+			}
+
+			// company-mail-onepage-v1 (the user, 2026-11-22: "内嵌在TDH里的 如果展开的话左边有工作区 右边有聊天区 你这里还有
+			// 三页展开 太多了 ... 邮箱页跟邮件页 不同时出现"): one page at a time in the desk's middle column. The list
+			// (mailbox and folders in its top bar), or a mail (← 返回 back to the list), or writing (取消 back).
+			const folderOf = function (name) { return folders.find(function (f) { return f.name === name; }) || {}; };
+			const dialogEl = dialog ? h(MailAccountDialog, { info: info, edit: dialog.edit, onClose: function () { setDialog(null); },
+				onDone: function (id) { setDialog(null); flash(dialog.edit ? (id ? "已保存" : "已移除") : "邮箱已添加"); loadAccounts(id || undefined); } }) : null;
+			const root = function (view, children) {
+				return h("div", { className: "tm-root", "data-company-mail": info ? accounts.length : "opening", "data-company-mail-view": view,
+					style: { position: "relative" } }, h("style", null, MAIL_CSS), children, dialogEl);
+			};
+			const banner = [err ? h("div", { key: "e", className: "tm-err" }, err) : null, note ? h("div", { key: "n", className: "tm-ok" }, note) : null];
+
+			// ---- writing ----
+			if (compose) {
+				return root("compose", h(MailCompose, { key: JSON.stringify(compose), init: compose, accounts: accounts,
+					onClose: function () { setCompose(null); },
+					onDone: function (t) {
+						setCompose(null);
+						setMsg(null);
+						flash(t);
+						if (folder && !searching) { loadList(acct, folder, null, true); loadFolders(acct, folder); }
+					} }));
+			}
+
+			// ---- one mail ----
+			if (msg) {
+				const back = h("button", { type: "button", className: "tm-btn", onClick: function () { setMsg(null); } },
+					"← " + (searching ? "搜索结果" : (folderOf(msg.folder || folder).label || "返回")));
+				if (msg.loading || msg.error) {
+					return root("read", h("div", { className: "tm-col tm-page" },
+						h("div", { className: "tm-head" }, back),
+						msg.error ? h("div", { className: "tm-err" }, msg.error) : h("div", { className: "tm-empty", style: { marginTop: 60 } }, "正在打开「" + (msg.subject || "") + "」…")));
+				}
+				const remote = /<img[^>]+src\s*=\s*["']?https?:/i.test(msg.html || "");
+				return root("read", h("div", { className: "tm-col tm-page", "data-company-mail-read": msg.uid },
+					h("div", { className: "tm-head tm-wrap" },
+						back,
+						h("span", { style: { flex: 1 } }),
+						h("button", { type: "button", className: "tm-btn", onClick: function () { reply(false); } }, "回复"),
+						h("button", { type: "button", className: "tm-btn", onClick: function () { reply(true); } }, "回复全部"),
+						h("button", { type: "button", className: "tm-btn", onClick: forward }, "转发"),
+						h("button", { type: "button", className: "tm-btn is-main", onClick: askAgent, title: "开一个新会话，让 TDH 助手读这封邮件、写回复，给你看过再发" }, "让助手回复"),
+						h("button", { type: "button", className: "tm-btn", disabled: !!busy, onClick: markUnread }, "标为未读"),
+						h("button", { type: "button", className: "tm-btn is-danger", disabled: !!busy, onClick: removeMsg }, "删除")),
+					banner,
+					h("div", { className: "tm-subject" }, msg.subject),
+					h("div", { className: "tm-hdr" }, h("b", null, mailAddr(msg.from)), "　", msg.date),
+					msg.to && msg.to.length ? h("div", { className: "tm-hdr" }, "收件人：" + msg.to.map(mailAddr).join("、")) : null,
+					msg.cc && msg.cc.length ? h("div", { className: "tm-hdr" }, "抄送：" + msg.cc.map(mailAddr).join("、")) : null,
+					msg.attachments && msg.attachments.length ? h("div", { className: "tm-atts" },
+						msg.attachments.map(function (a, i) {
+							return h("button", { key: i, type: "button", className: "tm-att", title: "下载 " + a.name, onClick: function () { download(i, a); } },
+								"📎", h("span", null, a.name), h("small", { style: { color: T.label2 } }, mailSize(a.size)));
+						}),
+						h("button", { type: "button", className: "tm-btn", disabled: !!busy, onClick: saveAll }, "存到公司盘")) : null,
+					remote && !images ? h("div", { className: "tm-imgbar" }, "邮件里的网络图片没有显示（打开图片会让发件人知道你看了邮件）。",
+						h("button", { type: "button", className: "tm-btn", onClick: function () { setImages(true); } }, "显示图片")) : null,
+					h("div", { className: "tm-body", style: { borderTop: "0.5px solid " + T.border1, marginTop: 10 } },
+						msg.html ? h("iframe", { key: msg.uid + (images ? "i" : ""), className: "tm-frame", title: msg.subject, sandbox: "allow-popups allow-popups-to-escape-sandbox",
+							srcDoc: mailFrameDoc(msg.html, images) })
+							: h("div", { className: "tm-scroll" }, h("div", { className: "tm-text" }, msg.text || "（没有正文）")))));
+			}
+
+			// ---- the list ----
+			const rows = (list && list.messages) || [];
+			const top = h("div", { className: "tm-head tm-wrap" },
+				h(MailGlyph, { size: 15 }),
+				accounts.length > 1
+					? h("select", { className: "tm-in tm-acct-pick", value: acct, title: "切换邮箱", onChange: function (e) { setAcct(e.target.value); } },
+						accounts.map(function (a) {
+							return h("option", { key: a.id, value: a.id }, a.address + (info && info.admin && a.owner !== info.me ? "（" + a.owner_name + "）" : ""));
+						}))
+					: h("span", { className: "tm-title", title: current ? current.address : "" }, current ? current.address : "邮箱"),
+				current ? h("button", { type: "button", className: "tm-btn tm-icon", title: "邮箱设置", "aria-label": "邮箱设置",
+					onClick: function () { setDialog({ edit: current }); } }, "⋯") : null,
+				h("button", { type: "button", className: "tm-btn", title: "添加邮箱", onClick: function () { setDialog({}); } }, "+ 添加邮箱"),
+				h("span", { style: { flex: 1 } }),
+				h("form", { className: "tm-searchbox", onSubmit: search },
+					h("input", { className: "tm-search", value: q, placeholder: "搜主题、发件人", onChange: function (e) { setQ(e.target.value); } })),
+				h("button", { type: "button", className: "tm-btn tm-icon", title: "刷新", "aria-label": "刷新", disabled: !acct || busy === "list",
+					onClick: function () { setQ(""); if (folder) { loadFolders(acct, folder); openFolder(acct, folder); } } }, "↻"),
+				h("button", { type: "button", className: "tm-btn is-main", disabled: !accounts.length, onClick: function () { setCompose({ account: acct }); } }, "写邮件"));
+			const tabs = acct && folders.length ? h("div", { className: "tm-tabs", role: "tablist" },
+				folders.map(function (f) {
+					const on = f.name === folder && !searching;
+					return h("button", { key: f.name, type: "button", role: "tab", "aria-selected": on, className: "tm-tab" + (on ? " is-on" : ""),
+						title: f.name, onClick: function () { setQ(""); openFolder(acct, f.name); } },
+						f.label, f.unread ? h("span", { className: "tm-count" }, f.unread) : null);
+				}),
+				searching ? h("span", { className: "tm-tab is-on" }, "搜索：" + searching) : null) : null;
+			return root("list", h("div", { className: "tm-col tm-page" },
+				top, tabs, banner,
+				h("div", { className: "tm-scroll", "data-company-mail-list": list ? rows.length : "loading" },
+					list && (searching ? list.note : list.total != null) ? h("div", { className: "tm-meta", style: { padding: "8px 16px 4px" } },
+						searching ? "找到 " + rows.length + " 封（" + list.note + "）" : "共 " + list.total + " 封") : null,
+					!info ? h("div", { className: "tm-empty" }, "正在打开邮箱…")
+						: !accounts.length ? h("div", { className: "tm-empty" }, "还没有邮箱。", h("br"), "点上面「+ 添加邮箱」，填企业邮箱地址和客户端专用密码。")
+							: busy === "list" && !rows.length ? h("div", { className: "tm-empty" }, "正在收取…")
+								: list && !rows.length ? h("div", { className: "tm-empty" }, searching ? "没找到。" : "这里没有邮件。")
+									: rows.map(function (m) {
+										const key = m.uid + "@" + m.folder + "@" + m.account;
+										const role = folderOf(m.folder).role;
+										const who = role === "sent" || role === "drafts" ? "给 " + ((m.to || []).map(mailWho).join("、") || "（没写收件人）") : mailWho(m.from);
+										return h("button", { key: key, type: "button", className: "tm-row" + (sel === key ? " is-on" : "") + (m.seen ? "" : " is-new"),
+											onClick: function () { openMsg(m); } },
+											h("span", { className: "tm-from", title: m.from && m.from.address }, who),
+											h("span", { className: "tm-subj" }, (m.answered ? "↩ " : "") + m.subject,
+												searching && accounts.length > 1 ? h("span", { className: "tm-meta" }, "　" + m.address) : null),
+											h("span", { className: "tm-date" }, (m.attachments ? "📎 " : "") + mailWhen(m.date)));
+									}),
+					list && list.more && !searching ? h("button", { type: "button", className: "tm-btn tm-more", disabled: busy === "list",
+						onClick: function () { loadList(acct, folder, list.next_before); } }, busy === "list" ? "正在收取…" : "更早的邮件") : null)));
+		}
+		// company-chat-dock-v1: the right sidebar no longer offers 聊天 (it has its own column). A 聊天 tab a desk
+		// saved before that still comes back with the session's layout: while the column is there, the tab closes
+		// itself (the last tab closes the sidebar with it); in a window too narrow for the column it is the chat.
+		function ChatTab(props) {
+			const info = props && typeof props.useTabInfo === "function" ? props.useTabInfo() : null;
+			const docked = React.useSyncExternalStore(chatDockSubscribe, chatDocked);
+			const actions = info && info.tab ? info.tab.actions : null;
+			React.useEffect(function () {
+				if (!docked || !actions || typeof actions.close !== "function") return;
+				try { actions.close(); } catch (err) {}
+			}, [docked, actions]);
+			if (docked) return null;
+			return React.createElement(ChatFrame);
+		}
+
+		// company-phone-layout-v1: the person's server desk inside the phone app (mobile/ios, user agent TDH-iOS). The app
+		// draws the tab bar, the session list, settings and the artifact list itself; this page is only the conversation,
+		// full width, and answers the app through window.tdhPhone (posting "state" to the app whenever the list moves).
+		const PHONE = (function () {
+			try { return /TDH-iOS/.test(String(navigator.userAgent || "")); } catch (err) { return false; }
+		})();
+		function installPhone(ctx) {
+			if (!PHONE || window.tdhPhone) return;
+			try {
+				document.documentElement.classList.add("cs-phone");
+				const st = document.createElement("style");
+				st.id = "company-phone-layout-v1";
+				st.textContent = [
+					"html.cs-phone [class*='_sidebarCol'], html.cs-phone .cs-mid-switch, html.cs-phone .cs-me-menu,",
+					"html.cs-phone .cs-theme-btn, html.cs-phone .cs-chat-dock, html.cs-phone header[data-window-drag] { display: none !important; }",
+					"html.cs-phone [data-dsh-center-col] { grid-column: 1 / -1 !important; width: 100vw !important; max-width: 100vw !important; left: 0 !important; }",
+					"html.cs-phone [class*='_frame'][data-sidebar-collapsed] { grid-template-columns: 0 1fr 0 !important; }",
+					"html.cs-phone:not(.cs-phone-art) [data-sidebar-right-panel] { display: none !important; }",
+					"html.cs-phone.cs-phone-art [data-sidebar-right-panel] { position: fixed !important; inset: 0 !important; width: 100vw !important; z-index: 1400 !important; }",
+					"html.cs-phone body { -webkit-text-size-adjust: 100%; overscroll-behavior: none; }",
+					// The app lays the page under its glass bars and passes their heights; the conversation scrolls beneath them.
+					"html.cs-phone [data-conversation-scroll] { padding-top: var(--tdh-top, 0px) !important; scroll-padding-top: var(--tdh-top, 0px); }",
+					"html.cs-phone [data-composer-seat] { padding-bottom: calc(var(--tdh-bottom, 0px) + 8px) !important; }",
+					// company-phone-answers-v1 (the user, 2026-11-25: 「不显示工具调用这些进程 直接出结果和答案 但是流式输出」): on the
+					// phone the work behind an answer is not shown (the turn's process row, tool and command steps, the turn's
+					// tail, the task list); while it works there is only a typing bubble, then the answer streams in.
+					"html.cs-phone [data-turn-process], html.cs-phone [data-chat-flow] > [data-chat-group-key]:has([data-process-activity]),",
+					"html.cs-phone [data-turn-tail], html.cs-phone [data-testid='todo-panel'], html.cs-phone [data-chat-running] { display: none !important; }",
+					".cs-typing { display: flex; gap: 5px; align-items: center; width: fit-content; margin: 6px 0 14px; padding: 12px 16px; border-radius: 18px;",
+					"  background: rgba(255,255,255,.82); box-shadow: 0 4px 16px rgba(30,50,90,.08); animation: cs-typing-in .45s cubic-bezier(.22,1.2,.36,1) both; }",
+					".cs-typing i { width: 7px; height: 7px; border-radius: 50%; background: #8a93a6; animation: cs-typing-dot 1.2s ease-in-out infinite; }",
+					".cs-typing i:nth-child(2) { animation-delay: .16s; } .cs-typing i:nth-child(3) { animation-delay: .32s; }",
+					"@keyframes cs-typing-dot { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }",
+					"@keyframes cs-typing-in { from { opacity: 0; transform: translateY(8px) scale(.9); } to { opacity: 1; transform: none; } }"
+				].join("\n");
+				document.head.appendChild(st);
+			} catch (err) {}
+			const post = function (msg) {
+				try {
+					const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.tdh;
+					if (h) h.postMessage(msg);
+				} catch (err) {}
+			};
+			const sessions = function () {
+				const snap = sessionListFn() || {};
+				const byId = snap.byId || {};
+				const ws = workspaceListFn() || {};
+				const archived = {};
+				(ws.archivedSessionIds || []).forEach(function (id) { archived[id] = true; });
+				const cur = current();
+				const ids = Array.isArray(snap.ids) ? snap.ids : Object.keys(byId);
+				// A blank session (nothing asked in it yet) is left out unless it is the open one.
+				return ids.filter(function (id) {
+					const r = byId[id] || {};
+					return !archived[id] && (!r.blank || id === cur);
+				}).map(function (id) {
+					const r = byId[id] || {};
+					return {
+						id: id,
+						title: r.blank ? "新会话" : String(r.displayTitle || r.title || "未命名会话"),
+						updated: Number(r.updatedAt || 0),
+						busy: !!r.running
+					};
+				}).sort(function (a, b) { return b.updated - a.updated; });
+			};
+			const ui = typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
+			const current = function () {
+				// The chat the conversation shows (the kernel marks its root), else the selection the kernel keeps.
+				try {
+					const el = document.querySelector("[data-conversation-session]");
+					const id = el ? String(el.getAttribute("data-conversation-session") || "") : "";
+					if (id) return id;
+				} catch (err) {}
+				try {
+					const sel = ui && ui.selection && ui.selection.getSnapshot();
+					if (sel && sel.sessionId) return String(sel.sessionId);
+				} catch (err) {}
+				return String((sessionListFn() || {}).current || "");
+			};
+			const state = function () {
+				return { type: "state", current: current(), sessions: sessions() };
+			};
+			let timer = null;
+			const tell = function () {
+				if (timer) return;
+				timer = setTimeout(function () { timer = null; post(state()); }, 250);
+			};
+			// The typing bubble: while the open chat works and its answer has not begun (the flow ends on the person's
+			// message or on hidden steps, not on the assistant's text).
+			let typingRaf = 0;
+			const typing = function () {
+				if (typingRaf) return;
+				typingRaf = requestAnimationFrame(function () {
+					typingRaf = 0;
+					try {
+						const flow = document.querySelector("[data-conversation-scroll] [data-chat-flow]");
+						const old = document.querySelector(".cs-typing");
+						const snap = sessionListFn() || {};
+						const row = (snap.byId || {})[current()] || {};
+						let answering = false;
+						if (flow) {
+							const items = flow.querySelectorAll(":scope > [data-chat-anchor-key]");
+							const last = items.length ? items[items.length - 1] : null;
+							answering = !!(last && /assistant-step/.test(String(last.getAttribute("data-chat-anchor-key") || "")) && !last.querySelector("[data-turn-process]"));
+						}
+						const busy = !!row.running || !!document.querySelector("[data-conversation-scroll] [data-chat-running='true']");
+						const want = !!(flow && busy && !answering);
+						if (want && !old) {
+							const b = document.createElement("div");
+							b.className = "cs-typing";
+							b.setAttribute("aria-label", "正在回答");
+							b.innerHTML = "<i></i><i></i><i></i>";
+							flow.appendChild(b);
+						} else if (want && old && old.parentNode === flow && old !== flow.lastElementChild) {
+							flow.appendChild(old);
+						} else if (!want && old) {
+							old.remove();
+						}
+					} catch (err) {}
+				});
+			};
+			watchers.add(tell);
+			watchers.add(typing);
+			try {
+				new MutationObserver(function (list) {
+					for (let i = 0; i < list.length; i++) { const n = list[i].target; if (n && n.classList && n.classList.contains("cs-typing")) return; }
+					typing();
+				}).observe(document.body, { subtree: true, childList: true });
+			} catch (err) {}
+			try { if (ui && ui.selection && typeof ui.selection.subscribe === "function") ui.selection.subscribe(tell); } catch (err) {}
+			try {
+				new MutationObserver(tell).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-conversation-session"] });
+			} catch (err) {}
+			window.tdhPhone = {
+				state: state,
+				open: function (id) {
+					document.documentElement.classList.remove("cs-phone-art");
+					if (!id) return;
+					openSessionFn(id);
+					// On a phone, opening a chat must not bring the keyboard up (the kernel focuses its composer).
+					const calm = function () { try { const a = document.activeElement; if (a && a !== document.body && a.blur) a.blur(); } catch (err) {} };
+					setTimeout(calm, 60); setTimeout(calm, 400); setTimeout(calm, 1200);
+					tell();
+				},
+				newChat: function () {
+					document.documentElement.classList.remove("cs-phone-art");
+					startSessionFn(personalWorkspaceId() || undefined);
+				},
+				artifacts: function () {
+					return artFetch().then(function (list) {
+						artStore.list = list;
+						artCacheWrite(list);
+						return list.map(function (a) { return { id: a.path, title: a.title || a.name, kind: "html", path: a.path, name: a.name, updated: a.modified }; });
+					}).catch(function () {
+						return (artStore.list || []).map(function (a) { return { id: a.path, title: a.title || a.name, kind: "html", path: a.path, name: a.name, updated: a.modified }; });
+					});
+				},
+				readArtifact: function (path) {
+					const a = (artStore.list || []).find(function (x) { return x.path === path; }) || { path: path, modified: 0 };
+					return artBodyFor(a).then(function (b) { return { ok: true, title: b.title || a.title || "", content: b.content }; }, function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
+				chats: function () { return chatTopicsGet(); },
+				forwardArtifact: function (path, topics, note) {
+					const a = (artStore.list || []).find(function (x) { return x.path === path; }) || { path: path, modified: 0 };
+					return forwardArtifact(a, topics || [], note || "").catch(function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
+				// A file from the phone's chat (company-chat-view-v1): into chats, or into the composer.
+				forwardFile: function (name, mime, b64, topics, note) {
+					return fetch("/company/chat/forward", {
+						method: "POST",
+						credentials: "same-origin",
+						headers: Object.assign({ "content-type": "application/json" }, CHAT_H),
+						body: JSON.stringify({ topics: topics || [], name: String(name || "文件"), mime: String(mime || "application/octet-stream"), title: String(name || "文件"), note: note || "", base64: String(b64 || "") })
+					}).then(function (r) { return r.json(); }).catch(function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
+				askFile: function (name, mime, b64) {
+					try {
+						const bin = atob(String(b64 || ""));
+						const bytes = new Uint8Array(bin.length);
+						for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+						const f = new File([bytes], String(name || "文件"), { type: String(mime || "application/octet-stream") });
+						document.documentElement.classList.remove("cs-phone-art");
+						return landDeskFiles([f]).then(function (n) { return { ok: n > 0 }; }, function () { return { ok: false }; });
+					} catch (err) { return Promise.resolve({ ok: false }); }
+				},
+				askArtifact: function (path) {
+					const a = (artStore.list || []).find(function (x) { return x.path === path; }) || { path: path, modified: 0 };
+					document.documentElement.classList.remove("cs-phone-art");
+					return artifactAsFile(a).then(function (f) { return landDeskFiles([f]); }).then(function (n) { return { ok: n > 0 }; }, function () { return { ok: false }; });
+				},
+				showArtifacts: function () {
+					document.documentElement.classList.add("cs-phone-art");
+					rightbarOpenArtifacts();
+				},
+				closeArtifacts: function () {
+					document.documentElement.classList.remove("cs-phone-art");
+					rightbarToggle(false);
+				},
+				ask: function (text) { return insertDeskTextFn(String(text || ""), undefined, true); },
+				// company-phone-history-swipe-v1 (the user, 2026-11-25: 「归档或者删除怎么解决 左滑？」): History's swipe on the
+				// phone. What the kernel offers is asked first (can), so the phone shows only what will work.
+				can: function () {
+					const w = ctx.workspaces || {};
+					// The kernel archives a session (and brings it back); it has no way to delete one (2026-11-25: its session
+					// service offers none), so the phone offers what the desks do: 归档.
+					return { archive: typeof w.archiveSession === "function", remove: typeof w.deleteSession === "function" };
+				},
+				archive: function (id) {
+					const w = ctx.workspaces || {};
+					if (!id || typeof w.archiveSession !== "function") return Promise.resolve({ ok: false, error: "no-archive" });
+					return Promise.resolve().then(function () { return w.archiveSession(String(id)); })
+						.then(function () { tell(); return { ok: true }; }, function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
+				remove: function (id) {
+					const w = ctx.workspaces || {};
+					if (!id || typeof w.deleteSession !== "function") return Promise.resolve({ ok: false, error: "no-delete" });
+					return Promise.resolve().then(function () { return w.deleteSession(String(id)); })
+						.then(function () { tell(); return { ok: true }; }, function (err) { return { ok: false, error: String((err && err.message) || err) }; });
+				},
+				insets: function (top, bottom) {
+					const st = document.documentElement.style;
+					st.setProperty("--tdh-top", Math.max(0, Number(top) || 0) + "px");
+					st.setProperty("--tdh-bottom", Math.max(0, Number(bottom) || 0) + "px");
+				}
+			};
+			post({ type: "ready" });
+			tell();
+		}
+
 		function apply(ctx) {
 			shellRole = readDeskRole();
 			fetchLoginRole();
@@ -6772,11 +9990,17 @@ window.__ModuleLoader__.load({
 			startSessionFn = function (workspaceId) {
 				deskStartSession(ctx, workspaceId);
 			};
+			// The kernel moved opening and clearing to its uiWorkspace service (ctx.sessions.open / .clear are gone).
 			openSessionFn = function (sessionId) {
-				if (sessionId) ctx.sessions.open(sessionId);
+				if (!sessionId) return;
+				const ui = typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
+				if (ui && typeof ui.openSession === "function") ui.openSession(sessionId);
+				else if (typeof ctx.sessions.open === "function") ctx.sessions.open(sessionId);
 			};
 			clearSessionFn = function () {
-				ctx.sessions.clear();
+				const ui = typeof ctx.get === "function" ? ctx.get("uiWorkspace") : null;
+				if (ui && typeof ui.clearMain === "function") ui.clearMain();
+				else if (typeof ctx.sessions.clear === "function") ctx.sessions.clear();
 			};
 			sessionListFn = function () {
 				return ctx.sessions.list.getSnapshot();
@@ -6829,6 +10053,10 @@ window.__ModuleLoader__.load({
 					return null;
 				}
 			};
+			unarchiveFn = function (sessionId) {
+				if (!ctx.workspaces || typeof ctx.workspaces.unarchiveSession !== "function") return Promise.reject(new Error("no-unarchive"));
+				return ctx.workspaces.unarchiveSession(sessionId);
+			};
 			try {
 				const remote = typeof ctx.get === "function" ? ctx.get("remote.artifact") : undefined;
 				if (remote && typeof remote.listArtifacts === "function") {
@@ -6836,6 +10064,7 @@ window.__ModuleLoader__.load({
 				}
 			} catch (err) {}
 			pullHungArtifacts();
+			installPhone(ctx);
 			if (ctx.sessions.list && typeof ctx.sessions.list.subscribe === "function") {
 				ctx.sessions.list.subscribe(function () {
 					claimAwaitingSession();
@@ -6846,10 +10075,120 @@ window.__ModuleLoader__.load({
 				ctx.workspaces.list.subscribe(function () { pulse(); });
 			}
 
+			// company-erp-desk-v1: ERPNext under 聊天 (opens in the browser, logged in with the TDH account).
+			ctx.slots.inject("main", function () {
+				return ctx.slots.register({
+					name: "main",
+					key: ERP_PANEL
+				}, ErpPage);
+			});
+			ctx.slots.inject("sidebar.panellist", function () {
+				return ctx.slots.register({
+					name: "sidebar.panellist",
+					id: ERP_PANEL,
+					order: 31,
+					label: function () { return "ERPNext"; }
+				}, ErpGlyph);
+			});
+
+			// company-mail-v1: 邮箱 next to ERPNext; 让助手回复 opens a session in the person's own workspace with the mail named.
+			mailAskFn = function (line) {
+				try { ctx.layout.selectPanel(null); } catch (err) {}
+				startSessionFn(personalWorkspaceId() || undefined);
+				let tries = 0;
+				const put = function () {
+					tries++;
+					if (insertDeskTextFn(line, composerSessionId || undefined, true)) return;
+					if (tries < 8) setTimeout(put, 250);
+				};
+				setTimeout(put, 400);
+			};
+			ctx.slots.inject("main", function () {
+				return ctx.slots.register({
+					name: "main",
+					key: MAIL_PANEL
+				}, MailPage);
+			});
+			ctx.slots.inject("sidebar.panellist", function () {
+				return ctx.slots.register({
+					name: "sidebar.panellist",
+					id: MAIL_PANEL,
+					order: 32,
+					label: function () { return "邮箱"; }
+				}, MailGlyph);
+			});
+
+			// company-chat-desk-v1: 聊天, the company chat (Tinode on the site). company-chat-dock-v1: in a column of
+			// its own at the window's right edge, always there (ChatDock); in a window too narrow for that column, as
+			// a panel in the left column. Both show the chat page this desk's host relays (chat-relay.js), on a port
+			// of its own: a separate origin from this page, already logged in as the person at this desk.
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
+					id: "company-chat-dock",
+					order: 29,
+					inject: function () {
+						return {
+							panelInfo: ctx.layout.panelInfo,
+							selectPanel: function (id) { try { ctx.layout.selectPanel(id); } catch (err) {} },
+							toggleSidebar: function () { try { ctx.layout.toggleSidebar(); } catch (err) {} }
+						};
+					}
+				}, ChatDock);
+			});
+			ctx.slots.inject("main", function () {
+				return ctx.slots.register({
+					name: "main",
+					key: CHAT_PANEL
+				}, ChatPage);
+			});
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
+					id: "company-chat-toast",
+					order: 30,
+					inject: function () {
+						// With its column on screen the chat is already open there.
+						return { openChat: function () { if (chatDocked()) return; try { ctx.layout.selectPanel(CHAT_PANEL); } catch (err) {} } };
+					}
+				}, ChatToast);
+			});
+			startChatPoll();
+			startDeskSeen();
+			ctx.slots.inject("sidebar.panellist", function () {
+				return ctx.slots.register({
+					name: "sidebar.panellist",
+					id: CHAT_PANEL,
+					order: 30,
+					label: function () { return "聊天"; }
+				}, ChatIcon);
+			});
+			if (typeof ctx.inject === "function") {
+				ctx.inject(["slots", "sidebarRightTabs"], function (rctx) {
+					rctx.effect(function () {
+						// No guide entry (company-chat-dock-v1): the right sidebar's start page offers files, browser
+						// and terminal; the type stays for a 聊天 tab a desk saved before (see ChatTab).
+						return rctx.sidebarRightTabs.register({
+							id: CHAT_TAB,
+							kind: CHAT_TAB,
+							priority: "extension",
+							keepMounted: true,
+							title: function () { return "聊天"; }
+						});
+					}, "company-shell: chat tab type");
+					rctx.slots.inject("sidebar.right.pane.tab", function () {
+						return rctx.slots.register({
+							name: "sidebar.right.pane.tab",
+							key: CHAT_TAB
+						}, ChatTab);
+					});
+				});
+			}
+
 			// Global panels (the official plugin manager registers "plugins" here).
 			// The shipped sidebar row used to list them; ours does now, above the
 			// workspaces, the same way.
-			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务" };
+			const PANEL_NAMES = { plugins: "插件", schedules: "定时任务", artifacts: "工件", "company-chat": "聊天", "company-erp": "ERPNext", "company-mail": "邮箱" };
 			const panelSubs = new Set();
 			let panelRows = [];
 			function syncPanels() {
@@ -6918,9 +10257,84 @@ window.__ModuleLoader__.load({
 			ctx.slots.inject("shell.overlay", function () {
 				return ctx.slots.register({
 					name: "shell.overlay",
+					id: "company-mid-switch",
+					order: 19,
+					inject: function () {
+						return {
+							panelInfo: ctx.layout.panelInfo,
+							selectPanel: function (id) { try { ctx.layout.selectPanel(id); } catch (err) {} }
+						};
+					}
+				}, MidSwitch);
+			});
+			// company-look-today-v1: the running line says 正在思考, not the kernel's 深度求索中 (its dictionary cannot be
+			// registered twice); the clock after it stays. Rewritten where it is drawn, before the frame is painted.
+			try {
+				const thinkWords = function (root) {
+					const rows = root && root.querySelectorAll ? root.querySelectorAll("[data-chat-running]") : [];
+					for (let i = 0; i < rows.length; i++) {
+						const icon = rows[i].querySelector("[class*='_runningIcon']");
+						if (icon && !icon.querySelector(".cs-lava")) {
+							icon.appendChild(lavaNode());
+						}
+						const walk = document.createTreeWalker(rows[i], NodeFilter.SHOW_TEXT);
+						for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+							const v = n.nodeValue || "";
+							if (v.indexOf("深度求索中") >= 0) n.nodeValue = v.replace(/深度求索中/g, "正在思考");
+							else if (/Deep diving/.test(v)) n.nodeValue = v.replace(/Deep diving/g, "Thinking");
+						}
+					}
+				};
+				if (typeof MutationObserver === "function" && document.body) {
+					new MutationObserver(function (list) {
+						for (let i = 0; i < list.length; i++) {
+							const tgt = list[i].target;
+							const el = tgt && (tgt.nodeType === 1 ? tgt : tgt.parentElement);
+							if (el && el.closest && el.closest("[data-chat-running]")) { thinkWords(el.closest("[data-chat-running]").parentElement); continue; }
+							if (list[i].addedNodes && list[i].addedNodes.length) thinkWords(el);
+						}
+					}).observe(document.body, { childList: true, subtree: true, characterData: true });
+				}
+			} catch (err) {}
+			// The kernel's right column is 0 wide but its pane still lays out (365px); focusing the composer then scrolled the
+			// whole frame sideways and pushed the left column off the window. The frame never scrolls sideways (CSS clips it
+			// where the engine knows overflow: clip; this puts it back where it does not, e.g. macOS 12's WebKit).
+			try {
+				document.addEventListener("scroll", function (ev) {
+					const el = ev.target;
+					if (el && el.nodeType === 1 && el.scrollLeft && /(^|\s)\S*_frame(\s|$)/.test(String(el.className || ""))) el.scrollLeft = 0;
+				}, true);
+			} catch (err) {}
+			if (typeof ctx.inject === "function") {
+				artifactRemoteGet = function () { return typeof ctx.get === "function" ? ctx.get("remote.artifact") : null; };
+				ctx.inject(["sidebarRight"], function (sctx) {
+					rightbarService = sctx.sidebarRight || null;
+					if (typeof sctx.effect === "function") sctx.effect(function () { return function () { rightbarService = null; }; }, "company-shell: right sidebar service");
+				});
+				ctx.inject(["slots", "theme"], function (tctx) {
+					tctx.slots.inject("shell.overlay", function () {
+						return tctx.slots.register({
+							name: "shell.overlay",
+							id: "company-theme-toggle",
+							order: 20,
+							inject: function () { return { theme: tctx.theme }; }
+						}, ThemeToggle);
+					});
+				});
+			}
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
 					id: "company-task-inspector",
 					order: 20
 				}, TaskInspector);
+			});
+			ctx.slots.inject("shell.overlay", function () {
+				return ctx.slots.register({
+					name: "shell.overlay",
+					id: "company-chat-viewer",
+					order: 30
+				}, ChatViewerHost);
 			});
 
 			ctx.slots.inject("settings.section", function () {
@@ -6998,6 +10412,23 @@ window.__ModuleLoader__.load({
 			});
 		}
 
+		// company-panels-for-all-v1: the left column's panels for this person. 插件 can switch whole parts of the
+		// desk off, so it stays the admin's; 工件、定时任务、聊天 are everyone's. Until 2026-11-20 the whole row was the
+		// admin's, and an employee's desk (seen on Windows) had no 聊天 in the left column at all.
+		function panelsForRole(role, panels) {
+			const list = Array.isArray(panels) ? panels : [];
+			return role === "admin" ? list : list.filter(function (p) { return p && p.id !== "plugins"; });
+		}
+		// company-chat-dock-v1: and while 聊天 has its own column at the right edge, the left column does not list it
+		// a second time.
+		function panelsForDesk(role, panels, chatDock) {
+			const list = panelsForRole(role, panels);
+			return chatDock ? list.filter(function (p) { return p && p.id !== CHAT_PANEL; }) : list;
+		}
+		exports.panelsForRole = panelsForRole;
+		exports.MailPage = MailPage;
+		exports.panelsForDesk = panelsForDesk;
+		exports.workspaceKeeper = workspaceKeeper;
 		exports.apply = apply;
 		exports.inject = inject;
 		return module.exports;

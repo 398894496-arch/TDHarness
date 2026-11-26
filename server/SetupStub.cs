@@ -6,7 +6,9 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Cache;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -43,6 +45,7 @@ internal static class Setup
             return TailnetJoin.Join(Path.Combine(dir, "tailscale-setup.msi"), Path.Combine(dir, "employee.auth"), TailnetJoin.ReadFacts(Path.Combine(dir, "company-tailnet.txt")), Log);
         }
         foreach (var a in argv) if (a == "--quiet") Quiet = true;
+        DeskPrereq.DirectToSite();
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
         LogPath = Path.Combine(Path.GetTempPath(), "companydesk-setup.log");
@@ -125,6 +128,19 @@ internal static class Setup
             LogPath = Path.Combine(dest, "setup.log");
             Log(SetupMark.Substring(0, 24));
             Log("dest " + dest);
+            // company-compat-v1：先说清楚装不上的原因，不在下载到一半时才失败。
+            if (!DeskPrereq.IsWindows10OrLater())
+                throw new Exception("TDH 需要 Windows 10 或 Windows 11，这台电脑的系统太旧了");
+            if (!Environment.Is64BitOperatingSystem)
+                throw new Exception("TDH 只支持 64 位 Windows，这台电脑是 32 位的系统");
+            // 重装时旧的那份会先清掉，空出 1 GB 多，所以只要 1.2 GB。
+            var need = Directory.Exists(Path.Combine(dest, "prefix")) ? 1200L * 1024 * 1024 : DeskPrereq.NeedBytes;
+            foreach (var where in new[] { dest, Path.GetTempPath() })
+            {
+                var free = DeskPrereq.FreeBytes(where);
+                if (free >= 0 && free < need)
+                    throw new Exception(Path.GetPathRoot(Path.GetFullPath(where)) + " 只剩 " + DeskPrereq.GbText(free) + "，安装至少要 " + DeskPrereq.GbText(need) + "。请先清理磁盘再装");
+            }
             SetStatus("正在关闭旧程序…");
             StopOldApp(dest);
             RetireOldCd();
@@ -132,7 +148,7 @@ internal static class Setup
             EnsureRemoteNet();
             var tmpZip = Path.Combine(Path.GetTempPath(), "dsh-p.zip");
             try { if (File.Exists(tmpZip)) File.Delete(tmpZip); } catch { }
-            DownloadZip(tmpZip);
+            DownloadVerified(tmpZip);
             Log("zip " + new FileInfo(tmpZip).Length);
             Phase = "unpack";
             SetStatus("正在展开文件…");
@@ -151,6 +167,14 @@ internal static class Setup
             WriteBridge(root);
             WriteShortcuts(root);
             Log("copied");
+            // TDH 的窗口要微软 WebView2：Win10 关了系统更新的电脑可能没有，先装好（装给当前用户，不要管理员）。
+            if (DeskPrereq.WebView2Version().Length == 0)
+            {
+                SetStatus("正在安装微软 WebView2 组件（第一次需要，约一两分钟）…");
+                var ok = DeskPrereq.InstallWebView2(DeskPrereq.WebView2InstallerUrl(Site.ZipUrl), Log, 600000);
+                Log("webview2 " + (ok ? DeskPrereq.WebView2Version() : "missing"));
+            }
+            else Log("webview2 " + DeskPrereq.WebView2Version());
             Phase = "ts";
             SetStatus("正在接通公司网…");
             JoinCompanyNet(root);
@@ -261,11 +285,34 @@ internal static class Setup
         return true;
     }
 
+    private static TailnetJoin.Facts EmbeddedFacts()
+    {
+        try
+        {
+            using (var src = Assembly.GetExecutingAssembly().GetManifestResourceStream("tdh-ts/company-tailnet.txt"))
+            using (var rd = new StreamReader(src, Encoding.UTF8))
+                return TailnetJoin.ParseFacts(rd.ReadToEnd());
+        }
+        catch { return new TailnetJoin.Facts(); }
+    }
+
+    // company-setup-tailnet-always-v1：带着入网文件的安装包在公司里也先入网，装好就能在家用。
+    // 在公司里入网没成（点了「否」、没有管理员权限）照样安装，TDHarness.exe 启动时会再问。
+    // 已在公司 tailnet 里的电脑不弹任何东西。
     private static void EnsureRemoteNet()
     {
-        if (TailnetJoin.SiteReachable(Site.Host, 8443, 2500)) return;
+        var inOffice = TailnetJoin.SiteReachable(Site.Host, 8443, 2500);
         if (!HasTsResources())
+        {
+            if (inOffice) return;
             throw new Exception("连不上公司服务器 " + Site.Host + "：请在公司局域网里安装，或向管理员要「远程版」安装包");
+        }
+        var have = TailnetJoin.FindTailscale();
+        if (have != null && TailnetJoin.OnCompany(have, EmbeddedFacts()))
+        {
+            Log("ts-on-company");
+            return;
+        }
         var dir = Path.Combine(Path.GetTempPath(), "tdh-ts-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         Directory.CreateDirectory(dir);
         try
@@ -278,9 +325,17 @@ internal static class Setup
                     src.CopyTo(dst);
             }
             SetStatus("正在加入公司加密网络…");
-            if (!Quiet) MessageBox.Show("这台电脑要先加入公司的加密网络（Tailscale），才能在这里安装和使用 TDH，只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。", "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            var ask = inOffice
+                ? "为了在家里也能用 TDH，这台电脑要加入公司的加密网络（Tailscale），只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。"
+                : "这台电脑要先加入公司的加密网络（Tailscale），才能在这里安装和使用 TDH，只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。";
+            if (!Quiet) MessageBox.Show(ask, "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
             var rc = TailnetJoin.RunElevated(Application.ExecutablePath, "--ts-join \"" + dir + "\"", 360000, Log);
             Log("ts-join-result " + rc);
+            if (inOffice)
+            {
+                if (rc != 0) Log("ts-join-in-office-failed " + rc + " (installing anyway)");
+                return;
+            }
             if (rc == -1223) throw new Exception("没有加入公司网络（选了「否」），装不了。请重新运行安装包，在 Windows 询问时点「是」");
             if (rc != 0) throw new Exception("没能加入公司网络（" + rc + "）。这台电脑可能没有管理员权限，请联系管理员；日志：" + Path.Combine(Path.GetTempPath(), "companydesk-setup-ts.log"));
             SetStatus("正在连接公司服务器…");
@@ -295,6 +350,97 @@ internal static class Setup
         {
             try { Directory.Delete(dir, true); } catch { }
         }
+    }
+
+    // company-setup-verify-v1：下载完先和服务器的 version.json 对 sha256，对上了才展开。服务器正在发版时，
+    // 包和 version.json 会短暂对不上（断点续传还可能把新旧两个包拼成一个）；对不上就等一分钟、从头重下，
+    // 最多 4 轮，绝不装半成品。2026-11-19：一次发版中途失败，下载页上的包和 version.json 对不上了。
+    private static void DownloadVerified(string zipPath)
+    {
+        for (var round = 1; round <= 4; round++)
+        {
+            var want = ServedWinSha(FetchText(VersionUrl()));
+            DownloadZip(zipPath);
+            if (want.Length == 0)
+            {
+                Log("verify-skip no-version-json");
+                return;
+            }
+            SetStatus("正在核对程序包…");
+            var got = FileSha(zipPath);
+            if (got == want)
+            {
+                Log("verify-ok " + got.Substring(0, 12));
+                return;
+            }
+            var now = ServedWinSha(FetchText(VersionUrl()));
+            if (now.Length > 0 && got == now)
+            {
+                Log("verify-ok-after-publish " + got.Substring(0, 12));
+                return;
+            }
+            Log("verify-mismatch round " + round + " got " + got.Substring(0, 12) + " want " + want.Substring(0, 12) + " now " + (now.Length > 0 ? now.Substring(0, 12) : "-"));
+            try { File.Delete(zipPath); } catch { }
+            if (round == 4) break;
+            SetStatus("服务器正在更新程序包，一分钟后重新下载…（第 " + round + " 次）");
+            Thread.Sleep(60000);
+        }
+        throw new Exception("下载的程序包和服务器上的对不上（服务器可能正在更新）。请过几分钟重新运行安装包");
+    }
+
+    private static string VersionUrl()
+    {
+        var u = Site.ZipUrl;
+        var q = u.IndexOf('?');
+        if (q >= 0) u = u.Substring(0, q);
+        return u.Substring(0, u.LastIndexOf('/') + 1) + "version.json";
+    }
+
+    private static string FetchText(string url)
+    {
+        try
+        {
+            var req = (HttpWebRequest)WebRequest.Create(url + "?t=" + DateTime.UtcNow.Ticks);
+            req.Timeout = 30000;
+            req.CachePolicy = new RequestCachePolicy(RequestCacheLevel.BypassCache);
+            using (var resp = (HttpWebResponse)req.GetResponse())
+            using (var rd = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                return rd.ReadToEnd();
+        }
+        catch (Exception ex)
+        {
+            Log("version-json " + ex.Message);
+            return null;
+        }
+    }
+
+    // version.json 里 "win" 那一层的 sha256（它里面还可能套着 deltas 之类的对象，先把内层对象抹掉）。
+    internal static string ServedWinSha(string json)
+    {
+        json = json ?? "";
+        var k = json.IndexOf("\"win\"", StringComparison.Ordinal);
+        if (k < 0) return "";
+        var open = json.IndexOf('{', k);
+        if (open < 0) return "";
+        int depth = 0, end = -1;
+        for (var i = open; i < json.Length; i++)
+        {
+            if (json[i] == '{') depth++;
+            else if (json[i] == '}' && --depth == 0) { end = i; break; }
+        }
+        if (end < 0) return "";
+        var body = json.Substring(open + 1, end - open - 1);
+        string prev;
+        do { prev = body; body = Regex.Replace(body, "\\{[^{}]*\\}", "{}"); } while (body != prev);
+        var m = Regex.Match(body, "\"sha256\"\\s*:\\s*\"([0-9a-fA-F]{64})\"");
+        return m.Success ? m.Groups[1].Value.ToLowerInvariant() : "";
+    }
+
+    private static string FileSha(string path)
+    {
+        using (var s = File.OpenRead(path))
+        using (var h = SHA256.Create())
+            return BitConverter.ToString(h.ComputeHash(s)).Replace("-", "").ToLowerInvariant();
     }
 
     // 断点续传：远程经中转时 400MB 常常中途断，断了从断点接着下，最多 30 次。

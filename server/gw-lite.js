@@ -1,5 +1,6 @@
 'use strict';
 
+require('./crash-log.js').install('gw-lite');   // company-crash-log-v1: why it died, in logs\gw-lite-crash.log
 const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
@@ -341,8 +342,11 @@ function gptSubOn(env) {
   return String(env.GPT_SUBSCRIPTION || '').trim() === '1' && String(env.OPENAI_BASE_URL || '').trim() !== '';
 }
 
-async function gptQuota(env) {
-  if (gptQuotaCache.val && Date.now() - gptQuotaCache.at < 60 * 1000) return gptQuotaCache.val;
+// fresh (the 刷新 button, company-quota-refresh-v1): ask OpenAI now, unless someone did in the
+// last 5 seconds. Otherwise a reading up to a minute old is fine.
+async function gptQuota(env, fresh) {
+  const age = Date.now() - gptQuotaCache.at;
+  if (gptQuotaCache.val && age < (fresh ? 5 * 1000 : 60 * 1000)) return gptQuotaCache.val;
   const auth = readCodexAuth();
   if (!auth) return null;
   const o = await httpsGetJson('https://chatgpt.com/backend-api/wham/usage', {
@@ -364,7 +368,9 @@ async function gptQuota(env) {
     kind: Number(w.limit_window_seconds) >= 6 * 86400 ? 'weekly' : 'window',
     resetsAt: w.reset_at ? new Date(Number(w.reset_at) * 1000).toISOString() : '',
     plan: plan ? 'ChatGPT ' + plan.charAt(0).toUpperCase() + plan.slice(1) : 'ChatGPT',
-    limitReached: !!rl.limit_reached
+    limitReached: !!rl.limit_reached,
+    // OpenAI reports whole percents for the whole ChatGPT account (every place it is signed in).
+    fetchedAt: new Date().toISOString()
   };
   gptQuotaCache = { at: Date.now(), val };
   return val;
@@ -614,6 +620,49 @@ async function gptCatalog(env, probe) {
     rows.push({ id: id, efforts: p ? p.efforts : [], fast: !!(p && p.fast), fastOn: false, image: p ? !!p.image : seesImages(id, env), probed: !!p });
   }
   return { status: 200, rows: rows };
+}
+
+// company-key-models-v1: a vendor reached with a key (DeepSeek, Kimi, GLM, Anthropic) lists its own
+// models; the admin may pick which of them desks see (Settings > 模型 > 服务器模型密钥). No pick:
+// the vendor's whole live list, so a model it adds shows up by itself (this list is cached 10 min).
+const KEY_VENDOR_IDS = ['deepseek', 'kimi', 'glm', 'claude'];
+
+async function keyVendorModels(v, env) {
+  const key = String(env[v.env] || '').trim();
+  if (!keyOk(key)) return { status: 0, rows: [] };
+  const base = String(env[v.baseEnv] || v.base).replace(/\/$/, '');
+  const extra = v.id === 'claude' ? { 'x-api-key': key, 'anthropic-version': '2023-06-01' } : null;
+  const up = await listUpstream(base + '/models', key, extra);
+  const rows = [];
+  for (const r of up.rows) {
+    const id = r && typeof r.id === 'string' ? r.id : '';
+    if (!MODEL_ID.test(id) || NOT_CHAT.test(id)) continue;
+    const row = { id: id };
+    const efforts = keyModelEfforts(r);
+    if (efforts.length) row.efforts = efforts;
+    rows.push(row);
+  }
+  return { status: up.status, rows: rows };
+}
+
+// company-key-efforts-v1: the reasoning levels a key vendor lists for a model itself (DeepSeek's /models gives
+// effort.supported_levels: low / high / max). Dropped before, so its models carried none, the desk's 公司模型
+// group then had no default level for any model, and switching models showed Default (2026-11-20).
+function keyModelEfforts(r) {
+  const raw = (r && r.effort && Array.isArray(r.effort.supported_levels) && r.effort.supported_levels)
+    || (r && r.capabilities && Array.isArray(r.capabilities.reasoning_effort) && r.capabilities.reasoning_effort) || [];
+  const out = [];
+  for (const x of raw) {
+    const e = typeof x === 'string' ? x.trim().toLowerCase() : '';
+    if (EFFORT_NAME.test(e) && out.indexOf(e) < 0) out.push(e);
+  }
+  return out;
+}
+
+function offeredKeyRows(vendor, rows) {
+  const offer = offerOf(vendor);
+  if (!offer.length) return rows;
+  return offer.map((o) => rows.find((r) => r.id === o.id)).filter(Boolean);
 }
 
 function offerOf(vendor) {
@@ -1037,10 +1086,8 @@ async function companyModels(env) {
       add(rows, 'gpt');
       continue;
     }
-    const base = String(env[v.baseEnv] || v.base).replace(/\/$/, '');
-    const extra = v.id === 'claude' ? { 'x-api-key': env[v.env].trim(), 'anthropic-version': '2023-06-01' } : null;
-    const up = await listUpstream(base + '/models', env[v.env].trim(), extra);
-    if (up.status === 200) add(up.rows.map((r) => ({ id: r && r.id })), v.id);
+    const up = await keyVendorModels(v, env);
+    if (up.status === 200) add(offeredKeyRows(v.id, up.rows), v.id);
   }
   for (const row of loadChannels()) {
     if (row && row.custom && row.env && keyOk(env[row.env]) && Array.isArray(row.models)) add(row.models.map((id) => ({ id: id })), row.id);
@@ -1077,6 +1124,10 @@ function relay(route, req, body, res) {
   };
   if (req.headers.accept) headers.accept = req.headers.accept;
   if (body && body.length) headers['content-length'] = body.length;
+  // company-gw-timing-v1 (the user, 2026-11-25: 首字慢，加日志): when this request left here, when the vendor
+  // answered, when its first bytes and its first words came, when it ended — kept with the usage row, so a slow first
+  // word can be split into the way there, the vendor's queue and thinking, and the desk's own time before it asked.
+  const tm = { t0: Date.now(), up: 0, first: 0, words: 0, bytesIn: body ? body.length : 0 };
   return new Promise((resolve, reject) => {
     const up = (plain ? http : https).request({
       protocol: u.protocol,
@@ -1091,6 +1142,7 @@ function relay(route, req, body, res) {
       // the caller for good.
       timeout: 180000
     }, (r) => {
+      tm.up = Date.now() - tm.t0;
       const out = { 'content-type': r.headers['content-type'] || 'application/json', 'cache-control': 'no-store' };
       // Tell anything between here and the desk not to collect the stream.
       if (/text\/event-stream/i.test(String(r.headers['content-type'] || ''))) out['x-accel-buffering'] = 'no';
@@ -1103,7 +1155,8 @@ function relay(route, req, body, res) {
       const settle = () => {
         if (!tap) return;
         const used = tap.end();
-        if (used) recordUsage(Object.assign({ t: Date.now(), login: callerOf(req) || 'unknown', model: modelName(body) || 'unknown', vendor: route.vendor }, used));
+        if (used) recordUsage(Object.assign({ t: Date.now(), login: callerOf(req) || 'unknown', model: modelName(body) || 'unknown', vendor: route.vendor }, used,
+          { ms_up: tm.up, ms_first: tm.first, ms_words: tm.words, ms_total: Date.now() - tm.t0, bytes_in: tm.bytesIn }));
       };
       // company-sse-done-v1: a chat-completions stream is over at "data: [DONE]". If the vendor
       // (or a proxy in front of it) keeps the connection open after that, the desk used to wait
@@ -1122,6 +1175,8 @@ function relay(route, req, body, res) {
       r.on('data', (c) => {
         if (over) return;
         res.write(c);
+        if (!tm.first) tm.first = Date.now() - tm.t0;
+        if (!tm.words && /"(content|text|delta)"\s*:\s*"[^"]/.test(c.toString('utf8'))) tm.words = Date.now() - tm.t0;
         if (errs && errLen < 8192) { errs.push(c); errLen += c.length; }
         if (tap) tap.feed(c);
         if (sse) {
@@ -1318,6 +1373,27 @@ async function handleChannels(req, body, env) {
     companyModelsCache = { at: 0, val: null };
     return { status: 200, obj: { ok: true, vendor: 'gpt', company: true, models: picks, fast: 0 } };
   }
+  if ((action === 'list-models' || action === 'picked-models' || action === 'apply-models') && KEY_VENDOR_IDS.indexOf(String(payload.vendor || '').toLowerCase()) >= 0) {
+    const vendor = String(payload.vendor || '').toLowerCase();
+    const v = VENDORS.find((x) => x.id === vendor);
+    if (action === 'picked-models') return { status: 200, obj: { ok: true, vendor: vendor, models: offerOf(vendor) } };
+    if (!keyOk(env[v.env])) return { status: 400, obj: { ok: false, error: 'no-key', hint: '先在上面存好这家的 API key。', models: [] } };
+    const up = await keyVendorModels(v, env);
+    if (up.status !== 200) return { status: 502, obj: { ok: false, error: 'upstream-' + up.status, hint: '这家的模型列表取不到，看看 key 对不对。', models: [] } };
+    const rows = up.rows.map((r) => ({ id: r.id, efforts: [], image: seesImages(r.id, env) }));
+    if (action === 'list-models') return { status: 200, obj: { ok: true, vendor: vendor, models: rows } };
+    // apply-models: the ids to offer, in this order. None: every model the vendor lists, new ones included.
+    const picks = [];
+    for (const m of Array.isArray(payload.models) ? payload.models : []) {
+      const id = typeof m === 'string' ? m : (m && typeof m.id === 'string' ? m.id : '');
+      if (rows.some((r) => r.id === id) && !picks.some((p) => p.id === id)) picks.push({ id: id });
+    }
+    const all = readStateFile(OFFER_PATH, {});
+    if (picks.length) all[vendor] = picks; else delete all[vendor];
+    writeStateFile(OFFER_PATH, all);
+    companyModelsCache = { at: 0, val: null };
+    return { status: 200, obj: { ok: true, vendor: vendor, company: true, models: picks, all: !picks.length } };
+  }
   if (action === 'list-models') {
     const vendor = String(payload.vendor || '').toLowerCase();
     if (vendor !== 'grok') return { status: 400, obj: { ok: false, error: 'sub-vendor' } };
@@ -1394,7 +1470,7 @@ const server = http.createServer(async (req, res) => {
     // The desks ask one quota door; with no Grok bound it answers for the GPT subscription.
     let q = null;
     let err = '';
-    try { q = await gptQuota(env); } catch (e) { err = String((e && e.message) || e); }
+    try { q = await gptQuota(env, /[?&]fresh=1(?:&|$)/.test(String(req.url || ''))); } catch (e) { err = String((e && e.message) || e); }
     send(res, 200, Object.assign({ ok: true, enabled: !!q, grokBound: false, kind: 'oauth', vendor: 'gpt', usedPercent: null, remainingPercent: null, plan: '', resetsAt: '' }, q || {}, err ? { quotaError: err } : {}));
     return;
   }

@@ -1,0 +1,185 @@
+/* company-chat-look-v1: TDH's look for the Tinode web page (the company chat). Loaded after Tinode's own
+ * base.min.css (tinode-setup.py adds it to index.html). Tinode colours everything through --clr-* variables
+ * written as light-dark(light, dark) under the page's color-scheme, so this sets those to TDH's neutral palette
+ * (the desk's --dsw-* tokens, written out: this page is another origin and cannot read them), then evens out
+ * the layout: no header stripe or floating card, a grey contact column, a white conversation, TDH's own font.
+ */
+:root {
+	--tdh-bg: light-dark(#ffffff, #151517);
+	--tdh-side: light-dark(#f9fafb, #1b1b1c);
+	--tdh-layer: light-dark(#ffffff, #232324);
+	--tdh-hover: light-dark(#f1f3f5, #232324);
+	--tdh-selected: light-dark(#ebeef2, #2c2c2e);
+	--tdh-text: light-dark(#0f1115, #f9fafb);
+	--tdh-text-2: light-dark(#61666b, #adb2b8);
+	--tdh-text-3: light-dark(#81858c, #81858c);
+	--tdh-line: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.07));
+	--tdh-line-2: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.12));
+	--tdh-brand: light-dark(#0f1115, #f9fafb);
+	--tdh-on-brand: light-dark(#ffffff, #0f1115);
+	--tdh-mine: light-dark(#ebeef2, #2c2c2e);
+	--tdh-other: light-dark(#ffffff, #1b1b1c);
+	--tdh-accent: light-dark(#2563eb, #60a5fa);
+	--tdh-red: light-dark(#ec1313, #f25a5a);
+	--tdh-font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+
+	--wallpaper-url: none;
+	--clr-bright: var(--tdh-bg);
+	--clr-dark: var(--tdh-text);
+	--clr-body-background: var(--tdh-bg);
+	--clr-header-stripe-bg: transparent;
+	--clr-text-primary: var(--tdh-text);
+	--clr-text-secondary: var(--tdh-text-2);
+	--clr-text-tertiary: var(--tdh-text-3);
+	--clr-text-placeholder: var(--tdh-text-3);
+	--clr-border-light: var(--tdh-line-2);
+	--clr-border-muted: var(--tdh-line);
+	--clr-primary-accent: var(--tdh-brand);
+	--clr-primary-accent-hover: var(--tdh-text-2);
+	--clr-primary-action: var(--tdh-brand);
+	--clr-primary-action-hover: var(--tdh-text-2);
+	--clr-primary-accent-focus-shadow: transparent;
+	--clr-primary-wash: var(--tdh-hover);
+	--clr-primary-light-blue: var(--tdh-selected);
+	--clr-light-blue-accent: var(--tdh-accent);
+	--clr-secondary-accent: var(--tdh-text-2);
+	--clr-background-off-white: var(--tdh-side);
+	--clr-background-light-gray: var(--tdh-side);
+	--clr-background-extra-light-gray: var(--tdh-hover);
+	--clr-background-blue-gray-50: var(--tdh-bg);
+	--clr-background-blue-gray-75: var(--tdh-hover);
+	--clr-background-blue-gray-100: var(--tdh-selected);
+	--clr-background-blue-gray-300: var(--tdh-line-2);
+	--clr-menu-item-hover-bg: var(--tdh-hover);
+	--clr-verified-accent: var(--tdh-text-3);
+	--clr-staff-accent: var(--tdh-text-3);
+	--clr-online: #22c55e;
+	--clr-offline: light-dark(#cfd3d6, #61666b);
+	--clr-bubble-left-bg: var(--tdh-other);
+	--clr-bubble-left-bg-flash: var(--tdh-selected);
+	--clr-bubble-right-bg: var(--tdh-mine);
+	--clr-bubble-right-bg-flash: var(--tdh-text-2);
+	--clr-bubble-text: var(--tdh-text);
+	--clr-bubble-meta-text: var(--tdh-text-3);
+	--clr-bubble-meta-date-bg: transparent;
+	--clr-bubble-timestamp-text: var(--tdh-text-3);
+	--clr-bubble-author-text: var(--tdh-text-2);
+	--clr-shadow-bubble-drop: transparent;
+	--clr-input-text: var(--tdh-text);
+	--clr-input-border: var(--tdh-line-2);
+	--clr-input-border-focus: var(--tdh-text-2);
+	--clr-input-shadow: transparent;
+	--clr-input-shadow-focus: transparent;
+	--clr-button-primary-bg: var(--tdh-brand);
+	--clr-button-primary-text: var(--tdh-on-brand);
+	--clr-button-primary-hover-bg: var(--tdh-text-2);
+	--clr-button-secondary-bg: var(--tdh-bg);
+	--clr-button-secondary-text: var(--tdh-text);
+	--clr-button-secondary-hover-bg: var(--tdh-hover);
+	--clr-button-outline-text: var(--tdh-text);
+	--clr-button-outline-border: var(--tdh-line-2);
+	--clr-button-outline-hover-bg: var(--tdh-hover);
+	--clr-tabbar-bg: var(--tdh-bg);
+	--clr-tabbar-active-text: var(--tdh-text);
+	--clr-tabbar-inactive-text: var(--tdh-text-3);
+	--clr-tabbar-active-border: var(--tdh-brand);
+	--clr-tabbar-inactive-border: var(--tdh-line);
+	--clr-badge-default-bg: var(--tdh-hover);
+	--clr-badge-default-border: transparent;
+	--clr-chip-bg: var(--tdh-hover);
+	--clr-scrollbar-thumb: light-dark(rgba(0, 0, 0, 0.18), rgba(255, 255, 255, 0.18));
+	--clr-scrollbar-track: transparent;
+	--clr-spinner-active: var(--tdh-text-2);
+	--clr-pinned-menu-bg: var(--tdh-side);
+	--clr-shadow-dialog: rgba(0, 0, 0, 0.18);
+	--clr-shadow-panel-divider: transparent;
+}
+
+/* TDH's font for text; the icon font keeps its own. */
+* { font-family: var(--tdh-font); }
+.material-icons { font-family: "Material Icons"; }
+body, html { box-shadow: none !important; background: var(--tdh-bg) !important; color: var(--tdh-text); font-size: 13px; }
+
+/* The page fills its frame: no floating card. */
+#mountPoint { height: 100%; padding: 0 !important; }
+#app-container { max-width: none !important; height: 100% !important; max-height: none !important; margin: 0 !important;
+	border-radius: 0 !important; box-shadow: none !important; }
+
+/* Contact column. */
+#sidepanel { background: var(--tdh-side); border-right: 1px solid var(--tdh-line); }
+.caption-panel { box-shadow: none !important; }
+#side-caption-panel { background: var(--tdh-side) !important; color: var(--tdh-text) !important; border-bottom: 1px solid var(--tdh-line); }
+#side-caption-panel .panel-title { color: var(--tdh-text) !important; font-weight: 600; font-size: 15px; }
+#side-caption-panel a, #side-caption-panel .material-icons { color: var(--tdh-text-2) !important; }
+#side-caption-panel a:hover .material-icons { color: var(--tdh-text) !important; }
+.contact-box { padding: 6px 0; }
+.contact-box li { background: transparent !important; margin: 1px 8px; width: auto !important; border-radius: 8px; border: 0 !important; box-shadow: none !important;
+	padding: 6px 8px !important; display: flex; align-items: center; }
+.contact-box li .text-box { display: flex; flex-direction: column; justify-content: center; }
+.contact-box li:hover { background: var(--tdh-hover) !important; }
+.contact-box li.selected { background: var(--tdh-selected) !important; }
+.contact-box li::after, .contact-box li::before { display: none !important; }
+.contact-title { color: var(--tdh-text) !important; font-size: 14px; font-weight: 500; }
+.contact-comment, .contact-comment span { color: var(--tdh-text-3) !important; font-size: 12px; }
+
+/* Avatars: smaller, calmer, round. */
+.avatar-box .lettertile, .avatar-box img { border-radius: 50% !important; }
+.contact-box .avatar-box, .contact-box .avatar-box .lettertile, .contact-box .avatar-box img { width: 36px !important; height: 36px !important; }
+.contact-box .avatar-box .lettertile > div { font-size: 15px !important; line-height: 36px !important; }
+.lettertile { filter: saturate(0.6); }
+.avatar-box .online, .avatar-box .offline { width: 9px !important; height: 9px !important; border: 2px solid var(--tdh-side); }
+
+/* The green shield after every name ("staff": everyone is) says nothing here. */
+.as-badge.staff-color, .as-badge.badge-inv, .material-icons.staff-color { display: none !important; }
+
+/* Conversation. */
+#topic-view, #messages-container, #messages-panel { background: var(--tdh-bg) !important; }
+#topic-caption-panel { background: var(--tdh-bg) !important; color: var(--tdh-text) !important; border-bottom: 1px solid var(--tdh-line); }
+#topic-caption-panel .panel-title, #topic-title { color: var(--tdh-text) !important; font-weight: 600; font-size: 15px; }
+#topic-last-seen { color: var(--tdh-text-3) !important; font-size: 12px; }
+#topic-caption-panel .material-icons { color: var(--tdh-text-2) !important; }
+#topic-caption-panel .avatar-box, #topic-caption-panel .avatar-box .lettertile { width: 36px !important; height: 36px !important; }
+#topic-caption-panel .avatar-box .lettertile > div { font-size: 15px !important; line-height: 36px !important; }
+
+/* Bubbles: one's own in the grey TDH gives one's own messages, others' white with a hairline (as TDH's cards);
+ * the time at the end of the text, not on a line of its own; pictures without a bubble. */
+#scroller .bubble { border-radius: 12px !important; box-shadow: none !important; filter: none !important; padding: 7px 12px !important;
+	min-width: 0 !important; font-size: 14px; line-height: 1.55; }
+#scroller .bubble.tip::before, #scroller .bubble.tip::after { display: none !important; }
+#scroller li.right .bubble { background: var(--tdh-mine) !important; }
+#scroller li.left .bubble { background: var(--tdh-other) !important; border: 1px solid var(--tdh-line-2); }
+#scroller .bubble div.content-meta { display: flex; flex-wrap: wrap; align-items: flex-end; column-gap: 10px; width: auto; }
+#scroller .bubble div.message-content { padding: 0 !important; width: auto; flex: 0 1 auto; font-size: 14px; color: var(--tdh-text); }
+#scroller .bubble div.message-content::after { display: none; }
+#scroller .timestamp { float: none !important; top: 0 !important; margin-left: auto; font-size: 11px; line-height: 1.9; color: var(--tdh-text-3) !important; }
+#scroller .timestamp .material-icons { font-size: 13px !important; vertical-align: -2px; color: var(--tdh-text-3) !important; }
+#scroller .timestamp .material-icons.blue { color: var(--tdh-accent) !important; }
+#scroller .timestamp-padding { display: none !important; }
+#scroller li.right .bubble:has(.inline-image), #scroller li.left .bubble:has(.inline-image),
+#scroller li.right .bubble:has(img.image-preview), #scroller li.left .bubble:has(img.image-preview) { background: transparent !important; border: 0 !important; padding: 0 !important; }
+#scroller .bubble:has(.inline-image) .timestamp { position: absolute !important; top: auto !important; right: 8px; bottom: 6px; padding: 0 6px; border-radius: 8px;
+	background: rgba(0, 0, 0, 0.45); color: #fff !important; line-height: 1.6; }
+#scroller .bubble:has(.inline-image) .timestamp .material-icons { color: #fff !important; }
+#scroller .inline-image, #scroller img.inline-image { border-radius: 10px !important; }
+#scroller .menuTrigger .material-icons { color: var(--tdh-text-3) !important; }
+#scroller .bubble.date { background: transparent !important; border: 0 !important; color: var(--tdh-text-3) !important; font-size: 12px; padding: 2px 10px !important; text-transform: none; }
+
+/* Composer. */
+#send-message-wrapper, #send-message-panel { background: var(--tdh-bg) !important; border-top: 1px solid var(--tdh-line); box-shadow: none !important; }
+#send-message-panel { padding: 8px 12px !important; align-items: center; }
+#send-message-input { background: var(--tdh-side) !important; border: 1px solid var(--tdh-line-2) !important; border-radius: 10px !important;
+	padding: 8px 12px !important; color: var(--tdh-text) !important; font-size: 14px; box-shadow: none !important; }
+#send-message-input:focus { border-color: var(--tdh-text-3) !important; outline: none; }
+#send-message-panel .material-icons { color: var(--tdh-text-2) !important; }
+#send-message-panel .material-icons:hover { color: var(--tdh-text) !important; }
+
+/* No chat open: a plain line instead of Tinode's logo, name and version. */
+#dummy-view { background: var(--tdh-bg) !important; display: flex !important; align-items: center; justify-content: center; }
+#dummy-view > div { display: none !important; }
+#dummy-view::after { content: "选一个同事或群，开始聊天"; color: var(--tdh-text-3); font-size: 14px; }
+
+/* Lists and panels elsewhere (new chat, settings, info). */
+.panel-form-row, .panel-form-column, .scrollable-panel { background: transparent; }
+input[type=text], input[type=search], input[type=password], input[type=email], textarea {
+	color: var(--tdh-text); }
+.unread { background: var(--tdh-red) !important; color: #fff !important; border-radius: 9px !important; }

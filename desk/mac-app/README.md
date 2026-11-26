@@ -1,0 +1,34 @@
+# Mac app shell (company-mac-app-v1)
+
+What the Mac download wraps around each publish's pack. `server/publish-site-update.ps1` (step 4b)
+runs `site-cs.py mac-app-zip`, which writes `TDHarness-mac.zip`: a `TDHarness/` folder holding
+`TDHarness.app`, a link to `/Applications` and a short note, so a person drags the app in.
+
+- `TDHarness`: the desk shell (Swift, WKWebView; opens the login window, starts the desk from
+  `Contents/Resources/start.command`, shows its progress). Universal (arm64 + x86_64), built from
+  `src/CompanyDesk.release.swift`:
+
+      for a in arm64 x86_64; do swiftc -O -target ${a}-apple-macosx12.0 -framework Cocoa -framework WebKit -o TD-$a src/CompanyDesk.release.swift; done
+      lipo -create -output TDHarness TD-arm64 TD-x86_64
+
+  Keep the linker's own ad-hoc signature (`flags=0x20002(adhoc,linker-signed)`): do not run
+  `codesign` on it. A full ad-hoc signature expects a sealed bundle, and the bundle is put together
+  on the Windows server, so macOS would call the app damaged. With the linker's signature the app is
+  simply unsigned: on first open the person allows it once in 系统设置 → 隐私与安全性 → 仍要打开.
+  Without a prompt at all needs an Apple Developer ID and notarization.
+- `Info.plist`, `AppIcon.icns` (made from `server/tdharness.ico`).
+- company-mac-shell-refresh-v1: the shell and `Info.plist` also ride in the Mac pack as `mac-shell.bin` and
+  `mac-shell.plist` (site-cs.py `pack_sources`); `start.command` runs `mac-shell-refresh.sh` on every open, which puts
+  them in place in an installed app when they differ (next open runs them). So a change here reaches every Mac with
+  the next publish; the download is no longer the only way. The x86_64 slice is linked with `-Xlinker -adhoc_codesign`
+  so both slices keep the linker's own signature.
+- `src/`: the shell's source as it came from the earlier client repository (dsh-saas
+  `scripts/p-client-app/mac/`); `CompanyDesk.swift` and `build-mac.sh` are the older thin client,
+  kept for reference.
+
+The download page offers `TDHarness.dmg` (company-mac-dmg-v1), made on a Mac with
+`scripts/build-mac-dmg.sh <CompanyDesk-mac.zip> <out.dmg>` (same app, plus an Applications link) and
+copied to `D:\dsh\client-dist\TDHarness.dmg`; the zip stays as the fallback. An installed desk
+updates itself, so the dmg is remade only when this folder changes.
+
+Proof: `python3 scripts/prove-mac-app-zip.py`.

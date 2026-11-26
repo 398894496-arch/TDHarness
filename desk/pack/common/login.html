@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>登录 TDHarness</title>
+<!-- company-login-page-v1 (the user, 2026-11-24: 「登录窗口好丑」「把登录同步解决」): one sign-in page for both shells, in the
+     desk's 今天 look. Mac: mac-login-page.js serves it on 127.0.0.1 and does each step with mac-company-login.js
+     (fetch to ./api/<step>). Win: AppHost shows it in WebView2 and answers chrome.webview messages. The page itself
+     keeps nothing: no password or code is stored here; the shell does the sign-in and writes the files. -->
+<style>
+:root {
+	color-scheme: light dark;
+	--page: #f0f0ef; --ink: #1c1c1e; --ink2: #6e6e73; --ink3: #a1a1a6;
+	--glass: rgba(255, 255, 255, .58); --glass-line: rgba(255, 255, 255, .85); --field: rgba(255, 255, 255, .72); --field-line: rgba(255, 255, 255, .95);
+	--thumb: #ffffff; --track: rgba(120, 120, 128, .12); --accent: #2f6fe4; --red: #e5484d; --btn: #1c1c1e; --on-btn: #ffffff;
+	--sky: #a9cbef; --mist: #cfe0f2; --peach: #f7dcc0;
+	--shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 18px 50px rgba(40, 70, 120, .16);
+	--spring: cubic-bezier(.32, 1.45, .6, 1);
+	--font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+	:root {
+		--page: #161618; --ink: #f2f2f4; --ink2: #a1a1a8; --ink3: #6c6c72;
+		--glass: rgba(36, 36, 40, .58); --glass-line: rgba(255, 255, 255, .09); --field: rgba(255, 255, 255, .06); --field-line: rgba(255, 255, 255, .12);
+		--thumb: rgba(255, 255, 255, .16); --track: rgba(255, 255, 255, .07); --accent: #79a6ff; --btn: #f2f2f4; --on-btn: #1c1c1e;
+		--sky: #1f3a5e; --mist: #223349; --peach: #4a3626;
+		--shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 18px 50px rgba(0, 0, 0, .45);
+	}
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { font-family: var(--font); color: var(--ink); background: var(--page); overflow: hidden; -webkit-font-smoothing: antialiased;
+	display: grid; place-items: center; -webkit-user-select: none; user-select: none; }
+/* the backdrop: soft light in the desk's chat-column colours */
+.bg { position: fixed; inset: 0; overflow: hidden; z-index: 0; background: linear-gradient(160deg, var(--page) 0%, var(--mist) 55%, var(--page) 100%); }
+.bg i { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .9; animation: drift 18s ease-in-out infinite alternate; }
+.bg i:nth-child(1) { width: 46vmax; height: 46vmax; left: -12vmax; top: -16vmax; background: var(--sky); }
+.bg i:nth-child(2) { width: 40vmax; height: 40vmax; right: -10vmax; bottom: -16vmax; background: var(--peach); animation-delay: -6s; }
+.bg i:nth-child(3) { width: 26vmax; height: 26vmax; right: 18vmax; top: 6vmax; background: var(--mist); animation-delay: -12s; }
+@keyframes drift { to { transform: translate(3vmax, 2vmax) scale(1.06); } }
+@media (prefers-reduced-motion: reduce) { .bg i { animation: none; } }
+
+.card { position: relative; z-index: 1; width: 380px; max-width: calc(100vw - 32px); padding: 30px 30px 24px; border-radius: 28px;
+	background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow);
+	backdrop-filter: blur(34px) saturate(170%); -webkit-backdrop-filter: blur(34px) saturate(170%);
+	animation: rise .6s var(--spring) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(14px) scale(.97); } }
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo { width: 44px; height: 44px; border-radius: 13px; background: var(--btn); color: var(--on-btn); display: grid; place-items: center;
+	font: 700 13px/1 var(--font); letter-spacing: .5px; box-shadow: 0 6px 16px rgba(0, 0, 0, .14); }
+.brand b { display: block; font-size: 19px; font-weight: 700; letter-spacing: .2px; }
+.brand small { display: block; font-size: 13px; color: var(--ink2); margin-top: 3px; }
+
+/* 手机验证码 / 账号密码: a liquid capsule */
+.seg { position: relative; display: flex; margin: 24px 0 18px; padding: 4px; border-radius: 16px; background: var(--track); }
+.seg .thumb { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 12px; background: var(--thumb);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, .08), 0 4px 12px rgba(0, 0, 0, .06); transition: transform .5s var(--spring); }
+.seg.pwd .thumb { transform: translateX(100%); }
+.seg button { position: relative; z-index: 1; flex: 1; height: 36px; border: 0; background: transparent; border-radius: 12px; cursor: pointer;
+	font: 500 14.5px/1 var(--font); color: var(--ink2); transition: color .2s, transform .3s var(--spring); }
+.seg button.on { color: var(--ink); font-weight: 600; }
+.seg button:active { transform: scale(.96); }
+
+.form { display: none; flex-direction: column; gap: 10px; }
+.form.on { display: flex; animation: fade .35s ease both; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } }
+label.f { position: relative; display: flex; align-items: center; height: 48px; border-radius: 15px; background: var(--field); border: 1px solid var(--field-line);
+	transition: box-shadow .2s, background .2s; }
+label.f:focus-within { box-shadow: 0 0 0 3px rgba(47, 111, 228, .28); }
+label.f span { flex: none; padding: 0 0 0 16px; font-size: 14px; color: var(--ink2); min-width: 64px; }
+label.f input { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: transparent; padding: 0 14px 0 6px;
+	font: 400 15.5px/1 var(--font); color: var(--ink); -webkit-user-select: text; user-select: text; }
+label.f input::placeholder { color: var(--ink3); }
+.code { flex: none; height: 36px; margin-right: 6px; padding: 0 14px; border: 0; border-radius: 11px; background: var(--track); cursor: pointer;
+	font: 500 13.5px/1 var(--font); color: var(--accent); white-space: nowrap; transition: transform .3s var(--spring), opacity .2s; }
+.code:hover:not([disabled]) { transform: scale(1.04); }
+.code[disabled] { color: var(--ink3); cursor: default; }
+
+.keep { display: flex; align-items: center; gap: 9px; margin: 6px 2px 2px; font-size: 13.5px; color: var(--ink2); cursor: pointer; }
+.keep input { position: absolute; opacity: 0; pointer-events: none; }
+.keep i { width: 19px; height: 19px; border-radius: 6px; border: 1.5px solid var(--ink3); display: grid; place-items: center; transition: background .2s, border-color .2s, transform .35s var(--spring); }
+.keep input:checked + i { background: var(--accent); border-color: var(--accent); transform: scale(1.06); }
+.keep input:checked + i::after { content: ""; width: 9px; height: 5px; border: 2px solid #fff; border-top: 0; border-right: 0; transform: translateY(-1px) rotate(-45deg); }
+
+.go { margin-top: 14px; width: 100%; height: 50px; border: 0; border-radius: 16px; background: var(--btn); color: var(--on-btn); cursor: pointer;
+	font: 600 16px/1 var(--font); letter-spacing: 2px; box-shadow: 0 8px 22px rgba(0, 0, 0, .16); transition: transform .35s var(--spring), opacity .2s; }
+.go:hover:not([disabled]) { transform: translateY(-1px) scale(1.01); }
+.go:active:not([disabled]) { transform: scale(.98); }
+.go[disabled] { opacity: .45; cursor: default; }
+.go .dots { display: inline-flex; gap: 5px; vertical-align: middle; }
+.go .dots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: dot 1s infinite ease-in-out; }
+.go .dots i:nth-child(2) { animation-delay: .15s; } .go .dots i:nth-child(3) { animation-delay: .3s; }
+@keyframes dot { 0%, 80%, 100% { opacity: .25; transform: scale(.8); } 40% { opacity: 1; transform: none; } }
+
+.msg { min-height: 20px; margin: 12px 2px 0; font-size: 13px; line-height: 1.55; color: var(--ink2); }
+.msg.bad { color: var(--red); }
+.msg.good { color: #1f9d55; }
+.note { margin: 16px 2px 0; padding-top: 14px; border-top: 1px solid var(--track); font-size: 12px; line-height: 1.6; color: var(--ink3); }
+.card.done .form, .card.done .seg, .card.done .keep { opacity: .5; pointer-events: none; }
+
+/* company-login-page-v1: the waiting state (the user: 「打开本机 Agent 和正在交接会话能不能是一个动态等待状态」) — the
+   Mac shell shows login.html#wait while the desk starts; a sign-in turns the card into it while the shell works. */
+.wait { display: none; flex-direction: column; align-items: center; padding: 30px 0 8px; }
+body.waiting .seg, body.waiting .form, body.waiting .keep, body.waiting .go, body.waiting .msg, body.waiting .note { display: none !important; }
+body.waiting .wait { display: flex; animation: fade .4s ease both; }
+body.waiting .card { width: 340px; }
+body.waiting .brand { display: none; }
+body.waiting .wait { padding-top: 18px; }
+/* the lava lamp (the desk's own 正在思考): three drops melting into one another, larger here. All of it is one SVG
+   (the drops, the goo filter, SMIL motion): WebKit, the Mac window, does not apply an SVG filter to HTML boxes when it
+   draws them live, and the drops were three separate dots (the user, 2026-11-24). */
+.lava { display: block; width: 120px; height: 64px; overflow: visible; }
+.lava .d1 { fill: #4f7cdc; } .lava .d2 { fill: #8fbcef; } .lava .d3 { fill: #f0b98a; }
+@media (prefers-color-scheme: dark) { .lava .d1 { fill: #8fb3ff; } .lava .d2 { fill: #5b8fd6; } .lava .d3 { fill: #d49a6a; } }
+.wait-t { margin: 26px 0 0; min-height: 22px; font-size: 15px; font-weight: 500; color: var(--ink); text-align: center; transition: opacity .25s, transform .35s var(--spring); }
+.wait-t.swap { opacity: 0; transform: translateY(6px); }
+.wait-s { margin: 8px 0 0; font-size: 12.5px; color: var(--ink3); text-align: center; }
+.bar { position: relative; width: 160px; height: 4px; margin-top: 18px; border-radius: 2px; background: var(--track); overflow: hidden; }
+.bar i { position: absolute; top: 0; bottom: 0; width: 40%; border-radius: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { from { left: -40%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .bar i { animation: none; } }
+/* something went wrong while starting: said here, with the two ways on (the Mac shell answers the buttons) */
+body.failed .lava { filter: grayscale(.7); opacity: .55; }
+body.failed .bar { display: none; }
+.acts { display: none; gap: 10px; margin-top: 18px; }
+body.failed .acts { display: flex; }
+.acts button { height: 38px; padding: 0 20px; border-radius: 19px; cursor: pointer; font: 500 14px/1 var(--font); transition: transform .35s var(--spring); }
+.acts button:hover { transform: scale(1.04); }
+.acts .primary { border: 0; background: var(--btn); color: var(--on-btn); }
+.acts .plain { border: 1px solid var(--field-line); background: var(--field); color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="bg" aria-hidden="true"><i></i><i></i><i></i></div>
+<main class="card" id="card">
+	<div class="brand">
+		<div class="logo">TDH</div>
+		<div><b>TDHarness</b><small id="sub">登录你的工作台</small></div>
+	</div>
+
+	<div class="seg" id="seg" role="tablist">
+		<span class="thumb" aria-hidden="true"></span>
+		<button type="button" role="tab" data-mode="sms" class="on">手机验证码</button>
+		<button type="button" role="tab" data-mode="pwd">账号密码</button>
+	</div>
+
+	<form class="form on" id="f-sms" autocomplete="off">
+		<label class="f"><span>手机号</span><input id="phone" inputmode="numeric" maxlength="14" placeholder="花名册里登记的手机号"></label>
+		<label class="f"><span>验证码</span><input id="code" inputmode="numeric" maxlength="8" placeholder="6 位数字" autocomplete="one-time-code">
+			<button type="button" class="code" id="send">获取验证码</button></label>
+	</form>
+	<form class="form" id="f-pwd" autocomplete="off">
+		<label class="f"><span>账号</span><input id="user" maxlength="64" placeholder="公司花名册里的账号，不是邮箱" autocapitalize="off" spellcheck="false"></label>
+		<label class="f"><span>密码</span><input id="pass" type="password" maxlength="128" placeholder="密码"></label>
+	</form>
+
+	<label class="keep"><input type="checkbox" id="keep" checked><i></i><span id="keep-t">30 天内这台电脑免登录</span></label>
+	<button type="button" class="go" id="go">登录</button>
+	<div class="msg" id="msg" role="status" aria-live="polite"></div>
+	<div class="note" id="note" hidden></div>
+	<div class="wait" id="wait" aria-live="polite">
+		<svg class="lava" id="lava" viewBox="0 0 120 64" aria-hidden="true"><defs><filter id="goo" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur in="SourceGraphic" stdDeviation="7" result="b"/><feColorMatrix in="b" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 20 -9"/></filter></defs>
+			<g filter="url(#goo)">
+				<circle class="d1" cx="21" cy="26" r="17"><animate attributeName="cx" values="21;93;21" dur="4.6s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/><animate attributeName="cy" values="26;38;26" dur="4.6s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/></circle>
+				<circle class="d2" cx="101" cy="40" r="13"><animate attributeName="cx" values="101;23;101" dur="6.2s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/><animate attributeName="cy" values="40;24;40" dur="6.2s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/></circle>
+				<circle class="d3" cx="55" cy="18" r="13.2"><animate attributeName="cx" values="55;95;55" dur="3.4s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/><animate attributeName="cy" values="18;44;18" dur="3.4s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/><animate attributeName="r" values="13.2;8.8;13.2" dur="3.4s" calcMode="spline" keyTimes="0;.5;1" keySplines=".42 0 .58 1;.42 0 .58 1" repeatCount="indefinite"/></circle>
+			</g></svg>
+		<p class="wait-t" id="wait-t">正在打开…</p>
+		<p class="wait-s" id="wait-s">第一次打开会慢一点</p>
+		<div class="bar" aria-hidden="true"><i></i></div>
+		<div class="acts"><button type="button" class="plain" id="quit">退出</button><button type="button" class="primary" id="again">重新打开</button></div>
+	</div>
+</main>
+<script>
+(function () {
+	"use strict";
+	var $ = function (id) { return document.getElementById(id); };
+	var card = $("card"), seg = $("seg"), go = $("go"), msg = $("msg"), send = $("send");
+	var mode = "sms", busy = false, ready = true, left = 0, timer = 0, smsOff = false;
+
+	// The shell: WebView2 (Win) answers postMessage; anywhere else, this page's own server (Mac).
+	var host = window.chrome && window.chrome.webview ? window.chrome.webview : null;
+	var waiting = {}, seq = 0;
+	if (host) host.addEventListener("message", function (e) {
+		var d = e.data;
+		if (typeof d === "string") { try { d = JSON.parse(d); } catch (err) { return; } }
+		if (!d) return;
+		if (d.id && waiting[d.id]) { var f = waiting[d.id]; delete waiting[d.id]; f(d); return; }
+		if (d.type === "state") state(d);
+	});
+	function call(step, data) {
+		data = data || {};
+		if (host) return new Promise(function (ok) { var id = "m" + (++seq); waiting[id] = ok; host.postMessage(JSON.stringify({ id: id, step: step, data: data })); });
+		return fetch("api/" + step, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), cache: "no-store" })
+			.then(function (r) { return r.json(); })
+			.catch(function () { return { ok: false, msg: "本机登录服务没有回应，请关掉窗口重新打开 TDHarness。" }; });
+	}
+
+	function say(text, kind) { msg.textContent = text || ""; msg.className = "msg" + (kind ? " " + kind : ""); }
+	// The waiting state: the shell (or a sign-in) says each step; the words change with a small fade.
+	var waitT = $("wait-t"), waitTimer = 0;
+	function waitFor(text, sub) {
+		document.body.classList.add("waiting");
+		$("sub").textContent = "正在准备你的工作台";
+		if (typeof sub === "string") $("wait-s").textContent = sub;
+		if (!text || waitT.textContent === text) return;
+		waitT.classList.add("swap");
+		clearTimeout(waitTimer);
+		waitTimer = setTimeout(function () { waitT.textContent = text; waitT.classList.remove("swap"); }, 180);
+	}
+	function waitDone() { document.body.classList.remove("waiting"); $("sub").textContent = "登录你的工作台"; }
+	window.tdhWait = function (text, sub) { document.body.classList.remove("failed"); try { if (!matchMedia("(prefers-reduced-motion: reduce)").matches) document.getElementById("lava").unpauseAnimations(); } catch (e) {} waitFor(String(text || ""), sub == null ? undefined : String(sub)); };
+	// The Mac shell: a start that failed is told on this card, not in a system dialog.
+	var shell = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.tdh;
+	window.tdhFail = function (text) {
+		document.body.classList.add("failed");
+		try { document.getElementById("lava").pauseAnimations(); } catch (e) {}
+		waitFor(String(text || "没有打开成功"), shell ? "可以重新打开再试一次" : "");
+	};
+	$("quit").addEventListener("click", function () { if (shell) shell.postMessage("quit"); });
+	$("again").addEventListener("click", function () { if (shell) shell.postMessage("relaunch"); });
+	function setMode(m, quiet) {
+		if (smsOff && m === "sms") m = "pwd";
+		mode = m;
+		seg.classList.toggle("pwd", m === "pwd");
+		[].forEach.call(seg.querySelectorAll("button"), function (b) { b.classList.toggle("on", b.dataset.mode === m); b.setAttribute("aria-selected", b.dataset.mode === m); });
+		$("f-sms").classList.toggle("on", m === "sms");
+		$("f-pwd").classList.toggle("on", m === "pwd");
+		if (!quiet) say("");
+		setTimeout(function () { var el = m === "sms" ? ($("phone").value ? $("code") : $("phone")) : ($("user").value ? $("pass") : $("user")); try { el.focus(); } catch (e) {} }, 60);
+	}
+	function lock(on, label) {
+		busy = on;
+		go.disabled = on || !ready;
+		go.innerHTML = on ? '<span class="dots"><i></i><i></i><i></i></span>' : "";
+		if (!on) go.textContent = label || "登录";
+		send.disabled = on || left > 0 || !ready;
+	}
+	function state(s) {
+		if (typeof s.ready === "boolean") ready = s.ready;
+		if (typeof s.note === "string") { $("note").hidden = !s.note; $("note").textContent = s.note; }
+		if (typeof s.msg === "string") {
+			if (busy && document.body.classList.contains("waiting")) { if (s.msg && !s.bad) waitFor(s.msg); }
+			else say(s.msg, s.bad ? "bad" : "");
+		}
+		if (typeof s.wait === "string") { if (s.wait) waitFor(s.wait, typeof s.waitSub === "string" ? s.waitSub : undefined); else if (!busy) waitDone(); }
+		if (s.smsOff) { smsOff = true; seg.style.display = "none"; setMode("pwd", true); }
+		if (s.lastLogin && !$("user").value) $("user").value = s.lastLogin;
+		if (s.lastPhone && !$("phone").value) $("phone").value = s.lastPhone;
+		if (s.mode && !s.smsOff) setMode(s.mode === "pwd" || s.mode === "password" ? "pwd" : "sms", true);
+		lock(busy);
+	}
+	function tick() {
+		left--;
+		if (left <= 0) { clearInterval(timer); send.textContent = "重新获取"; send.disabled = busy || !ready; return; }
+		send.textContent = left + " 秒后重新获取";
+	}
+	function phone() { return $("phone").value.replace(/[^0-9+]/g, ""); }
+
+	send.addEventListener("click", function () {
+		if (busy || left > 0) return;
+		var p = phone();
+		if (!/^(\+?86)?1\d{10}$/.test(p)) { say("请填 11 位手机号。", "bad"); $("phone").focus(); return; }
+		send.disabled = true; say("正在发送验证码…");
+		call("sms-code", { phone: p }).then(function (r) {
+			if (r && r.ok) {
+				say("验证码已发到 " + p.slice(-11).replace(/(\d{3})(\d{4})(\d{4})/, "$1 $2 $3") + "，5 分钟内有效。", "good");
+				left = 60; send.textContent = "60 秒后重新获取"; clearInterval(timer); timer = setInterval(tick, 1000);
+				$("code").focus();
+			} else {
+				send.disabled = false;
+				if (r && r.smsOff) state({ smsOff: true });
+				say((r && r.msg) || "验证码没发出去，请稍后再试。", "bad");
+			}
+		});
+	});
+	function signIn() {
+		if (busy || !ready) return;
+		var keep = $("keep").checked, step, data;
+		if (mode === "sms") {
+			var p = phone(), c = $("code").value.replace(/\D/g, "");
+			if (!/^(\+?86)?1\d{10}$/.test(p)) { say("请填 11 位手机号。", "bad"); $("phone").focus(); return; }
+			if (!/^\d{4,8}$/.test(c)) { say("请填收到的验证码。", "bad"); $("code").focus(); return; }
+			step = "sms"; data = { phone: p, code: c, remember: keep };
+		} else {
+			var u = $("user").value.trim(), pw = $("pass").value;
+			if (!u) { say("请填账号。", "bad"); $("user").focus(); return; }
+			if (!pw) { say("请填密码。", "bad"); $("pass").focus(); return; }
+			step = "password"; data = { user: u, pass: pw, remember: keep };
+		}
+		lock(true); say(""); waitFor("正在登录…", "正在核对你的身份");
+		call(step, data).then(function (r) {
+			data = null;
+			if (r && r.ok) {
+				$("pass").value = ""; $("code").value = "";
+				card.classList.add("done");
+				waitFor("登录成功，正在打开工作台…", "第一次打开会慢一点");
+				return;
+			}
+			waitDone();
+			lock(false);
+			if (mode === "pwd") { $("pass").value = ""; $("pass").focus(); } else { $("code").select(); }
+			say((r && r.msg) || "登录没有成功，请再试一次。", "bad");
+		});
+	}
+	go.addEventListener("click", signIn);
+	document.addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); signIn(); } });
+	[].forEach.call(seg.querySelectorAll("button"), function (b) { b.addEventListener("click", function () { if (!busy) setMode(b.dataset.mode); }); });
+	["f-sms", "f-pwd"].forEach(function (id) { $(id).addEventListener("submit", function (e) { e.preventDefault(); signIn(); }); });
+
+	lock(false);
+	// login.html#wait: only the waiting state (the Mac shell, while the desk starts).
+	if (location.hash === "#wait") { waitFor("正在打开本机 Agent…"); return; }
+	call("hello").then(function (r) { if (r) state(r); });
+})();
+</script>
+</body>
+</html>

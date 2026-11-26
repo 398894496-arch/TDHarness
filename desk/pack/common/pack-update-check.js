@@ -87,7 +87,9 @@ function writeSkip(mark) {
 }
 
 
-const PARTS = ["windows-mcp/", "peekaboo/", "cua-driver/", "opencli/", "skills/"];
+// vendor/: the site tailnet files (company-tailnet-vendor-v1). Desks installed before they were in
+// scope never got them, and a delta does not carry files that did not change.
+const PARTS = ["windows-mcp/", "peekaboo/", "cua-driver/", "opencli/", "skills/", "vendor/"];
 
 function incompleteParts(root, build) {
   const files = build && build.files && typeof build.files === "object" ? Object.keys(build.files) : [];

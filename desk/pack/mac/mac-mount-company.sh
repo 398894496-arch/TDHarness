@@ -14,6 +14,12 @@ MNT="${COMPANY_SMB_MNT:-$HOME/company}"
 SMB_USER="${COMPANY_SMB_USER:-dshshare}"
 PASSFILE="${COMPANY_SMB_PASS:-$HOME/.dsh-company-rc8/.smb-dshshare}"
 RC8="${HOME}/.dsh-company-rc8"
+# company-mac-offlan-resolve-v1: a .local site name is found on the office LAN only; away from it the share is
+# mounted at the server's tailnet address (Tailscale's resolver, else vendor/company-tailnet.txt).
+if [[ "$TS" == *.local ]] && [ -z "${COMPANY_SMB_TS:-}" ] && [ -f "$HERE/mac-resolve.js" ]; then
+  TS_IP="$(NODE_OPTIONS= "$NODE" "$HERE/mac-resolve.js" --tailnet 2>/dev/null || true)"
+  if [[ "$TS_IP" =~ ^100\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then TS="$TS_IP"; fi
+fi
 if [ -f "$RC8/smb.user" ]; then SMB_USER="$(tr -d '\r\n' < "$RC8/smb.user")"; fi
 if [ -f "$RC8/smb.pass" ]; then PASSFILE="$RC8/smb.pass"; fi
 
@@ -46,8 +52,21 @@ pick_host() {
     [[ -n "$bin" ]] || return 1
     local text
     text="$("$bin" status --json 2>/dev/null || true)"
-    [[ "$text" == *'{{TDH_HOST}}'* ]]
+    [[ "$text" == *"\"$TS\""* ]]
   }
+  # A .local name answers on the office LAN only: there, the LAN as before; away, the tailnet address. Asked once
+  # (mac-resolve.js), not by probing the name: away from the office each probe of it waits 5 s for multicast DNS.
+  if [[ "$LAN" == *.local ]]; then
+    local how=""
+    if [ -f "$HERE/mac-resolve.js" ]; then
+      how="$( { NODE_OPTIONS= "$NODE" "$HERE/mac-resolve.js" --how 2>/dev/null || true; } | awk '{ print $2 }')"
+    fi
+    # company-wg-desk-v1: through the company's own tunnel (tdh-tunnel) when that is how the server is reached.
+    if [ "$how" = "tunnel" ] && host_up "10.66.0.2"; then echo "10.66.0.2"; return 0; fi
+    if [ "$how" != "tailnet" ] && [ "$how" != "vendor" ] && [ "$how" != "tunnel" ] && host_up "$LAN"; then echo "$LAN"; return 0; fi
+    if [[ "$TS" != "$LAN" ]] && host_up "$TS"; then echo "$TS"; return 0; fi
+    return 1
+  fi
   # Off-LAN: {{TDH_HOST}} may ping via subnet routes (or a home LAN with the
   # same prefix) while SMB 445 is LocalSubnet-only. Prefer the tailnet IP.
   if on_company_ts && host_up "$TS"; then echo "$TS"; return 0; fi
@@ -56,6 +75,35 @@ pick_host() {
   return 1
 }
 
+# company-smb-single-channel-v1 (2026-11-25): no SMB multichannel. The company server offers every network it is on
+# (the office LAN, Tailscale, the company tunnel) and macOS opened a second channel over the old Tailscale route while
+# the first ran through the tunnel: every step on the share took 2-3 s instead of 0.5 s. One channel, the way the mount
+# was asked for. Set in this user's own nsmb.conf (no password); a mount made before it is mounted again.
+NSMB="${NSMB_CONF:-$HOME/Library/Preferences/nsmb.conf}"
+if ! grep -qiE '^[[:space:]]*mc_on[[:space:]]*=[[:space:]]*no' "$NSMB" 2>/dev/null; then
+  mkdir -p "$(dirname "$NSMB")"
+  if grep -qi '^\[default\]' "$NSMB" 2>/dev/null; then
+    /usr/bin/sed -i '' '/^\[[Dd][Ee][Ff][Aa][Uu][Ll][Tt]\]/a\
+mc_on=no
+' "$NSMB"
+  else
+    printf '[default]\nmc_on=no\n' >> "$NSMB"
+  fi
+  echo "SMB_MULTICHANNEL_OFF=1"
+fi
+smb_multichannel_on() { /usr/bin/smbutil multichannel -m "$MNT" 2>/dev/null | grep -q "Multichannel ON: yes"; }
+# A live SMB mount holds a TCP connection to the server's 445; none established means the mount is a leftover.
+smb_alive() {
+  local host
+  host="$(/sbin/mount | awk -v m=" on $MNT (" 'index($0, m) && /\(smbfs/ { sub(/^\/\/[^@]*@/, "", $1); sub(/\/.*/, "", $1); print $1; exit }')"
+  [ -n "$host" ] || return 0
+  local ip="$host"
+  if ! [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    ip="$( { dscacheutil -q host -a name "$host" 2>/dev/null || true; } | awk '/^ip_address:/ { print $2; exit }')"
+  fi
+  [ -n "$ip" ] || return 0
+  /usr/sbin/netstat -an -p tcp 2>/dev/null | awk -v t="$ip.445" '$5 == t && $6 == "ESTABLISHED" { f = 1 } END { exit f ? 0 : 1 }'
+}
 mkdir -p "$MNT"
 if is_smb; then
   have="$(mounted_smb_user || true)"
@@ -65,6 +113,15 @@ if is_smb; then
     echo "MOUNT_REAUTH=$have->$SMB_USER"
     /sbin/umount "$MNT" 2>/dev/null || diskutil unmount "$MNT" >/dev/null || {
       echo "BLOCKED=mount-reauth-busy|$have" >&2
+      exit 2
+    }
+  elif ! smb_alive || smb_multichannel_on; then
+    # company-mount-stale-v1 (2026-11-25): mounted, but its connection to the server is gone (the route to the server
+    # changed under it: Tailscale to the company tunnel, a hand-made tunnel to the service). macOS keeps such a mount
+    # and every step on the share waits seconds for it (8.6 s to write a small file). Let it go and mount again.
+    echo "MOUNT_STALE=1"
+    /sbin/umount "$MNT" 2>/dev/null || /usr/sbin/diskutil unmount force "$MNT" >/dev/null 2>&1 || {
+      echo "BLOCKED=mount-stale-busy" >&2
       exit 2
     }
   else
@@ -101,8 +158,24 @@ if [ ! -f "$PASSFILE" ]; then
 fi
 chmod 600 "$PASSFILE" 2>/dev/null || true
 
+# company-smb-ipv4-v1: mount by the server's IPv4 address. By name, a Mac in the office reaches the server
+# over its IPv6 link-local address (mDNS), which drops whenever the Wi-Fi re-joins; an open conversation log
+# then failed with EIO (2026-11-19, TDH). Over the tailnet the name already resolves to the tailnet IPv4.
+v4_of() {
+  local h="$1" ip=""
+  if [[ "$h" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "$h"; return; fi
+  ip="$( { dscacheutil -q host -a name "$h" 2>/dev/null || true; } | awk '/^ip_address:/ { print $2; exit }')"
+  # Only an office or tailnet address; a proxy's fake IP (198.18.x) or anything else keeps the name.
+  case "$ip" in
+    10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) ;;
+    *) ip="" ;;
+  esac
+  echo "${ip:-$h}"
+}
+
 try_mount() {
-  "$NODE" "$SMB_JS" mount "$1" "$SHARE" "$MNT" "$SMB_USER" "$PASSFILE"
+  "$NODE" "$SMB_JS" mount "$(v4_of "$1")" "$SHARE" "$MNT" "$SMB_USER" "$PASSFILE"
 }
 
 # Password stays in the 600 file. Do not print it. Strip it from mount stderr.

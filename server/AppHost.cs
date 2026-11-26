@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -71,6 +72,46 @@ internal static class AppHost
         catch { }
     }
 
+    // company-one-window-v1 (2026-11-21, 小潘: his desktop showed 「重新连接中」 after TDH was opened again while it was
+    // already open): a second start killed the first one's desk (StopDeskNode) and both fought over the seat. One TDH per
+    // Windows user: a second start brings the open window to the front and quits; a relaunch (update) waits for the old.
+    private static Mutex _one;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    private static bool OneWindow(string[] argv)
+    {
+        bool fresh;
+        try { _one = new Mutex(true, "Local\\TDHarness-company-desk", out fresh); }
+        catch { return true; }
+        if (fresh) return true;
+        if (Array.IndexOf(argv, "--relaunch") > 0)
+        {
+            try { if (_one.WaitOne(20000)) return true; }
+            catch (AbandonedMutexException) { return true; }
+        }
+        var me = Process.GetCurrentProcess();
+        foreach (var p in Process.GetProcessesByName(me.ProcessName))
+        {
+            try
+            {
+                if (p.Id == me.Id || p.MainWindowHandle == IntPtr.Zero) continue;
+                ShowWindow(p.MainWindowHandle, 9);
+                SetForegroundWindow(p.MainWindowHandle);
+                Log("one-window front " + p.Id);
+                return false;
+            }
+            catch { }
+        }
+        Log("one-window no-window");
+        MessageBox.Show("TDH 已经打开了。看不到窗口的话，在任务栏里点 TDH；还是找不到，就重启电脑再打开。", "TDHarness");
+        return false;
+    }
+
     [STAThread]
     private static int Main()
     {
@@ -82,11 +123,14 @@ internal static class AppHost
         }
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        if (!OneWindow(argv)) return 0;
         try
         {
             ServicePointManager.ServerCertificateValidationCallback = delegate { return true; };
             try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; }
             catch { }
+            // company-compat-v1：连公司服务器一律直连，不走 Clash 一类代理的「系统代理」。
+            DeskPrereq.DirectToSite();
             TidyExtraShortcuts();
             Application.Run(new ShellForm());
             return 0;
@@ -168,6 +212,16 @@ internal static class AppHost
         if (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps) return false;
         var host = u.Host.ToLowerInvariant();
         return (host == "127.0.0.1" || host == "localhost") && u.Port == DeskPort;
+    }
+
+    // company-chat-voice-v1: the chat page as this machine's relay serves it (chat-relay.js: 127.0.0.1, 17811-17814).
+    internal static bool IsLocalChatUrl(string uri)
+    {
+        Uri u;
+        if (string.IsNullOrEmpty(uri) || !Uri.TryCreate(uri, UriKind.Absolute, out u)) return false;
+        if (u.Scheme != Uri.UriSchemeHttp) return false;
+        var host = u.Host.ToLowerInvariant();
+        return (host == "127.0.0.1" || host == "localhost") && u.Port >= 17811 && u.Port <= 17814;
     }
 
     // Web and mail links go to the system's default browser; anything else is
@@ -465,8 +519,146 @@ internal static class AppHost
 
     internal static LoginHit CheckLogin(string user, string pass)
     {
-        var body = "{\"username\":\"" + JsonEscape(user) + "\",\"password\":\"" + JsonEscape(pass) + "\"}";
-        var req = (HttpWebRequest)WebRequest.Create(Site.LoginUrl);
+        return CheckLogin(user, pass, false);
+    }
+
+    // company-login-remember-v1: remember asks the server for this computer's device token (30 days).
+    internal static LoginHit CheckLogin(string user, string pass, bool remember)
+    {
+        var body = "{\"username\":\"" + JsonEscape(user) + "\",\"password\":\"" + JsonEscape(pass) + "\"" + RememberPart(remember) + "}";
+        return PostSignIn(Site.LoginUrl, body, user);
+    }
+
+    // company-login-sms-v1: sign in with a text code.
+    internal static LoginHit SmsLogin(string phone, string code, bool remember)
+    {
+        var body = "{\"phone\":\"" + JsonEscape(phone) + "\",\"code\":\"" + JsonEscape(code) + "\"" + RememberPart(remember) + "}";
+        return PostSignIn(Site.LoginUrl + "/sms", body, "");
+    }
+
+    // company-login-remember-v1: this computer's remembered sign-in.
+    internal static LoginHit Resume(string token)
+    {
+        var body = "{\"token\":\"" + JsonEscape(token) + "\",\"device_id\":\"" + JsonEscape(DeviceId()) + "\"}";
+        return PostSignIn(Site.LoginUrl + "/resume", body, "");
+    }
+
+    private static string RememberPart(bool remember)
+    {
+        return ",\"device_id\":\"" + JsonEscape(DeviceId()) + "\"" + (remember ? ",\"remember\":true" : "");
+    }
+
+    // A POST under the login address that answers whatever it answers: (status, body); status 0 when nothing answered.
+    internal static int PostLoginJson(string suffix, string body, out string text)
+    {
+        text = "";
+        try
+        {
+            var req = (HttpWebRequest)WebRequest.Create(Site.LoginUrl + suffix);
+            req.Method = "POST";
+            req.ContentType = "application/json; charset=utf-8";
+            req.Timeout = 15000;
+            var raw = Encoding.UTF8.GetBytes(body);
+            req.ContentLength = raw.Length;
+            using (var s = req.GetRequestStream()) s.Write(raw, 0, raw.Length);
+            using (var resp = (HttpWebResponse)req.GetResponse())
+            using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+            {
+                text = sr.ReadToEnd();
+                return (int)resp.StatusCode;
+            }
+        }
+        catch (WebException wex)
+        {
+            var answered = wex.Response as HttpWebResponse;
+            if (answered == null) return 0;
+            try
+            {
+                using (var sr = new StreamReader(answered.GetResponseStream(), Encoding.UTF8)) text = sr.ReadToEnd();
+            }
+            catch { }
+            return (int)answered.StatusCode;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    // company-login-remember-v1: the same device id desk-lease.js keeps (.dsh-company-rc8\device.id).
+    internal static string DeviceId()
+    {
+        var p = Path.Combine(Rc8Dir(), "device.id");
+        try
+        {
+            var have = File.ReadAllText(p).Trim();
+            if (Regex.IsMatch(have, @"^[A-Za-z0-9._-]{8,80}$")) return have;
+        }
+        catch { }
+        var b = new byte[8];
+        using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(b);
+        var id = "dev-" + BitConverter.ToString(b).Replace("-", "").ToLowerInvariant();
+        try
+        {
+            Directory.CreateDirectory(Rc8Dir());
+            File.WriteAllText(p, id + "\n");
+        }
+        catch { }
+        return id;
+    }
+
+    // The device token, encrypted for this Windows account (DPAPI): copied to another computer or account it reads as nothing.
+    private static readonly byte[] RememberSalt = Encoding.UTF8.GetBytes("tdh-login-remember-v1");
+
+    internal static string RememberFile()
+    {
+        return Path.Combine(Rc8Dir(), "remember.win");
+    }
+
+    internal static void SaveRemember(string token)
+    {
+        if (string.IsNullOrEmpty(token) || !Regex.IsMatch(token, @"^tdhr_[0-9a-f]{32}$")) return;
+        try
+        {
+            Directory.CreateDirectory(Rc8Dir());
+            var enc = ProtectedData.Protect(Encoding.UTF8.GetBytes(token), RememberSalt, DataProtectionScope.CurrentUser);
+            File.WriteAllBytes(RememberFile(), enc);
+            Log("remember-saved");
+        }
+        catch (Exception ex) { Log("remember-save " + ex.Message); }
+    }
+
+    internal static string LoadRemember()
+    {
+        try
+        {
+            if (!File.Exists(RememberFile())) return "";
+            var raw = ProtectedData.Unprotect(File.ReadAllBytes(RememberFile()), RememberSalt, DataProtectionScope.CurrentUser);
+            var tok = Encoding.UTF8.GetString(raw);
+            return Regex.IsMatch(tok, @"^tdhr_[0-9a-f]{32}$") ? tok : "";
+        }
+        catch { return ""; }
+    }
+
+    // 退出登录, or a sign-in that did not ask to be remembered: the file goes; the server forgets it too (in the background).
+    internal static void ForgetRemember(bool tellServer)
+    {
+        var tok = tellServer ? LoadRemember() : "";
+        try { if (File.Exists(RememberFile())) File.Delete(RememberFile()); } catch { }
+        if (tok.Length == 0) return;
+        var t = new Thread(new ThreadStart(delegate
+        {
+            string ignored;
+            PostLoginJson("/forget", "{\"token\":\"" + tok + "\"}", out ignored);
+        }));
+        t.IsBackground = true;
+        t.Start();
+        Log("remember-forgot");
+    }
+
+    private static LoginHit PostSignIn(string url, string body, string user)
+    {
+        var req = (HttpWebRequest)WebRequest.Create(url);
         req.Method = "POST";
         req.ContentType = "application/json; charset=utf-8";
         req.Timeout = 12000;
@@ -491,6 +683,8 @@ internal static class AppHost
             hit.GwToken = JsonField(text, "gw_token");
             hit.SmbUser = JsonField(text, "smb_user");
             hit.SmbPass = JsonField(text, "smb_pass");
+            hit.RememberToken = JsonField(text, "remember_token");
+            hit.ServerDesk = JsonField(text, "server_desk") == "true";
             return hit;
         }
     }
@@ -546,7 +740,7 @@ internal static class AppHost
 
     internal static void RelaunchSelf()
     {
-        try { Process.Start(Application.ExecutablePath); }
+        try { Process.Start(Application.ExecutablePath, "--relaunch"); }
         catch (Exception ex) { Log("relaunch " + ex.Message); }
         Environment.Exit(0);
     }
@@ -611,7 +805,12 @@ internal static class AppHost
             MessageBoxButtons.OK, MessageBoxIcon.Information);
         try
         {
-            RestoreProduct();
+            if (!RestoreProductSettled(null, null))
+            {
+                MessageBox.Show("服务器正在发布新版本，这次先用现在这版登录，下次打开再更新。", "TDHarness",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
         }
         catch (Exception ex)
         {
@@ -775,6 +974,10 @@ internal static class AppHost
 
     internal static void RestoreProduct(Action<string> onProgress)
     {
+        // company-compat-v1：更新要下载 400 多 MB 再解开，空间不够就先说，不在半路失败。
+        var free = DeskPrereq.FreeBytes(Root);
+        if (free >= 0 && free < 1500L * 1024 * 1024)
+            throw new Exception(Path.GetPathRoot(Path.GetFullPath(Root)) + " 只剩 " + DeskPrereq.GbText(free) + "，更新至少要 1.5 GB，请先清理磁盘");
         StopDeskNode();
         var restore = Path.Combine(Root, "tree-restore.ps1");
         if (!File.Exists(restore)) throw new Exception("tree-restore-missing");
@@ -822,8 +1025,43 @@ internal static class AppHost
         lock (errBuf) { se = errBuf.ToString(); }
         Log("tree-restore " + so.Replace("\r", " ").Replace("\n", " | ") + " " + se);
         if (p.ExitCode != 0 || so.IndexOf("TREE_RESTORE_OK=1") < 0)
+        {
+            if ((so + se).IndexOf("restore-verify-failed", StringComparison.Ordinal) >= 0)
+                throw new Exception(VerifyMismatch);
             throw new Exception("tree-restore-failed");
+        }
         SyncDeskHome();
+    }
+
+    // company-update-settle-v1：下载的包和服务器的 version.json 对不上（服务器正在发版，或者下载中途包换了），
+    // 不算更新失败：等一分钟、从头重下一次；还对不上就这次先用现在这版，下次打开再更新。
+    // 2026-11-19：一晚连发几次版，一台正在更新的电脑撞上了，弹了「更新没完成（tree-restore-failed）」。
+    internal const string VerifyMismatch = "tree-restore-verify";
+
+    // 返回 true = 装好了；false = 服务器在发版，这次没更新（不是错误）。其他失败照旧抛出。
+    internal static bool RestoreProductSettled(Action<string> onProgress, Action onWait)
+    {
+        for (var round = 1; round <= 2; round++)
+        {
+            try
+            {
+                RestoreProduct(onProgress);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                if (ex.Message != VerifyMismatch) throw;
+                Log("update-verify-mismatch round " + round);
+            }
+            if (round == 2) break;
+            if (onWait != null)
+            {
+                try { onWait(); } catch { }
+            }
+            Thread.Sleep(60000);
+        }
+        Log("update-deferred server-publishing");
+        return false;
     }
 
     internal static void StopDeskNode()
@@ -894,6 +1132,11 @@ internal static class AppHost
             File.WriteAllText(Path.Combine(rc, "login.role"), hit.Role.Trim() + "\n");
         if (!string.IsNullOrEmpty(hit.Login))
             File.WriteAllText(Path.Combine(rc, "login.name"), hit.Login.Trim() + "\n");
+        // company-remember-login-v1：登录框下次默认填这台电脑上次登录成功的账号。只有账号名，不是密码；退出登录也留着。
+        if (!string.IsNullOrEmpty(hit.Login))
+        {
+            try { File.WriteAllText(Path.Combine(rc, "last.login"), hit.Login.Trim() + "\n"); } catch { }
+        }
         var site = LeaseSite();
         if (!string.IsNullOrEmpty(site))
             File.WriteAllText(Path.Combine(rc, "site.login"), site.Trim() + "\n");
@@ -926,6 +1169,11 @@ internal static class AppHost
 
     internal static int RunLease(string verb, string personal, string org)
     {
+        return RunLease(verb, personal, org, "");
+    }
+
+    internal static int RunLease(string verb, string personal, string org, string extra)
+    {
         var node = NodeBin();
         var js = Path.Combine(Root, "desk-lease.js");
         if (!File.Exists(js) || !File.Exists(node))
@@ -939,17 +1187,19 @@ internal static class AppHost
             + " --personal \"" + personal + "\""
             + " --org \"" + (org ?? "") + "\""
             + " --home \"" + DeskHome + "\""
-            + " --site \"" + LeaseSite() + "\"";
+            + " --site \"" + LeaseSite() + "\"" + (extra ?? "");
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardError = true;
         ClearChildNodeOptions(psi);
+        var leaseCa = Path.Combine(Root, "company-ca.crt");
+        if (File.Exists(leaseCa)) psi.EnvironmentVariables["NODE_EXTRA_CA_CERTS"] = leaseCa;
         var p = Process.Start(psi);
         if (p == null) throw new Exception("desk-lease-start-failed");
         var so = p.StandardOutput.ReadToEnd();
         var se = p.StandardError.ReadToEnd();
-        if (!p.WaitForExit(90000))
+        if (!p.WaitForExit(verb == "quit" ? 150000 : 90000))
         {
             try { p.Kill(); } catch { }
             throw new Exception("desk-lease-timeout");
@@ -969,7 +1219,8 @@ internal static class AppHost
     {
         var js = Path.Combine(Root, "desk-lease.js");
         if (!File.Exists(js)) return;
-        RunLease("acquire", personal, org);
+        var store = DeskStoreDir();
+        RunLease("acquire", personal, org, store.Length > 0 ? " --store-dir \"" + store + "\"" : "");
     }
 
     internal static Process StartLeaseWatch(string personal, string org)
@@ -999,6 +1250,157 @@ internal static class AppHost
         catch { }
         try { RunLease("quit", personal ?? "", org ?? ""); }
         catch (Exception ex) { Log("lease-quit " + ex.Message); }
+    }
+
+    // company-desk-server-mode-v1: a person switched to the desk on the company server (the sign-in says server_desk,
+    // from runtime/desk-hub-users.json) gets no kernel, no seat and no pinned workspaces on this computer. This
+    // computer starts only desk-hub-relay.js on the desk port: the window loads http://127.0.0.1:17803/ as always, and
+    // the relay passes it on to https://<site>/desk-hub/ with the sign-in token. TDH_SERVER_DESK=0 keeps the local desk
+    // (a pack without the relay too); TDH_SERVER_DESK=1 asks for the server's desk whatever the sign-in said (a test
+    // against a people service not updated yet: the hub still checks the person is switched).
+    internal static bool ServerDeskFor(LoginHit hit)
+    {
+        var env = Environment.GetEnvironmentVariable("TDH_SERVER_DESK");
+        if (hit == null || !(hit.ServerDesk || env == "1")) return false;
+        if (env == "0") { Log("server-desk off env"); return false; }
+        if (!File.Exists(Path.Combine(Root, "desk-hub-relay.js"))) { Log("server-desk off no-relay"); return false; }
+        return true;
+    }
+
+    internal static string BareDeskUrl()
+    {
+        return "http://127.0.0.1:" + DeskPort + "/";
+    }
+
+    internal static Process StartDeskRelay()
+    {
+        var node = NodeBin();
+        var js = Path.Combine(Root, "desk-hub-relay.js");
+        var site = LeaseSite();
+        if (!File.Exists(node)) throw new Exception("bundled-node-missing");
+        if (!File.Exists(js)) throw new Exception("desk-hub-relay-missing");
+        if (string.IsNullOrEmpty(site)) throw new Exception("desk-hub-site-missing");
+        var psi = new ProcessStartInfo();
+        psi.FileName = node;
+        var args = "\"" + js + "\" --site \"" + site + "\" --port " + DeskPort
+            + " --token-file \"" + Path.Combine(Rc8Dir(), "gw.token") + "\"";
+        var ca = Path.Combine(Root, "company-ca.crt");
+        if (File.Exists(ca)) args += " --ca \"" + ca + "\"";
+        psi.Arguments = args;
+        psi.WorkingDirectory = Root;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        ClearChildNodeOptions(psi);
+        psi.EnvironmentVariables["NO_PROXY"] = Site.NoProxy;
+        psi.EnvironmentVariables["NODE_USE_ENV_PROXY"] = "0";
+        foreach (var key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy" })
+        {
+            try { psi.EnvironmentVariables.Remove(key); }
+            catch { }
+        }
+        var relayLog = Path.Combine(DeskHome, "desk-hub-relay.log");
+        try { Directory.CreateDirectory(DeskHome); } catch { }
+        DataReceivedEventHandler sink = delegate(object sender, DataReceivedEventArgs e)
+        {
+            if (e.Data == null) return;
+            try { File.AppendAllText(relayLog, DateTime.Now.ToString("o") + " " + e.Data + "\r\n"); } catch { }
+        };
+        var p = new Process();
+        p.StartInfo = psi;
+        p.OutputDataReceived += sink;
+        p.ErrorDataReceived += sink;
+        if (!p.Start()) throw new Exception("desk-hub-relay-start-failed");
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        // StopDeskNode kills it by this pid (and by its place under Root) on sign-out, close, or the next sign-in.
+        try { File.WriteAllText(Path.Combine(Rc8Dir(), "desk.pid"), p.Id.ToString()); } catch { }
+        Log("build " + BuildStamp.Mark + " site=" + BuildStamp.Site + " keyed=" + BuildStamp.Keyed);
+        Log("server-desk relay " + p.Id + " site=" + site);
+        for (var i = 0; i < 100; i++)
+        {
+            Application.DoEvents();
+            Thread.Sleep(150);
+            if (PortUp()) return p;
+            if (p.HasExited) throw new Exception("desk-hub-relay-exit " + p.ExitCode);
+        }
+        try { p.Kill(); } catch { }
+        throw new Exception("desk-hub-relay-not-up");
+    }
+
+    // One request to this computer's relay: (status, body). Status 0 when nothing answered in time.
+    internal static int RelayGet(string path, int timeoutMs, out string body)
+    {
+        body = "";
+        try
+        {
+            var req = (HttpWebRequest)WebRequest.Create(BareDeskUrl().TrimEnd('/') + path);
+            req.Method = "GET";
+            req.Proxy = null;
+            req.Timeout = timeoutMs;
+            req.ReadWriteTimeout = timeoutMs;
+            req.AllowAutoRedirect = false;
+            using (var resp = (HttpWebResponse)req.GetResponse())
+            using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+            {
+                body = sr.ReadToEnd();
+                return (int)resp.StatusCode;
+            }
+        }
+        catch (WebException wex)
+        {
+            var r = wex.Response as HttpWebResponse;
+            if (r == null) return 0;
+            try { using (var sr = new StreamReader(r.GetResponseStream(), Encoding.UTF8)) body = sr.ReadToEnd(); } catch { }
+            return (int)r.StatusCode;
+        }
+        catch { return 0; }
+    }
+
+    // The hub's own answer, before the window shows anything: who it thinks this is (_hub/status: not switched,
+    // signed out, the server not reached), then the first page, which starts the person's kernel on the server when
+    // it is not running (up to 3 minutes there). The sign-in stays up meanwhile, saying what it waits for.
+    internal static void WaitServerDesk(Action<string> say)
+    {
+        string body;
+        var code = RelayGet("/_hub/status", 20000, out body);
+        Log("server-desk status " + code + " " + (JsonField(body, "state") ?? ""));
+        ThrowHubAnswer(code, body);
+        if (JsonField(body, "state") != "up") say("正在打开服务器上的工作台（第一次要一两分钟）…");
+        var done = false;
+        var warmCode = 0;
+        var warmBody = "";
+        var t = new Thread(new ThreadStart(delegate
+        {
+            string b;
+            warmCode = RelayGet("/", 240000, out b);
+            warmBody = b;
+            done = true;
+        }));
+        t.IsBackground = true;
+        t.Start();
+        while (!done)
+        {
+            Application.DoEvents();
+            Thread.Sleep(150);
+        }
+        Log("server-desk warm " + warmCode);
+        ThrowHubAnswer(warmCode, warmBody);
+    }
+
+    private static void ThrowHubAnswer(int code, string body)
+    {
+        if (code >= 200 && code < 400) return;
+        var hint = JsonField(body, "hint");
+        if (code == 0) throw new Exception("本机中转没有响应（desk-hub-relay），请重新打开 TDHarness");
+        if (code == 502 && hint.Length == 0)
+        {
+            var text = (body ?? "").Trim();
+            if (text.Length > 120) text = text.Substring(0, 120);
+            throw new Exception(text.Length > 0 ? text : "连不上公司服务器");
+        }
+        throw new Exception((hint.Length > 0 ? hint : "服务器上的工作台没有正常回应") + "（" + code + "）");
     }
 
     internal static void StartDesk(string work, string gwToken)
@@ -1081,6 +1483,15 @@ internal static class AppHost
             Log("ffmpeg-on-path");
         }
         else Log("ffmpeg-missing " + ffBin);
+        // company-shell-path-v1：Agent 的 shell 里直接有 node 和 opencli（bin\opencli.cmd 用自带的 Node 跑自带的 OpenCLI）。
+        {
+            var curPath = psi.EnvironmentVariables["PATH"];
+            if (string.IsNullOrEmpty(curPath)) curPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+            var front = "";
+            foreach (var d in new[] { Path.Combine(root, "bin"), Path.Combine(root, "node") })
+                if (Directory.Exists(d)) front += d + ";";
+            psi.EnvironmentVariables["PATH"] = front + curPath;
+        }
         try { psi.EnvironmentVariables.Remove("DEEPSEEK_API_KEY"); } catch { }
         psi.EnvironmentVariables["NO_PROXY"] = Site.NoProxy;
         psi.EnvironmentVariables["NODE_USE_ENV_PROXY"] = "0";
@@ -1212,9 +1623,8 @@ internal static class AppHost
         // show in the picker but selecting them never sticks.
         try
         {
-            NameWorkspace(Rpc("workspace.create", "{\"path\":\"" + JsonEscape(personal) + "\"}"), "个人");
-            if (!string.IsNullOrEmpty(org) && !string.Equals(org, personal, StringComparison.OrdinalIgnoreCase))
-                NameWorkspace(Rpc("workspace.create", "{\"path\":\"" + JsonEscape(org) + "\"}"), "团队");
+            // company-single-workspace-v1：只有一个工作区（本人目录），不再有「团队」。
+            NameWorkspace(Rpc("workspace.create", "{\"path\":\"" + JsonEscape(personal) + "\"}"), "工作区");
         }
         catch (Exception ex) { Log("pin-create " + ex.Message); }
         try { RunLease("collapse-seats", personal, org); }
@@ -1256,63 +1666,165 @@ internal static class AppHost
         }
     }
 
+    // company-no-tailnet-prompt-v1 (the user, 2026-11-25: 「我要求改好以后任何客户端都不要弹出这个窗口，默认连接新买的服务器」):
+    // no Tailscale question and no dialog here any more. The company tunnel is put in place after sign-in
+    // (EnsureTunnel), where the person's token can enroll this PC; a PC already on Tailscale keeps working meanwhile.
     private static void EnsureCompanyNetOnce()
     {
-        var facts = CompanyTailnet();
-        if (!facts.Valid || TailnetJoin.ReadKey(VendorPath("employee.auth")).Length == 0)
-        {
-            Log("ts-skip no-site-tailnet");
-            return;
-        }
-        var ts = TailnetJoin.FindTailscale();
-        if (ts != null && TailnetJoin.OnCompany(ts, facts))
-        {
-            Log("ts-on-company");
-            return;
-        }
-        var onLan = OnOfficeLan();
-        var skip = Path.Combine(Rc8Dir(), "ts-join.declined");
-        if (onLan)
-        {
-            try
-            {
-                if (File.Exists(skip) && (DateTime.UtcNow - File.GetLastWriteTimeUtc(skip)).TotalDays < 7)
-                {
-                    Log("ts-skip declined-recently");
-                    return;
-                }
-            }
-            catch { }
-        }
-        var ask = onLan
-            ? "为了在家里也能用 TDH，这台电脑要加入公司的加密网络（Tailscale），只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。"
-            : "现在不在公司网络里。要在这里用 TDH，这台电脑需要加入公司的加密网络（Tailscale），只需要一次。\n\n接下来 Windows 会问「是否允许此应用对你的设备进行更改」，请点「是」。";
-        MessageBox.Show(ask, "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        var rc = TailnetJoin.RunElevated(Application.ExecutablePath, "--ts-join", 360000, Log);
-        Log("ts-join-result " + rc);
-        if (rc == 0)
-        {
-            try { if (File.Exists(skip)) File.Delete(skip); } catch { }
-            // 刚入网时分域 DNS 要几秒才生效
-            for (var i = 0; i < 20 && !OnOfficeLan(); i++) Thread.Sleep(1000);
-            return;
-        }
-        try
-        {
-            Directory.CreateDirectory(Rc8Dir());
-            File.WriteAllText(skip, DateTime.UtcNow.ToString("o"));
-        }
-        catch { }
-        if (!onLan)
-            MessageBox.Show(rc == -1223
-                ? "没有加入公司网络（刚才选了「否」）。下次打开 TDHarness 会再问一次。"
-                : "没能加入公司网络（" + rc + "）。请把这句话截图发给管理员；这台电脑可能没有管理员权限。", "TDHarness");
+        Log("company-net " + (IsCompanyServer() ? "server" : (TunnelInstalledOk() ? "tunnel" : "no-tunnel")));
     }
 
     // --ts-join：由 EnsureCompanyNet 以管理员身份启动，只做入网，不开窗口。
     internal static int TsJoinElevated()
     {
         return TailnetJoin.Join(VendorPath("tailscale-setup.msi"), VendorPath("employee.auth"), CompanyTailnet(), Log);
+    }
+
+    // company-wg-desk-win-v1: this PC's end of the company tunnel (win-tunnel-install.ps1, win-tunnel-task.ps1).
+    // Off by default until tried on one office PC (2026-11-25: released before any real Windows desk ran it; the user
+    // asked that the office simply works the next morning). Turned on per PC with the environment: TDH_TUNNEL=1 for the
+    // tunnel, TDH_DESK_STORE=1 for the chats in local app data.
+    internal static bool WinFeatureOn(string name)
+    {
+        return Environment.GetEnvironmentVariable(name) == "1";
+    }
+
+    internal static bool IsCompanyServer()
+    {
+        return File.Exists(@"D:\dsh\site.yml");
+    }
+
+    internal static string TunnelDir()
+    {
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "TDHarness", "tunnel");
+    }
+
+    private static string Sha256Of(string path)
+    {
+        try
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (var f = File.OpenRead(path))
+                return BitConverter.ToString(sha.ComputeHash(f)).Replace("-", "");
+        }
+        catch { return ""; }
+    }
+
+    // Installed, and by this pack's keeper (a new pack with a new keeper asks once more).
+    internal static bool TunnelInstalledOk()
+    {
+        var dir = TunnelDir();
+        var mine = Path.Combine(Root, "win-tunnel-task.ps1");
+        var there = Path.Combine(dir, "win-tunnel-task.ps1");
+        if (!File.Exists(Path.Combine(dir, "hub.json")) || !File.Exists(Path.Combine(dir, "public.key"))) return false;
+        var a = Sha256Of(mine);
+        return a.Length > 0 && a == Sha256Of(there);
+    }
+
+    // node desk-store.js ARGS with the person's token, the company CA trusted (the tunnel's hub is taken only from a
+    // server whose certificate checks out).
+    internal static string RunDeskStore(string args, string gwToken, int waitMs, out int code)
+    {
+        code = -1;
+        var node = NodeBin();
+        var js = Path.Combine(Root, "desk-store.js");
+        if (!File.Exists(node) || !File.Exists(js)) return "";
+        var psi = new ProcessStartInfo();
+        psi.FileName = node;
+        psi.Arguments = "\"" + js + "\" " + args;
+        psi.UseShellExecute = false;
+        psi.CreateNoWindow = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        ClearChildNodeOptions(psi);
+        if (!string.IsNullOrEmpty(gwToken)) psi.EnvironmentVariables["DEEPSEEK_API_KEY"] = gwToken;
+        var ca = Path.Combine(Root, "company-ca.crt");
+        if (File.Exists(ca)) psi.EnvironmentVariables["NODE_EXTRA_CA_CERTS"] = ca;
+        try
+        {
+            using (var p = Process.Start(psi))
+            {
+                if (p == null) return "";
+                var errTask = p.StandardError.ReadToEndAsync();
+                var so = p.StandardOutput.ReadToEnd();
+                if (!p.WaitForExit(waitMs)) { try { p.Kill(); } catch { } return so; }
+                code = p.ExitCode;
+                var se = errTask.Result ?? "";
+                if (code != 0 && se.Length > 0) Log("desk-store " + args.Split(' ')[0] + " " + (se.Length > 200 ? se.Substring(0, 200) : se).Replace("\r", " ").Replace("\n", " "));
+                return so;
+            }
+        }
+        catch (Exception ex) { Log("desk-store " + ex.Message); return ""; }
+    }
+
+    private static string Line(string text, string key)
+    {
+        var m = Regex.Match(text ?? "", "(?m)^" + Regex.Escape(key) + "=(.*?)\\r?$");
+        return m.Success ? m.Groups[1].Value.Trim() : "";
+    }
+
+    // After sign-in (the token enrolls this PC). Not installed: the hub from the company server (TLS checked), then
+    // win-tunnel-install.ps1 elevated, the one time Windows asks (no network adapter without it); declined: asked
+    // again the next day. Then this PC's address. Never stops the desk from opening: the LAN and Tailscale still work.
+    internal static string EnsureTunnel(string gwToken)
+    {
+        if (IsCompanyServer() || !WinFeatureOn("TDH_TUNNEL")) return "off";
+        var root = Root;
+        var install = Path.Combine(root, "win-tunnel-install.ps1");
+        var task = Path.Combine(root, "win-tunnel-task.ps1");
+        var wg = Path.Combine(root, "vendor", "wireguard", "wireguard.exe");
+        if (!File.Exists(install) || !File.Exists(task) || !File.Exists(wg)) return "off";
+        var dir = TunnelDir();
+        int code;
+        if (!TunnelInstalledOk())
+        {
+            var declined = Path.Combine(Rc8Dir(), "tunnel.declined");
+            try
+            {
+                if (File.Exists(declined) && (DateTime.UtcNow - File.GetLastWriteTimeUtc(declined)).TotalHours < 24) return "declined";
+            }
+            catch { }
+            var hub = RunDeskStore("tunnel-hub --site \"" + LeaseSite() + "\"", gwToken, 30000, out code);
+            var key = Line(hub, "TUNNEL_HUB_PUBKEY");
+            var ep = Line(hub, "TUNNEL_HUB_ENDPOINT");
+            var server = Line(hub, "TUNNEL_SERVER");
+            var lan = Line(hub, "TUNNEL_LAN");
+            var ip4 = @"^\d{1,3}(\.\d{1,3}){3}$";
+            if (!Regex.IsMatch(key, "^[A-Za-z0-9+/]{43}=$") || !Regex.IsMatch(ep, @"^\d{1,3}(\.\d{1,3}){3}:\d{1,5}$")) return "down hub-unknown";
+            if (!Regex.IsMatch(server, ip4)) server = "10.66.0.2";
+            var args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"" + install + "\""
+                + " -Wg \"" + wg + "\" -HubKey \"" + key + "\" -HubEndpoint \"" + ep + "\" -Server \"" + server + "\""
+                + " -HostName \"" + Site.Host + "\" -Task \"" + task + "\" -Node \"" + NodeBin() + "\"";
+            if (Regex.IsMatch(lan, ip4)) args += " -Lan \"" + lan + "\"";
+            var ca = Path.Combine(root, "company-ca.crt");
+            if (File.Exists(ca)) args += " -Ca \"" + ca + "\"";
+            var ps = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+            var rc = TailnetJoin.RunElevated(ps, args, 180000, Log);
+            Log("tunnel-install " + rc);
+            if (rc != 0)
+            {
+                if (rc == -1223)
+                {
+                    try { Directory.CreateDirectory(Rc8Dir()); File.WriteAllText(declined, DateTime.UtcNow.ToString("o")); } catch { }
+                    return "declined";
+                }
+                return "down install-" + rc;
+            }
+            try { if (File.Exists(declined)) File.Delete(declined); } catch { }
+        }
+        var en = RunDeskStore("tunnel-enroll --dir \"" + dir + "\" --site \"" + LeaseSite() + "\"", gwToken, 30000, out code);
+        var addr = Line(en, "TUNNEL_ADDRESS");
+        return code == 0 && addr.Length > 0 ? "up " + addr + " " + Line(en, "TUNNEL_ENROLL") : "down enroll";
+    }
+
+    // company-desk-store-win-v1: the chats in the person's local app data while the desk runs (taken whole from the
+    // server at the seat, sent back as they change, removed once all of it is there: desk-lease.js / desk-store.js).
+    // Not on the company server itself, whose share is its own disk.
+    internal static string DeskStoreDir()
+    {
+        if (IsCompanyServer() || !WinFeatureOn("TDH_DESK_STORE")) return "";
+        if (!File.Exists(Path.Combine(Root, "desk-store.js"))) return "";
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TDHarness", "desk-mem");
     }
 
     internal static bool OnOfficeLan()
@@ -1479,6 +1991,16 @@ internal static class AppHost
             var cache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), (".dsh-company-rc" + "8"), "skills").Replace('\\', '/');
             var seed = Path.Combine(Root, "skills");
             var share = (Site.ShareUncFwd + "/_skills").Replace('/', Path.DirectorySeparatorChar);
+            // company-desk-skills-v1: the company's skills over HTTPS (one tar, only when they changed), not over the
+            // share's SMB. Not fetched: the share as before.
+            if (!IsCompanyServer() && File.Exists(Path.Combine(Root, "desk-store.js")))
+            {
+                var copy = Path.Combine(Rc8Dir(), "skills-share");
+                int sc;
+                var so = RunDeskStore("skills --out \"" + copy + "\" --site \"" + LeaseSite() + "\"", "", 60000, out sc);
+                Log("skills-fetch " + sc + " " + Line(so, "SKILLS_FETCH") + " " + Line(so, "SKILLS_FETCH_MS") + "ms");
+                if (sc == 0 && Directory.Exists(copy)) share = copy;
+            }
             var js = Path.Combine(Root, "sync-skills.js");
             var node = NodeBin();
             if (File.Exists(js) && File.Exists(node))
@@ -1538,13 +2060,22 @@ internal static class AppHost
 
     internal static void WaitTask(Task t)
     {
+        WaitTask(t, -1);
+    }
+
+    // false: still not done after ms (ms < 0: no limit).
+    internal static bool WaitTask(Task t, int ms)
+    {
+        var end = DateTime.UtcNow.AddMilliseconds(ms < 0 ? int.MaxValue : ms);
         while (!t.IsCompleted)
         {
+            if (ms >= 0 && DateTime.UtcNow > end) return false;
             Application.DoEvents();
             System.Threading.Thread.Sleep(40);
         }
         if (t.Exception != null)
             throw t.Exception.InnerException ?? (Exception)t.Exception;
+        return true;
     }
 }
 
@@ -1562,6 +2093,10 @@ internal sealed class LoginHit
     // that has not been updated yet, in which case the legacy shared string
     // is used so an old server and a new client still talk.
     public string GwToken;
+    // company-login-remember-v1: this computer's device token, when the sign-in asked to be remembered.
+    public string RememberToken;
+    // company-desk-server-mode-v1: the person's desk runs on the company server (server/desk_hub.js).
+    public bool ServerDesk;
 }
 
 internal sealed class ShellForm : Form
@@ -1571,12 +2106,28 @@ internal sealed class ShellForm : Form
     private readonly TextBox _pass = new TextBox();
     private readonly Button _go = new Button();
     private readonly Label _err = new Label();
+    // company-login-sms-v1 / company-login-remember-v1: 账号密码 or 手机验证码, and 30 天内免登录.
+    private readonly Label _uLab = new Label();
+    private readonly Label _pLab = new Label();
+    private readonly LinkLabel _tabPwd = new LinkLabel();
+    private readonly LinkLabel _tabSms = new LinkLabel();
+    private readonly Button _codeBtn = new Button();
+    private readonly CheckBox _remember = new CheckBox();
+    private readonly System.Windows.Forms.Timer _codeTimer = new System.Windows.Forms.Timer();
+    private int _codeLeft;
+    private string _mode = "password";
     private WebView2 _web;
+    // company-login-page-v1: the sign-in as login.html (the Mac's page too) over the native one, when WebView2 is here.
+    private WebView2 _loginWeb;
+    private string _loginNote = "";
     private string _authUser = "";
     private string _authPass = "";
     private string _personal = "";
     private string _org = "";
     private Process _leaseWatch;
+    // company-desk-server-mode-v1: this sign-in's desk is on the company server; _relay is this computer's relay to it.
+    private bool _serverDesk;
+    private Process _relay;
     private System.Windows.Forms.Timer _logoutWatch;
 
     public ShellForm()
@@ -1596,36 +2147,76 @@ internal sealed class ShellForm : Form
         title.AutoSize = true;
         title.Font = new Font("Microsoft YaHei", 14, FontStyle.Bold);
         title.Location = new Point(24, 18);
-        var uLab = new Label();
+        _tabPwd.Text = "账号密码登录";
+        _tabPwd.AutoSize = true;
+        _tabPwd.Location = new Point(24, 56);
+        _tabPwd.LinkClicked += delegate { SetMode("password"); };
+        _tabSms.Text = "手机验证码登录";
+        _tabSms.AutoSize = true;
+        _tabSms.Location = new Point(140, 56);
+        _tabSms.LinkClicked += delegate { SetMode("sms"); };
+        var uLab = _uLab;
         uLab.Text = "账号";
         uLab.AutoSize = true;
-        uLab.Location = new Point(24, 58);
+        uLab.Location = new Point(24, 84);
         _user.Width = 350;
-        _user.Location = new Point(24, 82);
-        var pLab = new Label();
+        _user.Location = new Point(24, 108);
+        try
+        {
+            var last = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), "last.login")).Trim();
+            if (Regex.IsMatch(last, @"^[A-Za-z0-9._@-]{1,64}$")) _user.Text = last;
+        }
+        catch { }
+        var pLab = _pLab;
         pLab.Text = "密码";
         pLab.AutoSize = true;
-        pLab.Location = new Point(24, 114);
+        pLab.Location = new Point(24, 140);
         _pass.Width = 350;
         _pass.UseSystemPasswordChar = true;
-        _pass.Location = new Point(24, 138);
+        _pass.Location = new Point(24, 164);
+        _codeBtn.Text = "获取验证码";
+        _codeBtn.Width = 112;
+        _codeBtn.Height = 27;
+        _codeBtn.Location = new Point(262, 163);
+        _codeBtn.Visible = false;
+        _codeBtn.Click += delegate { SendCode(); };
+        _codeTimer.Interval = 1000;
+        _codeTimer.Tick += delegate
+        {
+            _codeLeft--;
+            if (_codeLeft <= 0)
+            {
+                _codeTimer.Stop();
+                _codeBtn.Text = "重新获取";
+                _codeBtn.Enabled = true;
+            }
+            else _codeBtn.Text = "重新获取(" + _codeLeft + ")";
+        };
+        _remember.Text = "30 天内这台电脑免登录";
+        _remember.AutoSize = true;
+        _remember.Checked = true;
+        _remember.Location = new Point(24, 198);
         _go.Text = "登录";
         _go.Width = 350;
         _go.Height = 36;
-        _go.Location = new Point(24, 178);
+        _go.Location = new Point(24, 226);
         var notice = new Label();
         // LOGIN_SHARE_NOT_UPLOAD
         notice.Text = "工作区和对话都在公司共享盘上，不另外上传。会操作你指定的已打开标签页；点击和导航第一次要你点头。Cookie 不上公司网关。聊天在本窗口，不要用 Chrome 侧栏再开一套对话。";
         notice.AutoSize = true;
         notice.MaximumSize = new Size(350, 0);
         notice.ForeColor = Color.FromArgb(90, 90, 90);
-        notice.Location = new Point(24, 220);
+        notice.Location = new Point(24, 270);
         _err.AutoSize = true;
         _err.ForeColor = Color.FromArgb(217, 45, 32);
-        _err.Location = new Point(24, 320);
+        _err.Location = new Point(24, 370);
         _err.MaximumSize = new Size(350, 0);
-        box.Height = 380;
+        box.Height = 430;
         box.Controls.Add(title);
+        box.Controls.Add(_tabPwd);
+        box.Controls.Add(_tabSms);
+        box.Controls.Add(_codeBtn);
+        box.Controls.Add(_remember);
         box.Controls.Add(uLab);
         box.Controls.Add(_user);
         box.Controls.Add(pLab);
@@ -1640,8 +2231,11 @@ internal sealed class ShellForm : Form
             box.Top = Math.Max(0, (_login.Height - box.Height) / 2);
         };
         Controls.Add(_login);
+        _err.TextChanged += delegate { PushLoginState(); };
         AcceptButton = _go;
         _go.Click += delegate { SignIn(); };
+        // company-login-sms-v1: open in the way this computer signed in last (a phone kept: 手机验证码).
+        SetMode(File.Exists(Path.Combine(AppHost.Rc8Dir(), "last.phone")) ? "sms" : "password");
         FormClosing += delegate
         {
             if (_logoutWatch != null)
@@ -1650,7 +2244,10 @@ internal sealed class ShellForm : Form
                 _logoutWatch = null;
             }
             AppHost.ClearLogin();
-            AppHost.QuitLease(_personal, _org, _leaseWatch);
+            var closingWatch = _leaseWatch;
+            _leaseWatch = null;
+            _relay = null;
+            if (!_serverDesk) AppHost.QuitLease(_personal, _org, closingWatch);
             AppHost.StopDeskNode();
         };
         Shown += delegate
@@ -1659,16 +2256,37 @@ internal sealed class ShellForm : Form
             box.Top = Math.Max(0, (_login.Height - box.Height) / 2);
             _err.ForeColor = Color.FromArgb(90, 90, 90);
             _err.Text = "正在接通公司网…";
+            // company-login-page-v1: WebView2 already here (most opens): the page from the start, no native flash.
+            ShowLoginPage();
             var boot = new Thread(new ThreadStart(delegate
             {
                 try { AppHost.EnsureCompanyNet(); }
                 catch (Exception ex) { AppHost.Log("ts-boot " + ex.Message); }
+                try { EnsureWebView2(); }
+                catch (Exception wvEx) { AppHost.Log("webview2-boot " + wvEx.Message); }
+                try { BeginInvoke(new Action(delegate { if (!IsDisposed && _web == null) ShowLoginPage(); })); }
+                catch { }
                 try { CheckForUpdate(); }
                 catch (Exception upEx) { AppHost.Log("update-check " + upEx.Message); ShowNote("", false); }
+                // company-login-remember-v1: a computer signed in within 30 days goes straight in.
+                try { BeginInvoke(new Action(delegate { if (!IsDisposed && _web == null) AutoResume(); })); }
+                catch { }
             }));
             boot.IsBackground = true;
             boot.Start();
         };
+    }
+
+    // company-compat-v1：窗口要微软 WebView2。没有就从公司服务器取微软的安装器装上（当前用户，不要管理员），
+    // 不等到登录成功后才报 webview2-missing。
+    private void EnsureWebView2()
+    {
+        var have = DeskPrereq.WebView2Version();
+        if (have.Length > 0) { AppHost.Log("webview2 " + have); return; }
+        ShowNote("正在安装微软 WebView2 组件（第一次需要，约一两分钟）…", false);
+        var ok = DeskPrereq.InstallWebView2(DeskPrereq.WebView2InstallerUrl(global::Site.ZipUrl), AppHost.Log, 600000);
+        AppHost.Log("webview2 " + (ok ? DeskPrereq.WebView2Version() : "missing"));
+        ShowNote(ok ? "" : "这台电脑缺微软 WebView2 组件，自动安装没成功。请联系管理员，或从微软官网下载「WebView2 Runtime」装上后再打开。", !ok);
     }
 
     // Runs on the boot thread. Only the dialog and the label touch the UI.
@@ -1695,12 +2313,11 @@ internal sealed class ShellForm : Form
         var ask = reason.Length > 0
             ? "这台电脑缺少新版的部分组件（" + reason.Substring("incomplete:".Length) + "），需要补装一次。\n\n是 = 现在补装\n否 = 稍后再说\n取消 = 退出"
             : "公司已发新版。\n\n点「是」一键更新，不用打开下载页。\n\n是 = 现在更新\n否 = 稍后再说\n取消 = 退出";
-        var dr = DialogResult.No;
-        Invoke(new Action(delegate
-        {
-            dr = MessageBox.Show(this, ask, "TDHarness",
-                MessageBoxButtons.YesNoCancel, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1);
-        }));
+        // company-login-page-v1 (the user, 2026-11-24: 「更新什么的这些弹窗能省则省，更新也做到 UI 里」): with the sign-in page
+        // up, the update just runs and its progress is on the page's waiting card; the question stays for the native window.
+        // company-no-dialogs-v1: no question either way; the native window shows the progress in its status line.
+        var dr = DialogResult.Yes;
+        AppHost.Log("update-auto " + (ask.Length > 0 ? "yes" : ""));
         if (dr == DialogResult.Cancel)
         {
             BeginInvoke(new Action(delegate { Close(); }));
@@ -1721,26 +2338,38 @@ internal sealed class ShellForm : Form
     {
         SetLoginEnabled(false);
         ShowNote(first, false);
+        PushWait(first);
+        bool installed;
         try
         {
-            AppHost.RestoreProduct(delegate(string line)
+            installed = AppHost.RestoreProductSettled(delegate(string line)
             {
                 var text = AppHost.ProgressText(line);
-                if (text.Length > 0) ShowNote(text, false);
+                if (text.Length > 0) { ShowNote(text, false); PushWait(text); }
+            }, delegate
+            {
+                ShowNote("服务器正在发布新版本，一分钟后重新下载…", false);
+                PushWait("服务器正在发布新版本，一分钟后重新下载…");
             });
         }
         catch (Exception ex)
         {
             AppHost.Log("update-restore-fail " + ex.Message);
+            PushWait("");
             ShowNote("更新没完成（" + ex.Message + "），先用现在这版登录。", true);
             SetLoginEnabled(true);
             return;
         }
-        ShowNote("更新完成，正在重新打开…", false);
-        Invoke(new Action(delegate
+        if (!installed)
         {
-            MessageBox.Show(this, "更新完成。请重新登录。", "TDHarness", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }));
+            PushWait("");
+            ShowNote("服务器正在发布新版本，这次先用现在这版登录，下次打开再更新。", false);
+            SetLoginEnabled(true);
+            return;
+        }
+        ShowNote("更新完成，正在重新打开…", false);
+        PushWait("更新完成，正在重新打开…");
+        Thread.Sleep(800);
         AppHost.RelaunchSelf();
     }
 
@@ -1767,9 +2396,140 @@ internal sealed class ShellForm : Form
                 _go.Enabled = on;
                 _user.Enabled = on;
                 _pass.Enabled = on;
+                _codeBtn.Enabled = on && _codeLeft <= 0;
             }));
         }
         catch { }
+    }
+
+    // company-login-sms-v1: the two ways in. The account box holds the phone number in 手机验证码.
+    private void SetMode(string mode)
+    {
+        _mode = mode == "sms" ? "sms" : "password";
+        var sms = _mode == "sms";
+        _uLab.Text = sms ? "手机号（花名册里登记的）" : "账号";
+        _pLab.Text = sms ? "验证码" : "密码";
+        _pass.Text = "";
+        _pass.UseSystemPasswordChar = !sms;
+        _pass.Width = sms ? 230 : 350;
+        _codeBtn.Visible = sms;
+        _tabPwd.LinkColor = sms ? Color.FromArgb(37, 99, 235) : Color.FromArgb(20, 20, 20);
+        _tabSms.LinkColor = sms ? Color.FromArgb(20, 20, 20) : Color.FromArgb(37, 99, 235);
+        var last = "";
+        try { last = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), sms ? "last.phone" : "last.login")).Trim(); }
+        catch { }
+        _user.Text = Regex.IsMatch(last, sms ? @"^[0-9+]{11,14}$" : @"^[A-Za-z0-9._@-]{1,64}$") ? last : "";
+        _err.Text = "";
+        if (_user.Text.Length > 0) _pass.Focus(); else _user.Focus();
+    }
+
+    private static string Digits(string s)
+    {
+        return Regex.Replace(s ?? "", @"[^0-9]", "");
+    }
+
+    private void SendCode()
+    {
+        var phone = Digits(_user.Text);
+        if (phone.Length == 13 && phone.StartsWith("86")) phone = phone.Substring(2);
+        if (!Regex.IsMatch(phone, @"^1[3-9][0-9]{9}$"))
+        {
+            _err.ForeColor = Color.FromArgb(217, 45, 32);
+            _err.Text = "请填 11 位手机号";
+            return;
+        }
+        _codeBtn.Enabled = false;
+        _err.ForeColor = Color.FromArgb(90, 90, 90);
+        _err.Text = "正在发送验证码…";
+        Application.DoEvents();
+        try { AppHost.EnsureCompanyNet(); }
+        catch (Exception tsEx) { AppHost.Log("ts " + tsEx.Message); }
+        string text;
+        var code = AppHost.PostLoginJson("/sms-code", "{\"phone\":\"" + phone + "\"}", out text);
+        var error = AppHost.JsonField(text, "error");
+        if (code == 200)
+        {
+            _err.Text = "验证码已发送，5 分钟内有效。收不到请确认这个号码已登记在公司花名册里。";
+            try { File.WriteAllText(Path.Combine(AppHost.Rc8Dir(), "last.phone"), phone + "\n"); } catch { }
+            StartCountdown(60);
+            _pass.Focus();
+            return;
+        }
+        _err.ForeColor = Color.FromArgb(217, 45, 32);
+        var hint = AppHost.JsonField(text, "hint");
+        if (code == 0)
+        {
+            var netHint = AppHost.CompanyNetHint();
+            _err.Text = netHint.Length > 0 ? netHint : "连不上公司网，请稍后再试";
+        }
+        else _err.Text = hint.Length > 0 ? hint : "验证码没发出去（" + code + "），请稍后再试";
+        if (error == "wait")
+        {
+            int wait;
+            StartCountdown(int.TryParse(AppHost.JsonField(text, "wait"), out wait) && wait > 0 ? wait : 60);
+            return;
+        }
+        _codeBtn.Enabled = true;
+        if (error == "sms-off") SetMode("password");
+    }
+
+    private void StartCountdown(int secs)
+    {
+        _codeLeft = secs;
+        _codeBtn.Enabled = false;
+        _codeBtn.Text = "重新获取(" + secs + ")";
+        _codeTimer.Stop();
+        _codeTimer.Start();
+    }
+
+    // company-login-remember-v1: straight in with this computer's remembered sign-in (after the update check).
+    private void AutoResume()
+    {
+        var tok = AppHost.LoadRemember();
+        if (tok.Length == 0) return;
+        _go.Enabled = false;
+        _err.ForeColor = Color.FromArgb(90, 90, 90);
+        _err.Text = "正在自动登录…";
+        Application.DoEvents();
+        try
+        {
+            LoginHit hit = null;
+            try { hit = AppHost.Resume(tok); }
+            catch (WebException wex)
+            {
+                var answered = wex.Response as HttpWebResponse;
+                var code = answered != null ? (int)answered.StatusCode : 0;
+                _err.ForeColor = Color.FromArgb(217, 45, 32);
+                if (code == 401 || code == 403)
+                {
+                    AppHost.ForgetRemember(false);
+                    _err.Text = "登录已过期，请重新登录";
+                    return;
+                }
+                var netHint = AppHost.CompanyNetHint();
+                _err.Text = "自动登录没成功：" + (netHint.Length > 0 ? netHint : "连不上公司网") + "。稍后点「登录」再试。";
+                return;
+            }
+            catch { hit = null; }
+            if (hit == null)
+            {
+                AppHost.ForgetRemember(false);
+                _err.ForeColor = Color.FromArgb(217, 45, 32);
+                _err.Text = "登录已过期，请重新登录";
+                return;
+            }
+            EnterDesk(hit, "", true);
+        }
+        catch (Exception ex)
+        {
+            _err.ForeColor = Color.FromArgb(217, 45, 32);
+            _err.Text = "打不开本机 Agent：" + AppHost.WithShareHint(ex.Message);
+            AppHost.Log(ex.ToString());
+        }
+        finally
+        {
+            _go.Enabled = true;
+        }
     }
 
     private void SignIn()
@@ -1778,7 +2538,25 @@ internal sealed class ShellForm : Form
         _err.Text = "";
         var user = _user.Text.Trim();
         var pass = _pass.Text;
-        if (user.Length < 2 || pass.Length < 4)
+        var sms = _mode == "sms";
+        // Back at the sign-in with nothing typed (a seat lost, a stopped Agent): the remembered sign-in, if any.
+        if (!sms && pass.Length == 0 && AppHost.LoadRemember().Length > 0)
+        {
+            AutoResume();
+            return;
+        }
+        if (sms)
+        {
+            user = Digits(user);
+            if (user.Length == 13 && user.StartsWith("86")) user = user.Substring(2);
+            pass = Digits(pass);
+            if (!Regex.IsMatch(user, @"^1[3-9][0-9]{9}$") || pass.Length != 6)
+            {
+                _err.Text = "请填手机号和 6 位验证码";
+                return;
+            }
+        }
+        else if (user.Length < 2 || pass.Length < 4)
         {
             _err.Text = "账号或密码不对";
             return;
@@ -1797,9 +2575,29 @@ internal sealed class ShellForm : Form
             _err.Text = "";
             Application.DoEvents();
             LoginHit hit;
-            try { hit = AppHost.CheckLogin(user, pass); }
-            catch (WebException)
+            try { hit = sms ? AppHost.SmsLogin(user, pass, _remember.Checked) : AppHost.CheckLogin(user, pass, _remember.Checked); }
+            catch (WebException wex)
             {
+                // company-login-reason-v1: HttpWebRequest throws on 401 and 429 too. Those are the server's answer,
+                // not a broken network: saying 连不上公司网 for a wrong password kept people retrying into the
+                // 15-minute lock (2026-11-20, 梁风禾).
+                var answered = wex.Response as HttpWebResponse;
+                var code = answered != null ? (int)answered.StatusCode : 0;
+                if (code == 401 || code == 403)
+                {
+                    _err.Text = sms ? "验证码不对或已过期，请重新获取" : "账号或密码不对";
+                    return;
+                }
+                if (code == 429)
+                {
+                    _err.Text = sms ? "验证码输错太多次，请 15 分钟后再试，或用账号密码登录" : "登录失败次数太多，请 15 分钟后再试；忘了密码请找管理员重置";
+                    return;
+                }
+                if (code >= 400)
+                {
+                    _err.Text = "服务器没有正常回应（" + code + "），请稍后再试；一直这样请找管理员";
+                    return;
+                }
                 var netHint = AppHost.CompanyNetHint();
                 _err.Text = netHint.Length > 0 ? netHint : "连不上公司网，请稍后再试";
                 return;
@@ -1807,55 +2605,10 @@ internal sealed class ShellForm : Form
             catch { hit = null; }
             if (hit == null)
             {
-                _err.Text = "账号或密码不对";
+                _err.Text = sms ? "验证码不对或已过期，请重新获取" : "账号或密码不对";
                 return;
             }
-            _err.Text = "正在挂入公司盘…";
-            Application.DoEvents();
-            AppHost.EnsureShare(hit.SmbUser, hit.SmbPass);
-            if (string.IsNullOrEmpty(hit.Personal) || !Directory.Exists(hit.Personal))
-                throw new Exception("company-workspace-missing");
-            _authUser = hit.Login;
-            _authPass = pass;
-            AppHost.PersistLogin(hit);
-            _personal = hit.Personal;
-            _org = hit.Org ?? "";
-            _err.Text = "正在交接会话…";
-            Application.DoEvents();
-            AppHost.StopDeskNode();
-            try { AppHost.QuitLease(hit.Personal, hit.Org, _leaseWatch); } catch { }
-            AppHost.AcquireLease(hit.Personal, hit.Org);
-            _err.Text = "正在打开本机 Agent…";
-            Application.DoEvents();
-            AppHost.StartDesk(hit.Personal, hit.GwToken);
-            _leaseWatch = AppHost.StartLeaseWatch(hit.Personal, hit.Org);
-            if (_leaseWatch != null)
-            {
-                var watch = _leaseWatch;
-                var t = new Thread(new ThreadStart(delegate
-                {
-                    try { watch.WaitForExit(); }
-                    catch { return; }
-                    if (watch.ExitCode == 3)
-                    {
-                        try
-                        {
-                            BeginInvoke(new Action(delegate
-                            {
-                                MessageBox.Show("这个账号已在其他设备登录，本机已退出。", "TDHarness");
-                                Close();
-                            }));
-                        }
-                        catch { }
-                    }
-                }));
-                t.IsBackground = true;
-                t.Start();
-            }
-            try { AppHost.PinWorkspaces(hit.Personal, hit.Org); }
-            catch (Exception pinEx) { AppHost.Log("pin " + pinEx.Message); }
-            ShowDesk();
-            WatchLogout();
+            EnterDesk(hit, sms ? "" : pass, _remember.Checked);
         }
         catch (Exception ex)
         {
@@ -1866,6 +2619,176 @@ internal sealed class ShellForm : Form
         {
             _go.Enabled = true;
         }
+    }
+
+    // After any sign-in (password, text code, remembered): the share, the seat, the desk.
+    private void EnterDesk(LoginHit hit, string pass, bool remember)
+    {
+        {
+            if (!string.IsNullOrEmpty(hit.RememberToken)) AppHost.SaveRemember(hit.RememberToken);
+            else if (!remember) AppHost.ForgetRemember(true);
+            if (!AppHost.IsCompanyServer() && AppHost.WinFeatureOn("TDH_TUNNEL") && !AppHost.TunnelInstalledOk())
+            {
+                _err.ForeColor = Color.FromArgb(90, 90, 90);
+                _err.Text = "正在安装公司专用网络（只需这一次）。Windows 问「是否允许此应用对你的设备进行更改」时请点「是」。";
+                Application.DoEvents();
+            }
+            try { AppHost.Log("tunnel " + AppHost.EnsureTunnel(hit.GwToken)); }
+            catch (Exception tunEx) { AppHost.Log("tunnel " + tunEx.Message); }
+            _err.ForeColor = Color.FromArgb(217, 45, 32);
+            _err.Text = "正在挂入公司盘…";
+            Application.DoEvents();
+            var serverDesk = AppHost.ServerDeskFor(hit);
+            // company-desk-server-mode-v1: the desk on the server does not read the share from here; the share is still
+            // mounted for Explorer, and its failing does not stop the desk.
+            if (serverDesk)
+            {
+                try { AppHost.EnsureShare(hit.SmbUser, hit.SmbPass); }
+                catch (Exception shareEx) { AppHost.Log("server-desk share " + shareEx.Message); }
+            }
+            else AppHost.EnsureShare(hit.SmbUser, hit.SmbPass);
+            // company-first-login-wait-v1：新员工第一次登录时，服务器刚建好他的共享盘账号，个人目录的授权
+            // 可能还差几秒（服务器也会先等授权再回话，这里再兜一层）。先等，不直接报 workspace-missing。
+            // company-desk-server-mode-v1: the desk on the server opens the person's folder there, not from this computer.
+            if (!serverDesk && !string.IsNullOrEmpty(hit.Personal) && !Directory.Exists(hit.Personal))
+            {
+                _err.ForeColor = Color.FromArgb(90, 90, 90);
+                _err.Text = "正在准备你的个人目录…";
+                AppHost.Log("personal-wait " + hit.Personal);
+                for (var i = 0; i < 30 && !Directory.Exists(hit.Personal); i++)
+                {
+                    Application.DoEvents();
+                    Thread.Sleep(1000);
+                }
+                _err.ForeColor = Color.FromArgb(217, 45, 32);
+                _err.Text = "";
+            }
+            if (!serverDesk && (string.IsNullOrEmpty(hit.Personal) || !Directory.Exists(hit.Personal)))
+                throw new Exception("company-workspace-missing");
+            _authUser = hit.Login;
+            _authPass = pass;
+            AppHost.PersistLogin(hit);
+            _personal = hit.Personal;
+            _org = hit.Org ?? "";
+            _err.Text = "正在交接会话…";
+            Application.DoEvents();
+            AppHost.StopDeskNode();
+            var oldWatch = _leaseWatch;
+            _leaseWatch = null;                 // a watch we stop ourselves is not a seat lost (company-seat-back-v1)
+            _relay = null;
+            try { AppHost.QuitLease(hit.Personal, hit.Org, oldWatch); } catch { }
+            _serverDesk = serverDesk;
+            if (serverDesk)
+            {
+                // No seat, no kernel, no pinned workspaces here: the relay, the hub's answer, then the desk.
+                _err.ForeColor = Color.FromArgb(90, 90, 90);
+                _err.Text = "正在连接服务器上的工作台…";
+                Application.DoEvents();
+                var relay = AppHost.StartDeskRelay();
+                _relay = relay;
+                try { AppHost.WaitServerDesk(delegate(string text) { _err.Text = text; Application.DoEvents(); }); }
+                catch
+                {
+                    _relay = null;
+                    AppHost.StopDeskNode();
+                    throw;
+                }
+                WatchRelay(relay);
+                _err.Text = "";
+                ShowDesk();
+                WatchLogout();
+                return;
+            }
+            AppHost.AcquireLease(hit.Personal, hit.Org);
+            _err.Text = "正在打开本机 Agent…";
+            Application.DoEvents();
+            AppHost.StartDesk(hit.Personal, hit.GwToken);
+            _leaseWatch = AppHost.StartLeaseWatch(hit.Personal, hit.Org);
+            if (_leaseWatch != null)
+            {
+                // company-seat-back-v1 (2026-11-21, 小潘: his desktop sat on 「重新连接中」 after his laptop took the seat; the
+                // user: the desktop signing in should simply put the laptop out). A desk that loses its seat, or whose
+                // local Agent stops, goes back to the sign-in with the account filled in and says why; 登录 takes the
+                // seat back on this computer (the other one is put out), the usual sign-in. No window left stuck.
+                var watch = _leaseWatch;
+                var t = new Thread(new ThreadStart(delegate
+                {
+                    try { watch.WaitForExit(); }
+                    catch { return; }
+                    var code = 0;
+                    try { code = watch.ExitCode; } catch { }
+                    try
+                    {
+                        BeginInvoke(new Action(delegate
+                        {
+                            if (!object.ReferenceEquals(_leaseWatch, watch)) return;     // a newer sign-in has its own
+                            SeatLost(code == 3
+                                ? "这个账号已在其他设备登录，这台电脑已退出。点「登录」就在这台电脑继续用，另一台会退出。"
+                                : "这台电脑的 TDH 停了。点「登录」重新打开。");
+                        }));
+                    }
+                    catch { }
+                }));
+                t.IsBackground = true;
+                t.Start();
+            }
+            try { AppHost.PinWorkspaces(hit.Personal, hit.Org); }
+            catch (Exception pinEx) { AppHost.Log("pin " + pinEx.Message); }
+            ShowDesk();
+            WatchLogout();
+        }
+    }
+
+    // company-desk-server-mode-v1: the relay stopping is this computer's TDH stopping (as the lease watch says it for a
+    // local desk): back to the sign-in, with the reason.
+    private void WatchRelay(Process relay)
+    {
+        var t = new Thread(new ThreadStart(delegate
+        {
+            try { relay.WaitForExit(); }
+            catch { return; }
+            try
+            {
+                BeginInvoke(new Action(delegate
+                {
+                    if (!object.ReferenceEquals(_relay, relay)) return;     // stopped by us, or a newer sign-in's
+                    SeatLost("这台电脑的 TDH 停了。点「登录」重新打开。");
+                }));
+            }
+            catch { }
+        }));
+        t.IsBackground = true;
+        t.Start();
+    }
+
+    // company-seat-back-v1: back to the sign-in, the account kept (the password only in memory, as it was), the reason said.
+    private void SeatLost(string why)
+    {
+        if (_logoutWatch != null)
+        {
+            try { _logoutWatch.Stop(); _logoutWatch.Dispose(); } catch { }
+            _logoutWatch = null;
+        }
+        _leaseWatch = null;
+        _relay = null;
+        AppHost.StopDeskNode();
+        if (_web != null)
+        {
+            Controls.Remove(_web);
+            try { _web.Dispose(); } catch { }
+            _web = null;
+        }
+        if (_authUser.Length > 0) _user.Text = _authUser;
+        if (_authPass.Length > 0) _pass.Text = _authPass;
+        _err.ForeColor = Color.FromArgb(217, 45, 32);
+        _err.Text = why;
+        _go.Enabled = true;
+        _login.Visible = true;
+        _login.Enabled = true;
+        _login.BringToFront();
+        ShowLoginSurface();
+        try { Activate(); } catch { }
+        AppHost.Log("seat-lost " + why.Substring(0, Math.Min(12, why.Length)));
     }
 
     private void WatchLogout()
@@ -1891,9 +2814,13 @@ internal sealed class ShellForm : Form
             try { _logoutWatch.Stop(); _logoutWatch.Dispose(); } catch { }
             _logoutWatch = null;
         }
+        // company-login-remember-v1: 退出登录 ends this computer's remembered sign-in too.
+        AppHost.ForgetRemember(true);
         AppHost.ClearLogin();
-        AppHost.QuitLease(_personal, _org, _leaseWatch);
+        var oldWatch = _leaseWatch;
         _leaseWatch = null;
+        _relay = null;
+        if (!_serverDesk) AppHost.QuitLease(_personal, _org, oldWatch);
         AppHost.StopDeskNode();
         if (_web != null)
         {
@@ -1908,30 +2835,211 @@ internal sealed class ShellForm : Form
         _login.Visible = true;
         _login.Enabled = true;
         _login.BringToFront();
+        ShowLoginSurface();
         AppHost.Log("logout-to-login");
+    }
+
+    // company-login-page-v1 (the user, 2026-11-24: 「登录窗口好丑」「把登录同步解决」): login.html (beside this exe; the
+    // same page the Mac shows) in WebView2 over the native sign-in. The page only asks; every step is still the native
+    // one (SendCode, SignIn, AutoResume): what the page typed goes into the native boxes and the native button is
+    // pressed, and whatever the native status line says is sent to the page. No WebView2, no login.html, or any
+    // failure here: the native sign-in stays, as before.
+    // company-login-page-win-off-v1 (2026-11-25): the sign-in page in a WebView2 left the window empty on the office's
+    // Windows desks the morning it first ran (it waited for WebView2 on the UI thread before anything else started, so
+    // not even the update check ran; after a sign-in the desk's own WebView2 came up empty). The native sign-in, the one
+    // these desks ran for weeks, until the page is proven on one of them.
+    internal static bool WebLoginOn = Environment.GetEnvironmentVariable("TDH_WEB_LOGIN") == "1";
+
+    private void ShowLoginPage()
+    {
+        if (!WebLoginOn) return;
+        if (_loginWeb != null || _web != null) return;
+        if (DeskPrereq.WebView2Version().Length == 0) return;
+        var file = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "login.html");
+        if (!File.Exists(file)) return;
+        try
+        {
+            var html = File.ReadAllText(file, Encoding.UTF8);
+            var w = new WebView2();
+            w.Dock = DockStyle.Fill;
+            w.Visible = false;
+            Controls.Add(w);
+            var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TDHarness", "webview");
+            Directory.CreateDirectory(data);
+            var envTask = CoreWebView2Environment.CreateAsync(null, data);
+            AppHost.WaitTask(envTask);
+            AppHost.WaitTask(w.EnsureCoreWebView2Async(envTask.Result));
+            if (_web != null || IsDisposed) { Controls.Remove(w); w.Dispose(); return; }
+            w.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+            w.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            w.CoreWebView2.Settings.IsStatusBarEnabled = false;
+            w.CoreWebView2.NewWindowRequested += delegate(object sender, CoreWebView2NewWindowRequestedEventArgs e) { e.Handled = true; };
+            w.CoreWebView2.NavigationStarting += delegate(object sender, CoreWebView2NavigationStartingEventArgs e)
+            {
+                if (e.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase) || e.Uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase)) return;
+                e.Cancel = true;
+            };
+            w.CoreWebView2.WebMessageReceived += delegate(object sender, CoreWebView2WebMessageReceivedEventArgs e)
+            {
+                string msg;
+                try { msg = e.TryGetWebMessageAsString(); }
+                catch { return; }
+                LoginStep(msg);
+            };
+            w.CoreWebView2.NavigationCompleted += delegate
+            {
+                if (_web != null) return;
+                w.Visible = true;
+                w.BringToFront();
+                PushLoginState();
+            };
+            _loginWeb = w;
+            w.CoreWebView2.NavigateToString(html);
+            AppHost.Log("login-page on");
+        }
+        catch (Exception ex)
+        {
+            AppHost.Log("login-page off " + ex.Message);
+            if (_loginWeb != null) { try { Controls.Remove(_loginWeb); _loginWeb.Dispose(); } catch { } }
+            _loginWeb = null;
+        }
+    }
+
+    private void ShowLoginSurface()
+    {
+        if (_loginWeb == null) return;
+        _loginWeb.Visible = true;
+        _loginWeb.BringToFront();
+        PushLoginState();
+    }
+
+    private static string JsonText(string s)
+    {
+        var sb = new StringBuilder("\"");
+        foreach (var ch in s ?? "")
+        {
+            if (ch == '"' || ch == '\\') sb.Append('\\').Append(ch);
+            else if (ch < ' ') sb.Append("\\u").Append(((int)ch).ToString("x4"));
+            else sb.Append(ch);
+        }
+        return sb.Append('"').ToString();
+    }
+
+    private bool ErrIsBad()
+    {
+        var c = _err.ForeColor;
+        return c.R > 150 && c.G < 120;
+    }
+
+    private void PostToLogin(string json)
+    {
+        if (_loginWeb == null || _loginWeb.CoreWebView2 == null) return;
+        try { _loginWeb.CoreWebView2.PostWebMessageAsString(json); }
+        catch { }
+    }
+
+    // The page's waiting card (an update's progress); "" puts the form back. Any thread.
+    private void PushWait(string text)
+    {
+        if (_loginWeb == null) return;
+        try { BeginInvoke(new Action(delegate { PostToLogin("{\"type\":\"state\",\"wait\":" + JsonText(text) + ",\"waitSub\":\"\"}"); })); }
+        catch { }
+    }
+
+    // The native status line, as the page shows it (also each step's 正在… while a sign-in runs).
+    private void PushLoginState()
+    {
+        if (_loginWeb == null || !_loginWeb.Visible) return;
+        var text = _err.Text ?? "";
+        PostToLogin("{\"type\":\"state\",\"msg\":" + JsonText(text) + ",\"bad\":" + (ErrIsBad() && text.Length > 0 ? "true" : "false") + "}");
+    }
+
+    private void LoginStep(string msg)
+    {
+        var id = AppHost.JsonField(msg, "id");
+        var step = AppHost.JsonField(msg, "step");
+        if (!Regex.IsMatch(id, @"^m[0-9]{1,9}$")) return;
+        string reply;
+        try { reply = LoginStepReply(step, msg); }
+        catch (Exception ex)
+        {
+            AppHost.Log("login-page step " + ex.Message);
+            reply = "\"ok\":false,\"msg\":" + JsonText("本机登录出错了，请重新打开 TDHarness。");
+        }
+        PostToLogin("{\"id\":\"" + id + "\"," + reply + "}");
+    }
+
+    private string LoginStepReply(string step, string msg)
+    {
+        if (step == "hello")
+        {
+            string lastLogin = "", lastPhone = "";
+            try { lastLogin = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), "last.login")).Trim(); } catch { }
+            try { lastPhone = File.ReadAllText(Path.Combine(AppHost.Rc8Dir(), "last.phone")).Trim(); } catch { }
+            if (!Regex.IsMatch(lastLogin, @"^[A-Za-z0-9._@-]{1,64}$")) lastLogin = "";
+            if (!Regex.IsMatch(lastPhone, @"^[0-9+]{11,14}$")) lastPhone = "";
+            var text = _err.Text ?? "";
+            return "\"ok\":true,\"lastLogin\":" + JsonText(lastLogin) + ",\"lastPhone\":" + JsonText(lastPhone)
+                + ",\"mode\":" + JsonText(lastPhone.Length > 0 || lastLogin.Length == 0 ? "sms" : "pwd")
+                + ",\"msg\":" + JsonText(text) + ",\"bad\":" + (ErrIsBad() && text.Length > 0 ? "true" : "false");
+        }
+        var data = msg;
+        var remember = AppHost.JsonField(data, "remember") != "false";
+        if (step == "sms-code")
+        {
+            _mode = "sms";
+            _user.Text = AppHost.JsonField(data, "phone");
+            SendCode();
+            var text = _err.Text ?? "";
+            if (text.StartsWith("验证码已发送")) return "\"ok\":true";
+            return "\"ok\":false,\"smsOff\":" + (_mode == "password" ? "true" : "false") + ",\"msg\":" + JsonText(text.Length > 0 ? text : "验证码没发出去，请稍后再试。");
+        }
+        if (step == "sms" || step == "password")
+        {
+            _mode = step == "sms" ? "sms" : "password";
+            _user.Text = step == "sms" ? AppHost.JsonField(data, "phone") : AppHost.JsonField(data, "user");
+            _pass.Text = step == "sms" ? AppHost.JsonField(data, "code") : AppHost.JsonField(data, "pass");
+            _remember.Checked = remember;
+            data = null;
+            SignIn();
+            _pass.Text = "";
+            if (_web != null && !_login.Visible) return "\"ok\":true";
+            var text = _err.Text ?? "";
+            return "\"ok\":false,\"msg\":" + JsonText(text.Length > 0 ? text : "登录没有成功，请再试一次。");
+        }
+        return "\"ok\":false,\"msg\":" + JsonText("不认识这一步。");
     }
 
     private void ShowDesk()
     {
-        _login.Visible = false;
-        _login.Enabled = false;
-        _web = new WebView2();
-        _web.Dock = DockStyle.Fill;
-        Controls.Add(_web);
-        _web.BringToFront();
+        // company-desk-show-safe-v1 (2026-11-25): the desk's WebView2 is made ready behind the sign-in, and the sign-in is
+        // put away only then. Before, it was hidden first: a WebView2 that failed or never came up left an empty window
+        // (the error went to a label nobody could see). Now the sign-in stays, with the reason.
+        var web = new WebView2();
+        web.Dock = DockStyle.Fill;
+        web.Visible = false;
+        Controls.Add(web);
         var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TDHarness", "webview");
         Directory.CreateDirectory(data);
         try
         {
             var envTask = CoreWebView2Environment.CreateAsync(null, data);
-            AppHost.WaitTask(envTask);
-            var ready = _web.EnsureCoreWebView2Async(envTask.Result);
-            AppHost.WaitTask(ready);
+            if (!AppHost.WaitTask(envTask, 60000)) throw new TimeoutException("webview2-env-timeout");
+            var ready = web.EnsureCoreWebView2Async(envTask.Result);
+            if (!AppHost.WaitTask(ready, 60000)) throw new TimeoutException("webview2-init-timeout");
         }
         catch (Exception ex)
         {
-            throw new Exception("webview2-missing " + ex.Message);
+            AppHost.Log("desk-webview " + ex.Message);
+            try { Controls.Remove(web); web.Dispose(); } catch { }
+            throw new Exception("这台电脑的微软 WebView2 组件没能打开（" + ex.Message + "）。请重启电脑后再打开 TDHarness；还不行请联系管理员");
         }
+        _web = web;
+        _login.Visible = false;
+        _login.Enabled = false;
+        if (_loginWeb != null) _loginWeb.Visible = false;
+        _web.Visible = true;
+        _web.BringToFront();
         _web.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
         _web.CoreWebView2.Settings.AreDevToolsEnabled = false;
         // The desk window shows the desk and nothing else. A page that asks for a
@@ -1950,6 +3058,15 @@ internal sealed class ShellForm : Form
             e.Cancel = true;
             AppHost.OpenOutside(e.Uri, "navigation");
         };
-        _web.CoreWebView2.Navigate(AppHost.WaitDeskNavigateUrl(8000));
+        // company-chat-voice-v1: the chat (its page on this machine's own relay, 127.0.0.1) records voice messages; the
+        // microphone is allowed there without WebView2's own question each time. Anything else keeps the default.
+        _web.CoreWebView2.PermissionRequested += delegate(object sender, CoreWebView2PermissionRequestedEventArgs e)
+        {
+            if (e.PermissionKind == CoreWebView2PermissionKind.Microphone && AppHost.IsLocalChatUrl(e.Uri))
+                e.State = CoreWebView2PermissionState.Allow;
+        };
+        // company-desk-server-mode-v1: the relay's page has no start token of this computer's to wait for (the hub hands
+        // the kernel's on the first GET /); a web-runtime.out left by an earlier local desk must not be read.
+        _web.CoreWebView2.Navigate(_serverDesk ? AppHost.BareDeskUrl() : AppHost.WaitDeskNavigateUrl(8000));
     }
 }

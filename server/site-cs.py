@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -252,7 +253,64 @@ def replace_zip_member(src: Path, dst: Path, name: str, data: bytes, extra=None)
     if n != 1:
         tmp.unlink(missing_ok=True)
         raise SystemExit("replace-zip-member-missing")
-    tmp.replace(dst)
+    swap_in(tmp, dst)
+    return n
+
+
+def swap_in(tmp: Path, dst: Path, tries: int = 240, wait: float = 5.0) -> None:
+    """tmp.replace(dst), waiting while Windows refuses: a pack being downloaded right now (Caddy has
+    it open) cannot be replaced. 2026-11-19: a publish died here while a desk was taking the update,
+    and again after 80 s: a 400 MB pack on a slow line takes minutes. Now up to 20 minutes."""
+    import time
+    for i in range(tries):
+        try:
+            tmp.replace(dst)
+            return
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            if i == 0 or i % 12 == 0:
+                sys.stderr.write("SWAP_WAIT %s is being downloaded; waiting (%ds)\n" % (dst.name, int(i * wait)))
+                sys.stderr.flush()
+            time.sleep(wait)
+
+
+LIVE_LAST = ("version.json", "version.sig")
+
+
+def go_live(stage: Path, live: Path) -> int:
+    """company-publish-staged-v1: move a publish's finished files from `stage` into the download folder.
+    Everything except version.json/version.sig goes first (new delta packs, Setup, the packs: each waits
+    while a desk is still downloading the old one), then version.json and version.sig together, so the
+    packs and version.json desks see disagree for moments, not for the whole publish. Delta packs no
+    longer listed in the new version.json are removed afterwards."""
+    files = sorted(p for p in stage.rglob("*") if p.is_file())
+    first = [p for p in files if p.relative_to(stage).as_posix() not in LIVE_LAST]
+    last = [stage / n for n in LIVE_LAST if (stage / n).is_file()]
+    n = 0
+    for p in first + last:
+        dst = live / p.relative_to(stage)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        swap_in(p, dst)
+        n += 1
+        sys.stdout.write("LIVE %s\n" % p.relative_to(stage).as_posix())
+    ver = live / "version.json"
+    deltas = live / "delta"
+    if ver.is_file() and deltas.is_dir():
+        doc = json.loads(ver.read_text(encoding="utf-8-sig"))
+        keep = set()
+        for row in doc.values():
+            if isinstance(row, dict):
+                for d in (row.get("deltas") or {}).values():
+                    if isinstance(d, dict) and isinstance(d.get("file"), str):
+                        keep.add(d["file"].replace("\\", "/").split("/")[-1])
+        for f in deltas.glob("*.zip"):
+            if f.name not in keep:
+                try:
+                    f.unlink()
+                    sys.stdout.write("LIVE_PRUNED delta/%s\n" % f.name)
+                except OSError:
+                    pass  # still being downloaded; the next publish removes it
     return n
 
 
@@ -274,8 +332,55 @@ def put_zip_dir(src: Path, folder: Path, prefix: str) -> int:
             zout.writestr(item, zin.read(item.filename))
         for name, data in files.items():
             zout.writestr(name, data)
-    tmp.replace(src)
+    swap_in(tmp, src)
     return len(files)
+
+
+SKILL_NAME_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def put_site_skills(src: Path, skills: Path) -> list:
+    """company-site-skills-in-pack-v1 (2026-11-22): this site's skills (the share's _skills) go into the pack too.
+    A desk builds its skill list from the share at boot, so one that could not read the share (田总's Mac kept being
+    asked about network volumes) had only the pack's own skills: no 邮箱, ERP, 生产 or 聊天 skill. Now the pack carries
+    them; the share still lays over them at boot, so a skill changed on the share works on the next start where the
+    share can be read, and elsewhere after the next publish. Each skill folder (one with a SKILL.md) replaces the
+    pack's folder of the same name whole, as sync-skills.js does. The repository stays without them: they are this
+    site's. Run after overlay-zip (which drops skills the repository does not have) and before reseal-zip."""
+    import zipfile
+
+    if not skills.is_dir():
+        return []
+    found = {}
+    for d in sorted(skills.iterdir()):
+        if not d.is_dir() or not SKILL_NAME_OK.match(d.name) or not (d / "SKILL.md").is_file():
+            continue
+        rows = {}
+        for f in sorted(d.rglob("*")):
+            rel = f.relative_to(d).as_posix()
+            if not f.is_file() or f.is_symlink() or any(x.startswith(".") or x == "__MACOSX" for x in rel.split("/")):
+                continue
+            rows["CompanyDesk/skills/%s/%s" % (d.name, rel)] = f.read_bytes()
+        found[d.name] = rows
+    if not found:
+        return []
+    owned = tuple("CompanyDesk/skills/%s/" % n for n in found)
+    tmp = src.with_suffix(src.suffix + ".tmp")
+    with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            name = item.filename.replace("\\", "/")
+            if name.startswith(owned):
+                continue
+            zout.writestr(item, zin.read(item.filename))
+        for rows in found.values():
+            for name, data in rows.items():
+                zi = zipfile.ZipInfo(name, date_time=(2026, 10, 11, 0, 0, 0))
+                zi.compress_type = zipfile.ZIP_DEFLATED
+                zi.create_system = 3  # Unix, so a Mac keeps the mode (see overlay_zip)
+                zi.external_attr = (0o100000 | 0o644) << 16
+                zout.writestr(zi, data)
+    swap_in(tmp, src)
+    return sorted(found)
 
 
 def put_zip_archive(src: Path, archive: Path, prefix: str, keep: list) -> int:
@@ -342,8 +447,59 @@ def put_zip_archive(src: Path, archive: Path, prefix: str, keep: list) -> int:
             zi.create_system = 3  # Unix, so unzip on a Mac applies the mode bits
             zi.external_attr = (stat.S_IFREG | mode) << 16
             zout.writestr(zi, data)
-    tmp.replace(src)
+    swap_in(tmp, src)
     return len(files)
+
+
+MAC_APP_README = """把 TDHarness 拖到旁边的「应用程序」里，就装好了。
+
+第一次打开：在「应用程序」里双击 TDHarness。系统说「无法验证开发者」时，
+打开「系统设置 → 隐私与安全性」，在下面找到 TDHarness，点「仍要打开」，以后就不用了。
+（老一点的 macOS：在 TDHarness 图标上点右键，选「打开」。）
+
+装好以后客户端会自己更新，不用再来下载。
+"""
+
+
+def mac_app_zip(src: Path, app_dir: Path, out: Path, name: str = "TDHarness") -> int:
+    """The Mac download a person drags to install (company-mac-app-v1): a folder holding
+    <name>.app, a link to /Applications and a short note. The app is the desk shell in app_dir
+    (desk/mac-app: the WKWebView launcher, ad-hoc signed on its own, Info.plist, icon) around this
+    publish's pack (src, CompanyDesk-mac.zip) as Contents/Resources, modes and links as shipped.
+    Updates then land in Resources the way they do for a desk installed by hand."""
+    import stat
+    import zipfile
+
+    top = name + "/"
+    contents = top + name + ".app/Contents/"
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    n = 0
+
+    def put(zout, arcname, data, mode, link=False):
+        zi = zipfile.ZipInfo(arcname, date_time=(2026, 10, 11, 0, 0, 0))
+        zi.compress_type = zipfile.ZIP_STORED if link else zipfile.ZIP_DEFLATED
+        zi.create_system = 3
+        zi.external_attr = ((stat.S_IFLNK if link else stat.S_IFREG) | mode) << 16
+        zout.writestr(zi, data)
+
+    with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+        put(zout, contents + "Info.plist", (app_dir / "Info.plist").read_bytes(), 0o644)
+        put(zout, contents + "MacOS/" + name, (app_dir / "TDHarness").read_bytes(), 0o755)
+        put(zout, contents + "Resources/AppIcon.icns", (app_dir / "AppIcon.icns").read_bytes(), 0o644)
+        put(zout, top + "应用程序", b"/Applications", 0o755, link=True)
+        put(zout, top + "安装说明.txt", MAC_APP_README.encode("utf-8"), 0o644)
+        for item in zin.infolist():
+            rel = item.filename.replace("\\", "/")
+            if not rel.startswith("CompanyDesk/") or rel == "CompanyDesk/" or rel.endswith("/"):
+                continue
+            zi = zipfile.ZipInfo(contents + "Resources/" + rel[len("CompanyDesk/"):], date_time=item.date_time)
+            zi.compress_type = item.compress_type
+            zi.create_system = item.create_system
+            zi.external_attr = item.external_attr
+            zout.writestr(zi, zin.read(item.filename))
+            n += 1
+    swap_in(tmp, out)
+    return n
 
 
 MAC_TREE_RUN = (
@@ -492,7 +648,7 @@ def rewrite_zip(src: Path, dst: Path, host: str) -> int:
                 data, k = site_rewrite(name, data, host)
                 n += k
             zout.writestr(item, data)
-    tmp.replace(dst)
+    swap_in(tmp, dst)
     return n
 
 
@@ -531,6 +687,12 @@ def pack_sources(pack: Path, plat: str) -> dict:
         for f in sorted(root.rglob("*")):
             if f.is_file() and not f.name.startswith("._") and f.name != ".DS_Store":
                 out["CompanyDesk/" + f.relative_to(root).as_posix()] = f
+    # company-mac-shell-refresh-v1: the Mac app's own shell rides in the pack, so a Mac installed once follows it
+    # (mac-shell-refresh.sh, from start.command); the download's app is made from the same two files (mac_app_zip).
+    shell = pack.parent / "mac-app"
+    if plat == "mac" and (shell / "TDHarness").is_file() and (shell / "Info.plist").is_file():
+        out["CompanyDesk/mac-shell.bin"] = shell / "TDHarness"
+        out["CompanyDesk/mac-shell.plist"] = shell / "Info.plist"
     return out
 
 
@@ -557,10 +719,18 @@ def overlay_zip(src: Path, plugins: Path, host: str) -> int:
         zi = zipfile.ZipInfo(name, date_time=(2026, 10, 11, 0, 0, 0))
         zi.compress_type = zipfile.ZIP_DEFLATED
         old = was.get(name)
-        if old is not None:
+        if old is not None and old.create_system == 3 and (old.external_attr >> 16) & 0o170000:
             zi.external_attr, zi.create_system = old.external_attr, old.create_system
         else:
-            zi.external_attr = (0o755 if name.endswith((".sh", ".command")) else 0o644) << 16
+            # A regular Unix file (0o100000 = S_IFREG), made by Unix (3): without create_system=3 a zip
+            # written on the Windows server says "MS-DOS" and unzip/ditto on a Mac drop the mode, so a new
+            # script (mac-join-off-lan.sh, 2026-11-19) arrived without its execute bit. An entry an earlier
+            # publish wrote that way is repaired here too, keeping its permission bits.
+            mode = ((old.external_attr >> 16) & 0o777) if old is not None else 0
+            if not mode:
+                mode = 0o755 if name.endswith((".sh", ".command")) or name.startswith("CompanyDesk/bin/") else 0o644
+            zi.create_system = 3
+            zi.external_attr = (0o100000 | mode) << 16
         zout.writestr(zi, data)
 
     with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(tmp, "w") as zout:
@@ -601,7 +771,7 @@ def overlay_zip(src: Path, plugins: Path, host: str) -> int:
         missing = [nm for nm in names if not any((h, nm) in present for h in PLUGIN_HOMES)]
         if missing:
             raise SystemExit("overlay-plugin-not-in-pack:" + ",".join(missing))
-    tmp.replace(src)
+    swap_in(tmp, src)
     return n
 
 
@@ -625,7 +795,7 @@ def retarget_zip(src: Path, dst: Path, old: str, new: str) -> int:
                 data, k = pat.subn(new_b, data)
                 n += k
             zout.writestr(item, data)
-    tmp.replace(dst)
+    swap_in(tmp, dst)
     return n
 
 
@@ -670,7 +840,7 @@ def main() -> None:
     ap.add_argument("--site", required=True)
     ap.add_argument(
         "cmd",
-        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip", "put-zip-archive"),
+        choices=("emit-cs", "emit-caddy", "emit-stamp", "print", "print-mark", "rewrite-zip", "overlay-zip", "retarget-zip", "reseal-zip", "extract-zip", "replace-zip", "put-zip", "put-zip-archive", "put-site-skills", "mac-app-zip", "go-live"),
     )
     ap.add_argument("--out")
     ap.add_argument("--src")
@@ -729,6 +899,24 @@ def main() -> None:
             raise SystemExit("put-zip needs --src --file <folder> --name <prefix in the zip>")
         n = put_zip_dir(Path(args.src), Path(args.file), args.name)
         sys.stdout.write("PUT=%s\n" % n)
+        return
+    if args.cmd == "put-site-skills":
+        if not args.src or not args.file:
+            raise SystemExit("put-site-skills needs --src <pack zip> --file <the share's _skills>")
+        got = put_site_skills(Path(args.src), Path(args.file))
+        sys.stdout.write("SITE_SKILLS=%s %s\n" % (len(got), ",".join(got)))
+        return
+    if args.cmd == "go-live":
+        if not args.src or not args.out:
+            raise SystemExit("go-live needs --src <stage folder> --out <download folder>")
+        n = go_live(Path(args.src), Path(args.out))
+        sys.stdout.write("GO_LIVE_FILES=%s\n" % n)
+        return
+    if args.cmd == "mac-app-zip":
+        if not args.src or not args.out or not args.file:
+            raise SystemExit("mac-app-zip needs --src <CompanyDesk-mac.zip> --file <desk/mac-app> --out <TDHarness-mac.zip>")
+        n = mac_app_zip(Path(args.src), Path(args.file), Path(args.out), args.name or "TDHarness")
+        sys.stdout.write("MAC_APP_FILES=%s\n" % n)
         return
     if args.cmd == "put-zip-archive":
         if not args.src or not args.archive or not args.name or not args.keep:

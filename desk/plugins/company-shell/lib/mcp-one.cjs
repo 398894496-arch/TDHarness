@@ -80,6 +80,7 @@ if (require.main !== module) {
 } else {
 	const child = spawn(cmd, cmdArgs, { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
 	const listIds = new Set();
+	const templateIds = new Set();
 	const known = new Set();
 	const send = (stream, obj) => stream.write(JSON.stringify(obj) + "\n");
 	const lines = (stream, onLine) => {
@@ -99,6 +100,7 @@ if (require.main !== module) {
 		try { msg = JSON.parse(line); } catch { msg = null; }
 		if (!msg) { child.stdin.write(line + "\n"); return; }
 		if (msg.method === "tools/list" && msg.id !== undefined) listIds.add(msg.id);
+		if (msg.method === "resources/templates/list" && msg.id !== undefined) templateIds.add(msg.id);
 		if (msg.method === "tools/call" && msg.id !== undefined && msg.params) {
 			if (msg.params.name === NAME) {
 				const got = unwrapCall(msg.params, known);
@@ -114,6 +116,15 @@ if (require.main !== module) {
 	lines(child.stdout, (line) => {
 		let msg = null;
 		try { msg = JSON.parse(line); } catch { msg = null; }
+		// company-mcp-one-templates-v1: a server without resource templates (cua-driver) answers
+		// "Unknown method: resources/templates/list"; the desk showed that as a red tool error.
+		// Nothing to list is an empty list, not an error.
+		if (msg && msg.id !== undefined && templateIds.has(msg.id)) {
+			templateIds.delete(msg.id);
+			if (msg.error && (msg.error.code === -32601 || /unknown method|method not found/i.test(String(msg.error.message || "")))) {
+				msg = { jsonrpc: "2.0", id: msg.id, result: { resourceTemplates: [] } };
+			}
+		}
 		if (msg && msg.id !== undefined && listIds.has(msg.id)) {
 			listIds.delete(msg.id);
 			if (msg.result && Array.isArray(msg.result.tools)) {

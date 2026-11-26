@@ -27,8 +27,9 @@ $brain = Join-Path $Root 'brain'
 $log = Join-Path $brain '90-system\brain-daily'
 New-Item -ItemType Directory -Force $log | Out-Null
 
-# The page for each person is written by the model, through the gateway on this machine.
-$env:L1_DISTILL = '1'
+# company-krouter-nightly-v1: the model work is KRouter's now (below); this job keeps writing the evidence layer
+# (L0) and the facts without a model. Its own per-person narrative used Grok, which this site no longer has.
+$env:L1_DISTILL = '0'
 $env:L1_DISTILL_URL = 'http://127.0.0.1:8450/v1'
 $argv = @((Join-Path $here 'brain-daily.js'), '--distill', '--brain-root', $brain, '--company-root', (Join-Path $Root 'company'), '--people-roster', (Join-Path $Root 'runtime\roster.json'))
 if (-not $DryRun) { $argv += @('--write', '--allow-prod') }
@@ -37,3 +38,12 @@ $out = & $Node @argv 2>&1 | Out-String
 $out | Set-Content -LiteralPath (Join-Path $log 'last-run.log') -Encoding UTF8
 Write-Output $out
 if ($LASTEXITCODE -ne 0) { throw 'brain-daily-failed' }
+
+# KRouter's nightly for the company memory (server\krouter-nightly.js): yesterday's conversations distilled into
+# experience cards in the company memory, the standing index and trigger words, and the hot cycle (60 days).
+$kr = @((Join-Path (Split-Path -Parent $here) 'krouter-nightly.js'), '--company-root', (Join-Path $Root 'company'), '--runtime-root', (Join-Path $Root 'runtime'))
+if ($DryRun) { $kr += '--dry-run' }
+if ($Target) { $kr += @('--target', $Target) }
+$krOut = & $Node @kr 2>&1 | Out-String
+$krOut | Set-Content -LiteralPath (Join-Path $log 'krouter-last-run.log') -Encoding UTF8
+Write-Output $krOut

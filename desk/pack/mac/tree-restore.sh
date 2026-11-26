@@ -21,9 +21,12 @@ done
 is_product() {
   case "$1" in
     prefix|prefix/*|node|node/*|plugins|plugins/*|home/profiles/web/node_modules|home/profiles/web/node_modules/*) return 0 ;;
-    skills|skills/*|opencli|opencli/*|peekaboo|peekaboo/*|cua-driver|cua-driver/*) return 0 ;;
-    TDHarness.exe|TDHarness|start.ps1|start.command|CompanyDesk.vbs|WebView2Loader.dll|tree-check.js|tree-restore.ps1|tree-restore.sh|pack-update-check.js|sync-skills.js|sync-desk-home.sh|sync-desk-home.ps1|prove-cosmokit.js|desk-lease.js|mac-mount-company.sh|mac-pin-settings.js|mac-company-login.js|mac-smb-mount.js|BUILD.json|home/profiles/web/package.json|home/profiles/web/overlay.yml|presets|presets/*) return 0 ;;
-    *) return 1 ;;
+    skills|skills/*|opencli|opencli/*|peekaboo|peekaboo/*|cua-driver|cua-driver/*|vendor|vendor/*|bin|bin/*) return 0 ;;
+    TDHarness.exe|TDHarness|start.ps1|start.command|CompanyDesk.vbs|WebView2Loader.dll|tree-check.js|tree-restore.ps1|tree-restore.sh|pack-update-check.js|sync-skills.js|sync-desk-home.sh|sync-desk-home.ps1|prove-cosmokit.js|desk-lease.js|krouter-hook.js|krouter-hooks.json|mac-mount-company.sh|mac-join-off-lan.sh|mac-pin-settings.js|mac-company-login.js|mac-smb-mount.js|mac-resolve.js|BUILD.json|home/profiles/web/package.json|home/profiles/web/overlay.yml|presets|presets/*) return 0 ;;
+    # company-delta-top-files-v1: every other top-level file the signed pack carries is the desk's too. Names
+    # missing from the list above never arrived (mac-pin-workspaces.js, mcp-one.cjs stayed old on every Mac).
+    */*) return 1 ;;
+    *) return 0 ;;
   esac
 }
 
@@ -73,13 +76,32 @@ if [[ -z "$ZIP" ]]; then
     echo "TREE_DOWNLOAD_UNRENDERED=1" >&2
     exit 2
   fi
+  # company-compat-v1: 400 MB down and 1 GB unpacked must both fit; say so instead of failing half way.
+  tmp_kb="$( { df -Pk /tmp 2>/dev/null || true; } | awk 'NR==2 { print $4 }')"
+  root_kb="$( { df -Pk "$ROOT" 2>/dev/null || true; } | awk 'NR==2 { print $4 }')"
+  for kb in "$tmp_kb" "$root_kb"; do
+    if [[ "$kb" =~ ^[0-9]+$ ]] && (( kb < 1572864 )); then
+      echo "TREE_RESTORE_DISK_FULL=1 free_kb=$kb need_kb=1572864" >&2
+      exit 2
+    fi
+  done
   ZIP="$(mktemp /tmp/dsh-tree.XXXXXX)"
   owned=1
   echo "TREE_DOWNLOAD=$ZIPURL"
-  total="$(curl -fsSkI --noproxy '*' "$ZIPURL" 2>/dev/null | awk 'tolower($1)=="content-length:"{gsub("\r","",$2); print $2}' | tail -1)"
+  # company-mac-offlan-resolve-v1: curl does not find {{TDH_HOST}} away from the office (macOS: .local is the LAN's
+  # multicast DNS only); hand it the address the desk's own lookup found (the tailnet one away from the office).
+  SITE_ADDR=""
+  if [ -f "$ROOT/mac-resolve.js" ] && [ -x "$ROOT/node/bin/node" ]; then
+    SITE_ADDR="$(NODE_OPTIONS= "$ROOT/node/bin/node" "$ROOT/mac-resolve.js" --addr 2>/dev/null || true)"
+    [[ "$SITE_ADDR" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || SITE_ADDR=""
+  fi
+  site_curl() {
+    if [ -n "$SITE_ADDR" ]; then curl --resolve "{{TDH_HOST}}:8443:$SITE_ADDR" "$@"; else curl "$@"; fi
+  }
+  total="$(site_curl -fsSkI --noproxy '*' "$ZIPURL" 2>/dev/null | awk 'tolower($1)=="content-length:"{gsub("\r","",$2); print $2}' | tail -1)"
   [[ "$total" =~ ^[0-9]+$ ]] || total=0
   progress download 0 "$total"
-  curl -fsSk --noproxy '*' -o "$ZIP" "$ZIPURL" &
+  site_curl -fsSk --noproxy '*' -o "$ZIP" "$ZIPURL" &
   cpid=$!
   while kill -0 "$cpid" 2>/dev/null; do
     sleep 0.5
@@ -134,25 +156,38 @@ copy_tree "$src/skills" "$ROOT/skills"
 copy_tree "$src/opencli" "$ROOT/opencli"
 copy_tree "$src/peekaboo" "$ROOT/peekaboo"
 copy_tree "$src/cua-driver" "$ROOT/cua-driver"
+# company-tailnet-vendor-v1: the site's tailnet files (join key, server address, Tailscale installer)
+copy_tree "$src/vendor" "$ROOT/vendor"
+copy_tree "$src/bin" "$ROOT/bin"
 if [[ -d "$src/home/profiles/web/node_modules" ]]; then
   mkdir -p "$ROOT/home/profiles/web"
   copy_tree "$src/home/profiles/web/node_modules" "$ROOT/home/profiles/web/node_modules"
 fi
 
 wrote=0
+listed=" "
 for f in TDHarness.exe TDHarness start.ps1 start.command CompanyDesk.vbs WebView2Loader.dll \
          tree-check.js tree-restore.ps1 tree-restore.sh pack-update-check.js \
-         sync-skills.js sync-desk-home.sh sync-desk-home.ps1 prove-cosmokit.js desk-lease.js mac-mount-company.sh \
-         mac-pin-settings.js mac-company-login.js mac-smb-mount.js BUILD.json \
+         sync-skills.js sync-desk-home.sh sync-desk-home.ps1 prove-cosmokit.js desk-lease.js krouter-hook.js krouter-hooks.json mac-mount-company.sh mac-join-off-lan.sh \
+         mac-pin-settings.js mac-company-login.js mac-smb-mount.js mac-resolve.js BUILD.json \
          home/profiles/web/package.json home/profiles/web/overlay.yml; do
   [[ -e "$src/$f" || -L "$src/$f" ]] || continue
   dest="$ROOT/$f"
   mkdir -p "$(dirname "$dest")"
   cp -a "$src/$f" "$dest"
   wrote=$((wrote + 1))
+  listed="$listed $f "
+done
+# company-delta-top-files-v1: and every other top-level file of the pack.
+for p in "$src"/*; do
+  f="${p##*/}"
+  [[ -f "$p" || -L "$p" ]] || continue
+  [[ "$listed" == *" $f "* ]] && continue
+  cp -a "$p" "$ROOT/$f"
+  wrote=$((wrote + 1))
 done
 
-for d in prefix node plugins presets skills opencli peekaboo cua-driver home/profiles/web/node_modules; do
+for d in prefix node plugins presets skills opencli peekaboo cua-driver vendor bin home/profiles/web/node_modules; do
   if [[ -d "$ROOT/$d" ]]; then
     wrote=$((wrote + 1))
   fi

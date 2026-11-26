@@ -1,0 +1,12 @@
+# company-desk-hub-v1: each person's desk on this server (server/desk_hub.js on 127.0.0.1:4197), for their computer's
+# and phone's relays. install: copied into D:\dsh\runtime\caddy\ext\ (imported inside the site: its TLS and address).
+# The hub checks the sign-in token on every request and WebSocket; nothing here is open without it.
+handle /desk-hub/* {
+	reverse_proxy 127.0.0.1:4197 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+}

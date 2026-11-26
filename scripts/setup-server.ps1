@@ -207,6 +207,13 @@ if (-not (Test-Path -LiteralPath $gwEnv)) {
 foreach ($n in @('_office', '_shared', '_skills', '_control', 'content', '_handbook', '_handbook\_company')) {
   New-Item -ItemType Directory -Force -Path (Join-Path $Company $n) | Out-Null
 }
+# company-agent-identity-v1: every session reads the share root's AGENTS.md (agent-instructions stops at .company-root):
+# the assistant is TDHarness, and does not name its model or the harness under it. A site's own edits are kept.
+$rootAgents = Join-Path $Company 'AGENTS.md'
+if (-not (Test-Path -LiteralPath $rootAgents)) {
+  Copy-Item -LiteralPath (Join-Path $Server 'company-root\AGENTS.md') -Destination $rootAgents
+  Write-Output 'COMPANY_AGENTS_SEEDED=1'
+}
 
 $share = Get-SmbShare -Name 'dsh-company' -ErrorAction SilentlyContinue
 if (-not $share) {
@@ -252,6 +259,10 @@ try { Grant-SmbShareAccess -Name 'dsh-company' -AccountName 'Everyone' -AccessRi
 try { Enable-NetFirewallRule -DisplayGroup 'File and Printer Sharing' -ErrorAction SilentlyContinue | Out-Null } catch {}
 Write-Output 'SMB_SHARE_AUTH=1'
 
+# The watchdog (server\watchdog.ps1) leaves the services alone while this flag is fresh; removed at the end.
+$maintFlag = Join-Path $Runtime 'maintenance.flag'
+New-Item -ItemType Directory -Force -Path $Runtime | Out-Null
+[IO.File]::WriteAllText($maintFlag, (Get-Date -Format s))
 $prevCaddy = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 foreach ($tn in @('Autostart-PeopleApi', 'Autostart-KnowledgeSearch', 'Autostart-Gateway', 'Autostart-Caddy-8443')) {
@@ -394,6 +405,14 @@ Write-Task 'Autostart-KnowledgeSearch' $node ('"' + (Join-Path $Server 'knowledg
 Write-Task 'Autostart-Gateway' $node ('"' + (Join-Path $Server 'gw-lite.js') + '"') $Server
 Write-Task 'Autostart-Caddy-8443' $caddyExe ('run --config "' + $caddyfile + '" --adapter caddyfile') (Join-Path $Runtime 'caddy')
 
+# company-watchdog-v1: the tasks above start once at boot; one whose process dies later stays down
+# (Task Scheduler's restart covers only a failed start). TDH-Watchdog looks every 2 minutes.
+$wdAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $Server 'watchdog.ps1') + '" -Root "' + $Root + '"')
+$wdTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 2)
+$wdPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+$wdSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+Register-ScheduledTask -TaskName 'TDH-Watchdog' -Action $wdAction -Trigger $wdTrigger -Principal $wdPrincipal -Settings $wdSettings -Force | Out-Null
+
 # The brain's daily job: every night it reads the day's conversations where
 # they already are, writes the evidence layer, distils one page per person and
 # harvests corrections (server\brain\run-daily.ps1). Without it the knowledge
@@ -515,4 +534,5 @@ if (Test-Path -LiteralPath $seedFile) {
   Write-Output ('DEFAULT_PASSWORD_FILE=' + $seedFile + '  (change it in Settings > Account; the file goes away then)')
 }
 Write-Output 'GW_KEY_FILE=D:\dsh\runtime\gateway.env'
+Remove-Item -LiteralPath $maintFlag -Force -ErrorAction SilentlyContinue
 Write-Output 'SITE_INSTALL_OK=1'

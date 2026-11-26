@@ -26,6 +26,7 @@ process.stdin.on('data', (c) => {
     const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
     if (m.method === 'tools/list') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { tools } }) + '\\n');
     else if (m.method === 'tools/call') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: 'got ' + m.params.name + ' ' + JSON.stringify(m.params.arguments) }] } }) + '\\n');
+    else if (m.method === 'resources/templates/list') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Unknown method: resources/templates/list' } }) + '\\n');
     else if (m.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { ok: m.method } }) + '\\n');
   }
 });
@@ -66,6 +67,9 @@ async function main() {
     assert.match(r.error.message, /unknown action: agent/, 'a hidden action is refused');
     r = await ask('tools/call', { name: 'desktop', arguments: { action: 'format_disk' } });
     assert.match(r.error.message, /unknown action/, 'an action the server never listed is refused');
+    r = await ask('resources/templates/list', {});
+    assert.deepEqual(r.result, { resourceTemplates: [] }, 'a server without templates answers an empty list, not an error');
+    assert.equal(r.error, undefined);
     r = await ask('tools/call', { name: 'agent', arguments: {} });
     assert.match(r.error.message, /not available/, 'the hidden tool by its own name is refused');
   } finally {

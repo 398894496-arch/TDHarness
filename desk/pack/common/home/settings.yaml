@@ -6,6 +6,8 @@ locale:
   preference: zh
 dsh-better-sidebar:
   openByDefault: false
+  autoOpenSubagent: false
+  autoOpenJobs: false
   bottomPanelAutoTerminal: false
   agentTerminalTools: true
   agentOpenTools: true

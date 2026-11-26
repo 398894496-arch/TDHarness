@@ -2,7 +2,6 @@
 name: company-access
 description: Split company shared memory and personal memory from shared skills and personal skills. Use when choosing a knowledge door, writing a skill, or deciding who can read what.
 whenToUse: 权限, 共享 skill, 谁能看.
-disable-model-invocation: true
 ---
 
 # company-access
@@ -11,11 +10,22 @@ disable-model-invocation: true
 
 | 层 | 谁写 | 谁读 | 落点 | 门 |
 |---|---|---|---|---|
-| 共享记忆 | 只有 `company_memory_write`（老板 / 总监） | 全员只读 | `_shared/_memory` + brain 查阅层 + `_handbook/_company` | 读 `company_knowledge`；官方 `write` / `edit` 打共享区会被拒 |
+| 共享记忆 | 全员经 `company_memory_write`（服务器写入） | 全员 | `_shared/_memory` + brain 查阅层 | 读 `company_knowledge`；官方 `write` / `edit` 打共享区会被拒 |
+| 公司知识库 | 经 `company_kb_save`（服务器写入），或人在公司盘里直接放 | 按区，见下 | `_handbook/` | 读 `company_knowledge`，存 `company_kb_save` |
 | 个人记忆 | 该员工自己的会话 | 只有这把椅子 | `$personal/_memory`（01–05 + 90） | `company_knowledge` `route=search` |
 | 共享 skill | 产品底座 / 老板桌种到 `_skills` | 全员只读 | 共享盘根 `_skills` | 打开即用。do not call skill |
 | 个人 skill | 该员工在自己工作区写 | 只有这人的工作区 | `$personal/.dsh/skills` | 不要写进 `_skills` |
 
+
+## 公司知识库（company-kb-groups-v1）
+
+| 区 | 谁能看、能放 | 放什么 |
+|---|---|---|
+| `_handbook/_company` 全公司共享知识 | 全员 | 公司介绍、产品与技术、销售流程与政策、生产与质量、制度与流程、模板、常见问答 |
+| `_handbook/_<名字>` 几个部门共用的区（如销售与行政财务） | 只有这些部门和管理员 | 客户信息、底价与成本 |
+| `_handbook/<部门>` 单独分区的部门（行政财务） | 只有本部门和管理员 | 财务制度、合同法务、人事薪酬、账户税务、行政事务 |
+
+客户信息、底价、成本不进全公司共享，也不进共享记忆。别的区搜不到、打不开是权限，不是没有。
 
 ## 共享记忆
 

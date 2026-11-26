@@ -1037,7 +1037,34 @@ if (!presetRel) {
   process.exit(1);
 }
 if (presetRel.endsWith('.patch.yml')) {
-  console.log('PRESET_PIN_SKIP=0.1.7-patch-layout|' + presetRel);
+  // 0.1.7+: presets are dsh-web-app patch rows. Pin their own skill-filesystem
+  // and agent-instructions rows (see lib/preset-patch-layout.js).
+  const { MARK: LAYOUT_MARK, pinPresetPatchLayout } = require('./lib/preset-patch-layout');
+  for (const name of ['standard', 'ptc']) {
+    const rel = path.join('node_modules', '@deepseek-ai', 'dsh-web-app', 'presets', name + '.patch.yml');
+    const file = path.join(kernelRoot, rel);
+    if (!fs.existsSync(file)) {
+      if (name === 'standard') {
+        console.error('PATCH_FAIL=preset-missing|' + rel);
+        process.exit(1);
+      }
+      console.log('PRESET_LAYOUT_SKIP=' + name + '|missing');
+      continue;
+    }
+    const r = pinPresetPatchLayout(fs.readFileSync(file, 'utf8'));
+    if (r.error) {
+      console.error('PATCH_FAIL=preset-layout|' + rel + '|' + r.error + '|kernel bumped? re-review lib/preset-patch-layout.js');
+      process.exit(1);
+    }
+    if (!r.changed) {
+      console.log('PATCH_ALREADY=' + rel + '|' + LAYOUT_MARK);
+      skipped += 1;
+      continue;
+    }
+    fs.writeFileSync(file, r.text, 'utf8');
+    console.log('PATCHED=' + rel + '|preset-skills+instr-root');
+    applied += 1;
+  }
 } else {
 const presetPath = path.join(kernelRoot, presetRel);
 const PRESET_MARK = 'company-preset-skills-v1';

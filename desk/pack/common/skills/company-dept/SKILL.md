@@ -2,7 +2,6 @@
 name: company-dept
 description: Stay inside the assigned department share.
 whenToUse: 个人盘, 部门盘, workspace chip.
-disable-model-invocation: true
 ---
 
 # company-dept

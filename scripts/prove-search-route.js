@@ -24,6 +24,8 @@ const a = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(LOG)}, JSON.stringify({ a, home: process.env.HOME, proxy: process.env.HTTPS_PROXY || '' }) + '\\n');
 const say = (o) => process.stdout.write(JSON.stringify(Object.assign({ schema_version: 1 }, o)));
 if (a[0] === 'bilibili') say({ ok: false, items: [], error: { code: 'NEED_SETUP', message: 'bili is not installed' } });
+else if (a[0] === 'github' && /ratelimitcase/.test(a[2] || '')) say({ ok: false, items: [], error: { code: 'RATE_LIMITED', message: 'GitHub API rate limit (60/hour without a token)' } });
+else if (a[0] === 'web' && /ratelimitcase/.test(a[2] || '')) say({ ok: true, items: [] });
 else if (a[0] === 'read') say({ ok: true, items: [{ title: 'gumyr/build123d', url: a[1], text: 'A python CAD library.' }] });
 else say({ ok: true, channel: a[0], items: [{ title: a[0] + ' hit', url: 'https://reach.example/' + a[0], text: 'from ' + a[0] + ': ' + a[2] }] });
 `);
@@ -95,7 +97,16 @@ const fail = (w) => { console.error('SEARCH_ROUTE_PROVE_FAIL ' + w); process.exi
   c = calls().pop();
   if (c.a[0] !== 'youtube' || c.proxy !== 'http://127.0.0.1:7999') fail('YouTube search not sent through the outbound proxy: ' + JSON.stringify(c));
   out = await gw.runSearch(ctx(true), 'github build123d', 5);
-  if (out.engines[0].id !== 'reach:github') fail('GitHub question not on Agent Reach github: ' + JSON.stringify(out.engines));
+  if (out.engines[0].id !== 'reach:web-github' || !out.engines[0].ok) fail('GitHub question not on Agent Reach web kept to github.com: ' + JSON.stringify(out.engines));
+  const gh = calls().filter((x) => x.a[0] === 'web').pop();
+  if (!gh || gh.a.join(' ') !== 'web search build123d site:github.com --limit 5') fail('GitHub question asked as ' + JSON.stringify(gh && gh.a));
+  // Rate-limited: the GitHub channel rests instead of being asked again on the next search.
+  await gw.runSearch(ctx(true), 'github ratelimitcase', 5);
+  const ghCalls = () => calls().filter((x) => x.a[0] === 'github' && /ratelimitcase/.test(x.a[2])).length;
+  if (ghCalls() !== 1) fail('rate-limited GitHub channel not asked once: ' + ghCalls());
+  out = await gw.runSearch(ctx(true), 'github ratelimitcase', 5);
+  const rest = out.engines.find((e) => e.id === 'reach:github');
+  if (ghCalls() !== 1 || !rest || !/resting/.test(rest.err || '')) fail('rate-limited GitHub channel asked again: ' + JSON.stringify(out.engines));
   out = await gw.runSearch(ctx(true), 'bilibili 聚氨酯筛板', 5);
   const bili = out.engines.map((e) => e.id + ':' + e.ok).join(',');
   if (!/^reach:bilibili:0,bilibili:0,reach:web:1/.test(bili)) fail('a failing Agent Reach channel does not fall back in order: ' + bili);

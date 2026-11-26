@@ -2,7 +2,6 @@
 name: company-desktop
 description: Operating Windows desktop apps (Jianying and others) with the bundled Cua Driver.
 whenToUse: 剪映, 桌面软件, 点界面, 导出, 打开软件, 窗口.
-disable-model-invocation: true
 ---
 
 # company-desktop（Windows）

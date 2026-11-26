@@ -34,6 +34,10 @@ The knowledge search reads PDF text with Mozilla pdf.js (`pdfjs-dist` 4.10.38, l
 
 `server/install-ocr.ps1` installs, with pip into its own venv on the server (not shipped in this repository), RapidOCR `rapidocr-onnxruntime` 1.4.4 (Apache License 2.0, PaddleOCR models, https://github.com/RapidAI/RapidOCR), ONNX Runtime (MIT), pypdfium2 (Apache-2.0 / BSD-3-Clause, PDFium), olefile (BSD-2-Clause) and xlrd (BSD-3-Clause) for old Office files, and their dependencies, at the versions pinned in `server/ocr-requirements.txt`.
 
+## Company chat
+
+`server/chat/install-chat.ps1` installs on the server, from release archives the maintainer downloads (not shipped in this repository): [Tinode](https://github.com/tinode/chat) v0.25.3 (`tinode-postgres.windows-amd64.zip`; the server is GPL-3.0, run unmodified as its own program; its web client, served from `static/`, is Apache-2.0) and PostgreSQL 17.12 (EnterpriseDB Windows binaries, PostgreSQL License). Tinode's web page loads its libraries from CDNs; `server/chat/vendor/` holds the same files, unmodified, so the page works without them: React and ReactDOM 18.3.1 (MIT), react-intl 7.1.6 (BSD-3-Clause), qrcodejs 1.0.0 (MIT), and the Roboto (SIL Open Font License 1.1) and Material Icons (Apache License 2.0) fonts as Google Fonts serves them, with `fonts.css` pointing at the local copies.
+
 ## Word list for the knowledge search
 
 `server/kb-lexicon.txt` lists general Chinese two-character words by frequency, derived from jieba 0.42.1's `dict.txt` (MIT, https://github.com/fxsjy/jieba), as published in DSH-KRouter (MIT). The knowledge search uses it to tell a question's specific words from generic ones.

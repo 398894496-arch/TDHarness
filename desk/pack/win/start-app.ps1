@@ -41,6 +41,8 @@ try {
     } catch { return $false }
   }
 
+  # company-compat-v1: straight to the company server, never through a proxy tool's system proxy.
+  [Net.WebRequest]::DefaultWebProxy = $null
   function Invoke-AppLogin([string]$user, [string]$pass) {
     $body = '{"username":' + (ConvertTo-Json $user) + ',"password":' + (ConvertTo-Json $pass) + '}'
     try {

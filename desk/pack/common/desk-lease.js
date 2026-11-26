@@ -14,7 +14,7 @@ const path = require('path');
 const zlib = require('zlib');
 const { spawn, spawnSync } = require('child_process');
 
-const DESK_PORT = 17803;
+const DESK_PORT = Number(process.env.TDH_DESK_PORT || 17803);  // tests point it at a demo desk
 const KICK_WAIT_MS = 50000;
 const HEARTBEAT_MS = 12000;
 // company-lease-derp-hb-v1: over DERP one TLS handshake to 8443 is ~2s and
@@ -936,33 +936,34 @@ function remapSessionLogs(sessDir, rewrite) {
   return n;
 }
 
-function ensureSeatWorkspaces(ws, personal, org) {
+// company-single-workspace-v1: the desk shows one workspace, the person's own folder, titled 工作区.
+// There is no team seat any more (it was the whole company share); what someone did there stays
+// listed, under 工作区. Older desks titled the seat 个人 / 团队; both are still recognised here.
+const SEAT_TITLE = '工作区';
+const OLD_SEAT_TITLES = ['个人', '团队'];
+function isSeatTitle(t) {
+  return t === SEAT_TITLE || OLD_SEAT_TITLES.indexOf(t) >= 0;
+}
+
+function seatId(ws) {
+  return seatWorkspaceId(ws, SEAT_TITLE) || seatWorkspaceId(ws, '个人');
+}
+
+function ensureSeatWorkspaces(ws, personal, org) { // eslint-disable-line no-unused-vars
   if (!ws.tables) ws.tables = {};
   if (!ws.tables.workspaces) ws.tables.workspaces = {};
   const tables = ws.tables.workspaces;
   if (!ws.global) ws.global = { initialized: true, workspaceIds: [], archivedSessionIds: [] };
   if (!Array.isArray(ws.global.workspaceIds)) ws.global.workspaceIds = [];
-  const byTitle = {};
-  for (const id of Object.keys(tables)) {
-    const t = tables[id] && tables[id].title;
-    if (t) byTitle[t] = id;
-  }
   const now = new Date().toISOString();
-  if (!byTitle['个人']) {
+  const id = seatId(ws);
+  if (!id) {
     const pid = 'w-seat-' + Date.now().toString(36);
-    tables[pid] = { path: chairPath(personal), title: '个人', sessionIds: [], createdAt: now, updatedAt: now };
+    tables[pid] = { path: chairPath(personal), title: SEAT_TITLE, sessionIds: [], createdAt: now, updatedAt: now };
     ws.global.workspaceIds.push(pid);
   } else {
-    tables[byTitle['个人']].path = chairPath(personal);
-  }
-  if (org && norm(org) !== norm(personal)) {
-    if (!byTitle['团队']) {
-      const oid = 'w-org-' + Date.now().toString(36);
-      tables[oid] = { path: chairPath(org), title: '团队', sessionIds: [], createdAt: now, updatedAt: now };
-      ws.global.workspaceIds.push(oid);
-    } else {
-      tables[byTitle['团队']].path = chairPath(org);
-    }
+    tables[id].path = chairPath(personal);
+    tables[id].title = SEAT_TITLE;
   }
 }
 
@@ -1001,7 +1002,7 @@ function collapseSeatWorkspaces(ws, personal, org) {
     }
     for (const id of ids) {
       const t = tables[id] && tables[id].title;
-      if ((t === '个人' || t === '团队') && isUuid(id)) keep = id;
+      if (isSeatTitle(t) && isUuid(id)) keep = id;
     }
     const sids = [];
     for (const id of ids) {
@@ -1015,24 +1016,24 @@ function collapseSeatWorkspaces(ws, personal, org) {
     }
     tables[keep].sessionIds = sids;
     if (personal && key === seatKey(personal)) {
-      tables[keep].title = '个人';
+      tables[keep].title = SEAT_TITLE;
       tables[keep].path = chairPath(personal);
-    } else if (org && key === seatKey(org)) {
-      tables[keep].title = '团队';
-      tables[keep].path = chairPath(org);
     }
   }
-  const keepKeys = {};
-  if (personal) keepKeys[seatKey(personal)] = true;
-  if (org && seatKey(org) !== seatKey(personal || '')) keepKeys[seatKey(org)] = true;
-  if (Object.keys(keepKeys).length) {
+  // Only the person's own folder stays a workspace (company-single-workspace-v1); the conversations
+  // listed under any other row (the old team seat) move under it instead of disappearing.
+  if (personal) {
+    const pkey = seatKey(personal);
+    const seat = Object.keys(tables).find((id) => tables[id] && typeof tables[id].path === 'string' && seatKey(tables[id].path) === pkey);
     for (const id of Object.keys(tables)) {
       const row = tables[id];
-      if (!row || typeof row.path !== 'string') continue;
-      if (!keepKeys[seatKey(row.path)]) {
-        delete tables[id];
-        dropped += 1;
+      if (!row || typeof row.path !== 'string' || seatKey(row.path) === pkey) continue;
+      if (seat) {
+        const into = tables[seat].sessionIds || (tables[seat].sessionIds = []);
+        for (const sid of (row.sessionIds || [])) if (into.indexOf(sid) < 0) into.push(sid);
       }
+      delete tables[id];
+      dropped += 1;
     }
   }
   if (ws.global) ws.global.workspaceIds = Object.keys(tables);
@@ -1047,22 +1048,11 @@ function plantCatalog(personal, org) {
   const tables = {};
   tables[pid] = {
     path: chairPath(personal),
-    title: '个人',
+    title: SEAT_TITLE,
     sessionIds: [],
     createdAt: now,
     updatedAt: now,
   };
-  if (org && norm(org) !== norm(personal)) {
-    const oid = pid + '-org';
-    ids.push(oid);
-    tables[oid] = {
-      path: chairPath(org),
-      title: '团队',
-      sessionIds: [],
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
   return {
     unit: { name: 'workspace', version: 2 },
     global: { initialized: true, workspaceIds: ids, archivedSessionIds: [] },
@@ -1113,7 +1103,7 @@ function reconcileWorkspaceSessions(ws, sessDir) {
   if (!ws || !ws.tables || !ws.tables.workspaces) return 0;
   const tables = ws.tables.workspaces;
   const order = ((ws.global && ws.global.workspaceIds) || Object.keys(tables)).filter((id) => tables[id]);
-  const personalId = seatWorkspaceId(ws, '个人') || order[0] || '';
+  const personalId = seatId(ws) || order[0] || '';
   const homes = walkSessionHomes(sessDir);
   const owner = new Map();
   for (const [sid, sl] of homes.entries()) {
@@ -1521,10 +1511,11 @@ function seatNote(why) {
 }
 
 function notify(msg) {
+  // company-login-page-v1: the shell says it in its own window (it reads lease.note).
+  // company-no-dialogs-v1 (the user, 2026-11-25: 「还在弹窗口，能不能以后不弹这个窗口」): never a system dialog,
+  // whatever started this. A dialog also held this process until someone pressed OK, and the seat's last steps
+  // (the chats' last send, giving the memory disk back) waited behind it.
   writeAscii(path.join(rcDir(), 'lease.note'), msg);
-  if (process.platform === 'darwin') {
-    spawnSync('osascript', ['-e', 'display dialog ' + JSON.stringify(msg) + ' buttons {"OK"} with title "TDHarness"'], { stdio: 'ignore' });
-  }
 }
 
 function deskUp() {
@@ -1552,14 +1543,80 @@ function stopDesk() {
   ], { stdio: 'ignore' });
 }
 
+// company-desk-store-v1 (desk-store.js, mac-ramdisk.sh, server/desk_store.py): the chats in a memory disk while the
+// desk runs, taken whole from the server at the seat and sent back as they change. Off the share's SMB for the
+// kernel's own session logs: that was all of a slow open (190 s against 23 s for the same 51 sessions).
+function storeMarker() { return path.join(rcDir(), 'desk-store.on'); }
+function storeScript() { return path.join(__dirname, 'desk-store.js'); }
+function storeArgs(cmd, dir) {
+  const a = [storeScript(), cmd, '--dir', dir];
+  if (arg('site')) a.push('--site', arg('site'));
+  if (arg('rc')) a.push('--rc', arg('rc'));
+  return a;
+}
+function storeDirOn() {
+  const d = readTrim(storeMarker());
+  return d && fs.existsSync(path.join(d, '.desk-store')) ? d : '';
+}
+function storePull(dir) {
+  const r = spawnSync(process.execPath, storeArgs('pull', dir), { encoding: 'utf8', timeout: 180000, env: process.env, windowsHide: true });
+  process.stdout.write(String(r.stdout || ''));
+  return r.status == null ? 9 : r.status;
+}
+function storeSyncPid(dir) {
+  const pid = Number(readTrim(path.join(dir, '.desk-store', 'sync.pid')) || 0);
+  if (!pid) return 0;
+  try { process.kill(pid, 0); return pid; } catch { return 0; }
+}
+function storeSyncStart(dir) {
+  if (storeSyncPid(dir)) return;
+  const log = fs.openSync(path.join(deskHome(), 'desk-store.log'), 'a');
+  // windowsHide: a detached child on Windows gets a console window of its own otherwise.
+  const c = spawn(process.execPath, storeArgs('sync', dir), { stdio: ['ignore', log, log], detached: true, env: process.env, windowsHide: true });
+  c.unref();
+  process.stdout.write('STORE_SYNC_STARTED=' + c.pid + '\n');
+}
+// Send what is left, then give the memory back. Kept when something could not be sent: the next open sends it first.
+async function storeStop() {
+  const dir = storeDirOn();
+  if (!dir) return;
+  const pid = storeSyncPid(dir);
+  if (pid) {
+    try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ }
+    const end = Date.now() + 30000;
+    while (Date.now() < end) {
+      try { process.kill(pid, 0); } catch { break; }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  const f = spawnSync(process.execPath, storeArgs('flush', dir), { encoding: 'utf8', timeout: 60000, env: process.env, windowsHide: true });
+  process.stdout.write(String(f.stdout || ''));
+  if (f.status === 0) {
+    const sh = path.join(__dirname, 'mac-ramdisk.sh');
+    if (process.platform === 'darwin' && fs.existsSync(sh)) spawnSync('/bin/bash', [sh, 'down', dir], { stdio: 'ignore', timeout: 30000 });
+    // company-desk-store-win-v1: Windows has no memory disk; the copy lives in the user's local app data while the desk
+    // runs and goes once everything in it is on the server.
+    else if (process.platform === 'win32') {
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch (e) { process.stdout.write('STORE_RM_FAIL=' + ((e && e.code) || e) + '\n'); }
+    }
+    try { fs.unlinkSync(storeMarker()); } catch { /* */ }
+    process.stdout.write('STORE_CLOSED=1\n');
+  } else {
+    process.stdout.write('STORE_KEPT=' + (f.status == null ? 'timeout' : f.status) + '\n');
+    toast('还有对话没传到公司服务器（网络断了）。下次打开 TDHarness 会先自动补传，别重启电脑。');
+  }
+}
+
 async function cmdAcquire() {
   const personal = personalPath();
   const org = orgPath();
   const home = deskHome();
   if (!personal || !fs.existsSync(personal)) throw new Error('company-workspace-missing');
   assertShareWritable(personal);
-  const derp = officeViaDerp();
-  const slowShare = derp || shareTooSlow(personal);
+  const storeDir = arg('store-dir') || '';
+  // With the memory disk the kernel never reads the share for chats: no probe of it, no mirror onto this disk.
+  const derp = storeDir ? false : officeViaDerp();
+  const slowShare = storeDir ? false : (derp || shareTooSlow(personal));
   if (derp) process.stdout.write('SHARE_VIA_DERP=1\n');
   if (slowShare && !derp) process.stdout.write('SHARE_TOO_SLOW=1\n');
   harvestThenWipe(home, personal, { wipe: !slowShare, skipShare: slowShare });
@@ -1588,12 +1645,24 @@ async function cmdAcquire() {
         const role = loginRole();
         // company-lease-catalog-follows-pin-v1
         let localPin = false;
+        let storeOn = '';
+        if (storeDir) {
+          const rc = storePull(storeDir);
+          if (rc === 0) storeOn = storeDir;
+          else if (rc === 4 && fs.existsSync(path.join(storeDir, '.desk-store', 'sent.json'))) {
+            // Changes from last time still not on the server, and it does not answer: work on them, send them later.
+            storeOn = storeDir;
+            process.stdout.write('STORE_STALE=1\n');
+          } else process.stdout.write('STORE_OFF=pull-' + rc + '\n');
+          if (storeOn) { writeAscii(storeMarker(), storeOn); process.stdout.write('STORE_ON=' + storeOn + '\n'); }
+          else { try { fs.unlinkSync(storeMarker()); } catch { /* */ } }
+        }
         if (fs.existsSync(ov)) {
           // Slow share (DERP or hotspot RTT): pin local only after bodies
           // landed. Empty local pin = empty sidebar. Fast share stays chair.
           sweepBadLocalZstd(home);
-          localPin = slowShare && countSessionLogs(path.join(home, 'sessions')) > 0;
-          pinOverlay(ov, personal, localPin ? home : '');
+          localPin = !storeOn && slowShare && countSessionLogs(path.join(home, 'sessions')) > 0;
+          pinOverlay(ov, personal, storeOn || (localPin ? home : ''));
           if (localPin) process.stdout.write('OVERLAY_PIN_LOCAL=1\n');
           pinPresetRoot(ov, role);
           pinInstrScope(ov);
@@ -1601,7 +1670,7 @@ async function cmdAcquire() {
           pinRoleUi(ov, role);
           pinClickOneHand(ov);
         }
-        remapDesk(personal, org, localPin ? home : '');
+        remapDesk(personal, org, storeOn || (localPin ? home : ''));
         plantCompanyRootMarker(personal);
         pinUserSettings(home, personal);
         pinAgentPresets(home, role);
@@ -1628,6 +1697,13 @@ async function cmdHeartbeat() {
 }
 
 async function cmdRelease() {
+  // company-desk-store-win-v1: Windows ends the watch with a kill (no signal to catch), so the last send of the chats
+  // happens here: the desk stopped first (its last events land in the local copy), then sent, then the seat let go.
+  if (storeDirOn()) {
+    stopDesk();
+    for (let i = 0; i < 20 && (await deskUp()); i++) await new Promise((r) => setTimeout(r, 500));
+    try { await storeStop(); } catch (e) { process.stdout.write('STORE_STOP_FAIL=' + ((e && e.message) || e) + '\n'); }
+  }
   try { await postLease('release'); } catch { /* gone */ }
   process.stdout.write('LEASE_RELEASED=1\n');
 }
@@ -1695,6 +1771,12 @@ async function cmdWatch() {
     notify(seatNote(why));
     if (why === 'flush' || why === 'kicked') {
       stopDesk();
+      // The kernel writes its last events as it stops: wait for it, so they are in the memory disk before the last send.
+      for (let i = 0; i < 20 && (await deskUp()); i++) await new Promise((r) => setTimeout(r, 500));
+    }
+    try { await storeStop(); } catch (e) { process.stdout.write('STORE_STOP_FAIL=' + ((e && e.message) || e) + '\n'); }
+    if (why === 'flush' || why === 'kicked') {
+      stopDesk();
       if (why === 'flush') {
         try { await postLease('flushed'); } catch { /* */ }
       }
@@ -1744,6 +1826,8 @@ async function cmdWatch() {
       process.stdout.write('DESK_PROBE_RECOVERED=1\n');
     }
     macShareTick();
+    const sd = storeDirOn();
+    if (sd) storeSyncStart(sd);
     await new Promise((r) => setTimeout(r, HEARTBEAT_MS));
   }
 }
@@ -1820,7 +1904,8 @@ function cmdSelftest() {
   remapDesk(winPers, winOrg);
   const wsWin = JSON.parse(fs.readFileSync(path.join(winPers, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
   if (norm(wsWin.tables.workspaces.w1.path) !== norm(livePath(winPers))) throw new Error('selftest-win-path');
-  if (norm(wsWin.tables.workspaces.w2.path) !== norm(livePath(winOrg))) throw new Error('selftest-win-org');
+  if (wsWin.tables.workspaces.w2) throw new Error('selftest-win-team-seat-kept');
+  if (wsWin.tables.workspaces.w1.title !== SEAT_TITLE) throw new Error('selftest-win-seat-title');
   const moved = path.join(winPers, '.dsh-desk', 'sessions', slug(livePath(winPers)), sid, 'session.jsonl.zstd');
   if (!fs.existsSync(moved)) throw new Error('selftest-win-slug');
   if (fs.existsSync(path.join(winPers, '.dsh-desk', 'sessions', macSlug))) throw new Error('selftest-win-old-slug');
@@ -1961,7 +2046,7 @@ function cmdSelftest() {
   remapDesk(persE, orgE);
   const wsE = JSON.parse(fs.readFileSync(path.join(persE, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
   const titles = Object.keys(wsE.tables.workspaces).map((id) => wsE.tables.workspaces[id].title).sort();
-  if (titles.join(',') !== '个人,团队') throw new Error('selftest-plant-titles');
+  if (titles.join(',') !== SEAT_TITLE) throw new Error('selftest-plant-titles ' + titles.join(','));
   wsE.tables.workspaces.dup = {
     path: persE,
     title: '_office',
@@ -1971,8 +2056,8 @@ function cmdSelftest() {
   };
   collapseSeatWorkspaces(wsE, persE, orgE);
   const after = Object.keys(wsE.tables.workspaces).map((id) => wsE.tables.workspaces[id].title).sort();
-  if (after.join(',') !== '个人,团队') throw new Error('selftest-collapse-titles');
-  const persRow = Object.keys(wsE.tables.workspaces).map((id) => wsE.tables.workspaces[id]).find((r) => r.title === '个人');
+  if (after.join(',') !== SEAT_TITLE) throw new Error('selftest-collapse-titles ' + after.join(','));
+  const persRow = Object.keys(wsE.tables.workspaces).map((id) => wsE.tables.workspaces[id]).find((r) => r.title === SEAT_TITLE);
   if (!persRow || (persRow.sessionIds || []).indexOf('session-dup') < 0) throw new Error('selftest-collapse-merge');
   fs.rmSync(boxEmpty, { recursive: true, force: true });
   const boxW = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-writable-'));
@@ -1998,19 +2083,21 @@ function cmdSelftest() {
   remapDesk(persB, orgB);
   const wsB = JSON.parse(fs.readFileSync(path.join(persB, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
   if (norm(wsB.tables.workspaces.w1.path) !== norm(livePath(persB))) throw new Error('selftest-boss-personal');
-  if (norm(wsB.tables.workspaces.w2.path) !== norm(livePath(orgB))) throw new Error('selftest-boss-org-root');
+  if (wsB.tables.workspaces.w2) throw new Error('selftest-boss-team-seat-kept');
   fs.rmSync(boxB, { recursive: true, force: true });
   const boxF = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-drop-chair-'));
   const persF = path.join(boxF, 'company', '_office');
   const orgF = path.join(boxF, 'company');
   fs.mkdirSync(path.join(persF, '.dsh-desk', 'storages'), { recursive: true });
+  // A conversation that was held in the old team seat, as it lies on the share.
+  fs.mkdirSync(path.join(persF, '.dsh-desk', 'sessions', slug('D:/dsh/company/content'), 'session-team'), { recursive: true });
   fs.writeFileSync(path.join(persF, '.dsh-desk', 'storages', 'workspace.json'), JSON.stringify({
     unit: { name: 'workspace', version: 2 },
     global: { initialized: true, workspaceIds: ['w1', 'w2', 'w3'] },
     tables: {
       workspaces: {
         w1: { path: 'D:/dsh/company/_office', title: '个人', sessionIds: [] },
-        w2: { path: 'D:/dsh/company/content', title: '团队', sessionIds: [] },
+        w2: { path: 'D:/dsh/company/content', title: '团队', sessionIds: ['session-team'] },
         w3: { path: 'D:/dsh/company/content/emp-bob', title: '别人', sessionIds: [] },
       },
     },
@@ -2018,9 +2105,11 @@ function cmdSelftest() {
   remapDesk(persF, orgF);
   const wsF = JSON.parse(fs.readFileSync(path.join(persF, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
   const titlesF = Object.keys(wsF.tables.workspaces).map((id) => wsF.tables.workspaces[id].title).sort();
-  if (titlesF.join(',') !== '个人,团队') throw new Error('selftest-drop-foreign');
-  const teamF = Object.values(wsF.tables.workspaces).find((r) => r.title === '团队');
-  if (!teamF || norm(teamF.path) !== norm(livePath(orgF))) throw new Error('selftest-seat-org');
+  if (titlesF.join(',') !== SEAT_TITLE) throw new Error('selftest-drop-foreign ' + titlesF.join(','));
+  // The old team seat's conversations stay listed, under the one workspace (company-single-workspace-v1).
+  const seatF = Object.values(wsF.tables.workspaces).find((r) => r.title === SEAT_TITLE);
+  if (!seatF || norm(seatF.path) !== norm(livePath(persF))) throw new Error('selftest-seat-path');
+  if ((seatF.sessionIds || []).indexOf('session-team') < 0) throw new Error('selftest-team-sessions-lost');
   if (wsF.tables.workspaces.w3) throw new Error('selftest-kept-foreign');
   const boxQ = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-bob-root-'));
   const persQ = path.join(boxQ, 'company', 'content', 'emp-bob');
@@ -2038,10 +2127,9 @@ function cmdSelftest() {
   }));
   remapDesk(persQ, orgQ);
   const wsQ = JSON.parse(fs.readFileSync(path.join(persQ, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
-  const persRowQ = Object.values(wsQ.tables.workspaces).find((r) => r.title === '个人');
-  const teamQ = Object.values(wsQ.tables.workspaces).find((r) => r.title === '团队');
+  const persRowQ = Object.values(wsQ.tables.workspaces).find((r) => r.title === SEAT_TITLE);
   if (!persRowQ || norm(persRowQ.path) !== norm(livePath(persQ))) throw new Error('selftest-emp-personal-ts');
-  if (!teamQ || norm(teamQ.path) !== norm(livePath(orgQ))) throw new Error('selftest-emp-share-root');
+  if (Object.keys(wsQ.tables.workspaces).length !== 1) throw new Error('selftest-emp-team-seat-kept');
   fs.rmSync(boxQ, { recursive: true, force: true });
   const boxI = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-instr-'));
   const ovI = path.join(boxI, 'overlay.yml');
@@ -2082,10 +2170,10 @@ function cmdSelftest() {
   }));
   remapDesk(persD, orgD);
   const wsD = JSON.parse(fs.readFileSync(path.join(persD, '.dsh-desk', 'storages', 'workspace.json'), 'utf8'));
-  const personalD = Object.values(wsD.tables.workspaces).find((r) => r.title === '个人');
-  const teamD = Object.values(wsD.tables.workspaces).find((r) => r.title === '团队');
-  if (!teamD || teamD.sessionIds.indexOf(sidD) < 0) throw new Error('selftest-dup-keep-team');
-  if (personalD && personalD.sessionIds.indexOf(sidD) >= 0) throw new Error('selftest-dup-still-personal');
+  // One workspace now: a conversation listed under both old seats is listed once, under it.
+  const rowsD = Object.values(wsD.tables.workspaces);
+  if (rowsD.length !== 1 || rowsD[0].title !== SEAT_TITLE) throw new Error('selftest-dup-one-seat');
+  if (rowsD[0].sessionIds.filter((x) => x === sidD).length !== 1) throw new Error('selftest-dup-listed-once');
   fs.rmSync(boxDup, { recursive: true, force: true });
   const boxP = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-preset-pin-'));
   const ovP = path.join(boxP, 'overlay.yml');

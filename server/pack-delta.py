@@ -11,6 +11,11 @@ applies it and runs tree-check, and falls back to the full pack on any mismatch.
 
   pack-delta.py remember --dist D:\\dsh\\client-dist --history D:\\dsh\\client-history   before the zips change
   pack-delta.py build    --dist D:\\dsh\\client-dist --history D:\\dsh\\client-history   after they are final, before signing
+Every delta also carries the pack's small top-level scripts whether they changed or not
+(company-delta-top-files-v1): a delta assumes the desk has every file of the pack it was cut from, and a
+desk that missed one never got it back. 2026-11-22: mac-resolve.js came in a release whose old
+tree-restore.sh did not know the name yet, so no Mac had it, and every Mac away from the office could not
+find the server. A few hundred KB per delta; the desk still takes only names it counts as its own.
 History (newest 4 per platform) stays outside dist so it is neither served nor copied into every
 publish backup; deltas go to <dist>\\delta. A zip republished under the same mark replaces its history
 copy, or a later delta would be cut against content no desk has.
@@ -25,6 +30,14 @@ from pathlib import Path
 PLATS = ("win", "mac")
 KEEP = 4
 MAX_RATIO = 0.6
+# Top-level files of these kinds up to this size ride along in every delta (company-delta-top-files-v1).
+# Not .exe/.dll or the Mac binary: a running one is swapped aside, so those only go when they change.
+ALWAYS_EXT = (".js", ".cjs", ".mjs", ".sh", ".command", ".ps1", ".vbs", ".json", ".yml", ".pub", ".crt", ".txt")
+ALWAYS_MAX = 256 * 1024
+
+
+def always(rel, size):
+    return "/" not in rel and rel.lower().endswith(ALWAYS_EXT) and size <= ALWAYS_MAX
 
 
 def mark_of(zp):
@@ -66,7 +79,9 @@ def make_delta(old_zip, new_zip, out, frm, to):
                 if i.is_dir():
                     continue
                 o = oi.get(i.filename)
-                if o is None or o.CRC != i.CRC or o.file_size != i.file_size or o.external_attr != i.external_attr:
+                rel = i.filename[len(root):] if i.filename.startswith(root) else i.filename
+                if o is None or o.CRC != i.CRC or o.file_size != i.file_size or o.external_attr != i.external_attr \
+                        or always(rel, i.file_size):
                     zd.writestr(i, zn.read(i.filename))
                     changed += 1
             removed = [n[len(root):] for n in oi if n not in newnames and not n.endswith("/")]
