@@ -7,6 +7,8 @@ The version is the release date. Every merge to `main` bumps `VERSION`, adds a s
 ## 2026.11.26.4
 
 **旧版安卓手机（华为等）上 AI 页打不开、没有历史对话**
+- 电脑端聊天栏不会再因为服务器上的助手重启而打不开（`company-chat-key-heal-v1`）：用户：「我电脑端的聊天又挂了」。聊天页的地址带一把钥匙，助手每次重启都会换一把；之前打开的聊天栏拿着旧钥匙，只剩「请从 TDH 窗口最右边的聊天栏……打开」。现在 hub 已经凭登录确认是本人，转发时把旧钥匙换成当前的。
+- 安卓按住说话的转写（`company-phone-asr-v1`，`/company/ext/chat/asr`）：手机录 16 kHz 录音，交给服务器上聊天语音用的同一个识别服务，返回文字，不保存。登录返回里加上本人姓名，手机问候语用。
 - 旧网页内核也能用（`company-old-webview-v1`）：用户的华为手机（VDE-AL00）自带的网页内核是 Chrome 114。工作台页面第一行启动代码就用了 Chrome 119 才有的 `Promise.withResolvers`，后面还有 `AbortSignal.any`、迭代器的 `.some()` / `.find()`、集合运算等，旧内核上启动到第一行就停了：AI 页是电脑端的起始页（「选择一个工作区开始」），历史为空，实时连接每几秒断一次。现在 `desk_hub.js` 在工作台和聊天页的最前面放进 `server/desk-polyfills.js`，旧内核缺什么补什么（新内核原样不动）。手机上已装的安卓包不用重装。
 
 ## 2026.11.26.3

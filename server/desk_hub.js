@@ -532,7 +532,10 @@ async function chatWhere(d) {
   let j = null;
   try { j = JSON.parse(r.body.toString("utf8")); } catch {}
   const m = j && j.ok && typeof j.url === "string" ? /^http:\/\/127\.0\.0\.1:(\d+)(\/.*)$/.exec(j.url) : null;
-  if (m) d.chatPort = Number(m[1]);
+  if (m) {
+    d.chatPort = Number(m[1]);
+    try { d.chatKey = new URL(m[2], "http://x").searchParams.get("k") || ""; } catch { d.chatKey = ""; }
+  }
   return { status: r.status || 502, json: m ? { ok: true, url: m[2] } : (j || { ok: false, error: "relay" }) };
 }
 async function chatPortOf(d) {
@@ -576,7 +579,7 @@ async function admit(req) {
 }
 
 async function onRequest(req, res) {
-  const { p, search } = innerPath(req.url);
+  let { p, search } = innerPath(req.url);
   if (p === "/_hub/health") { res.writeHead(200, { "Content-Type": "text/plain" }); res.end("ok"); return; }
   const a = await admit(req);
   if (a.deny) { const [c, h] = DENY[a.deny]; fail(res, c, a.deny, h); return; }
@@ -635,6 +638,14 @@ async function onRequest(req, res) {
   if (isChatPath(p)) {
     const cport = await chatPortOf(d);
     if (!cport) { fail(res, 503, "chat-relay", "聊天还没准备好，请稍后重试"); return; }
+    // company-chat-key-heal-v1 (the user, 2026-11-26: 「我电脑端的聊天又挂了」): the chat relay's page key (?k=) is new at
+    // every start of the person's kernel; a chat column opened before kept the old one and got 「请从 TDH 窗口…打开」 on
+    // every request. The key keeps other programs on a computer off a loopback relay; here the person is already known
+    // by their sign-in, so the key a request carries becomes the relay's current one.
+    if (/[?&]k=/.test(search)) {
+      if (!d.chatKey) await chatWhere(d);
+      if (d.chatKey) { const q = new URLSearchParams(search); q.set("k", d.chatKey); search = "?" + q.toString(); }
+    }
     const page = isPageRequest(req, p);
     const ch = chatHeaders(req, cport);
     if (page) delete ch["accept-encoding"];
@@ -674,7 +685,7 @@ const liveStreams = new Set();
 
 async function onUpgrade(req, sock, head) {
   sock.on("error", () => {});
-  const { p, search } = innerPath(req.url);
+  let { p, search } = innerPath(req.url);
   const a = await admit(req);
   if (a.deny) { sock.end("HTTP/1.1 " + DENY[a.deny][0] + " Denied\r\nConnection: close\r\n\r\n"); return; }
   let d = desks.get(a.w.login);
@@ -690,6 +701,7 @@ async function onUpgrade(req, sock, head) {
   const chat = isChatPath(p);
   const cport = chat ? await chatPortOf(d) : 0;
   if (chat && !cport) { sock.end("HTTP/1.1 503 Chat Not Ready\r\nConnection: close\r\n\r\n"); return; }
+  if (chat && /[?&]k=/.test(search) && d.chatKey) { const q = new URLSearchParams(search); q.set("k", d.chatKey); search = "?" + q.toString(); }
   const up = net.connect(chat ? cport : d.port, "127.0.0.1");
   up.on("error", () => { if (chat) d.chatPort = 0; sock.destroy(); });
   up.on("connect", () => {

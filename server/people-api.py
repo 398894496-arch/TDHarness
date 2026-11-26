@@ -888,6 +888,9 @@ def login_payload(login: str) -> dict | None:
         "dept": row.get("dept"),
         # company-phone-profile-v1: the department's name as people read it (the desk shows 公司, not "company").
         "dept_name": next((d["name"] for d in public_depts() if d["id"] == row.get("dept")), row.get("dept") or ""),
+        # company-android-look-v1: the person's own name for the phone's greeting (「下午好，郑飞飞」); the roster's list
+        # is not open on the public entry.
+        "name": row.get("name") or "",
         "personal": row.get("personal"),
         "org": row.get("org"),
         "gw_token": mint_token(pid),
@@ -2283,6 +2286,31 @@ def chat_read_for(login: str, what: str, payload: dict) -> tuple[int, dict]:
     The log has the counts, never what was said."""
     if what == "call":
         return chat_call_for(login, payload)
+    if what == "asr":
+        # company-phone-asr-v1 (the user, 2026-11-26: the Android app as the iPhone's, 按住说话 too): an Android phone has
+        # no recogniser of its own that works everywhere (Android's needs Google, which Huawei phones lack), so its hold-
+        # to-talk records 16 kHz WAV and asks here; the words come from the chat's recogniser (chat_voice.recognise, the
+        # same key and model). Nothing is kept; the log has the length only, never what was said.
+        # (Its own import: further down this function imports base64 itself, which makes the name local here.)
+        import binascii
+        from base64 import b64decode
+        try:
+            data = b64decode(str(payload.get("audio") or ""), validate=True)
+        except (ValueError, TypeError, binascii.Error):
+            return 400, {"ok": False, "error": "bad-audio"}
+        if len(data) < 1000 or len(data) > chat_voice.MAX_BYTES:
+            return 400, {"ok": False, "error": "bad-audio"}
+        runtime = TOKEN_STORE.parent
+        key = chat_voice.load_key(runtime)
+        if not key:
+            return 503, {"ok": False, "error": "asr-off"}
+        try:
+            text = chat_voice.recognise(chat_voice.load_conf(runtime), key, data, "audio/wav", timeout=30)
+        except Exception as e:  # noqa: BLE001 - the recogniser's failure is the phone's 「没听清」, whatever it was
+            sys.stderr.write("people-api asr %s failed %s\n" % (login, type(e).__name__))
+            return 502, {"ok": False, "error": "asr-failed"}
+        sys.stderr.write("people-api asr %s bytes=%d chars=%d\n" % (login, len(data), len(text)))
+        return 200, {"ok": True, "text": text}
     if what == "voice":
         # company-chat-voice-v1: one voice message's words for the chat page (by its recording's file name), only to a
         # member of its chat or an admin.
