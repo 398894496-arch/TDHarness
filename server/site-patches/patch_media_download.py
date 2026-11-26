@@ -18,6 +18,9 @@
    从文件夹打开的按钮」）：交付卡片去掉下载按钮（手机上保留，手机没有文件夹）；卡片的「在文件管理器中显示」
    先问这台电脑的本机中转（desk-hub-relay.js 的 /_tdh/reveal），由它在员工自己的电脑上打开公司盘里的文件夹并
    选中文件；没有本机中转（电脑自己跑内核）时照旧交给内核。侧边栏预览顶栏的下载按钮同样换成这个。
+8. 下载按钮回来，和文件夹按钮并排（company-download-beside-folder-v1，用户 2026-11-26：「如果想保存在本地怎么办」
+   「加回下载按钮」）：6 修好以后下载能用了。卡片在电脑上也给下载；侧边栏预览顶栏在「在文件夹中显示」旁边加回
+   「下载到本机」。已经打过 7 的包只补这一处。
 """
 import sys
 from pathlib import Path
@@ -29,6 +32,7 @@ MARK_CARD = "company-presented-inline-media-v1"
 MARK_ASPECT = "company-inline-media-aspect-v1"
 MARK_UNC = "company-server-share-path-v1"
 MARK_REVEAL = "company-local-reveal-v1"
+MARK_BOTH = "company-download-beside-folder-v1"
 
 BOX_V1 = '\t\t\tconst box = { display: "block", maxWidth: "100%", maxHeight: 360, borderRadius: 8, marginTop: 6, background: "#000" };\n'
 BOX_V2 = (
@@ -105,7 +109,28 @@ def patch_sidebar_resolve(t: str) -> tuple[str, str]:
 
 
 def patch_sidebar_client(t: str) -> tuple[str, str]:
-    return chain(t, patch_sidebar_button, patch_sidebar_reveal)
+    return chain(t, patch_sidebar_button, patch_sidebar_reveal, patch_sidebar_both)
+
+
+def patch_sidebar_both(t: str) -> tuple[str, str]:
+    if MARK_BOTH in t:
+        return t, "already"
+    anchor = "\t\t\t\t\t\t// " + MARK_REVEAL + ": show the open file in this computer's file manager; a desk without the relay\n"
+    if t.count(anchor) != 1:
+        raise SystemExit("anchor-missing:" + MARK_BOTH + ":sidebar")
+    dl = (
+        "\t\t\t\t\t\t// " + MARK_BOTH + ": a copy on this computer too, beside the folder button (the phone's one\n"
+        "\t\t\t\t\t\t// button already downloads).\n"
+        "\t\t\t\t\t\t!showEmpty && !isDir && !companyIsPhone() && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(\"a\", {\n"
+        "\t\t\t\t\t\t\tclassName: sidebar_module_css_default.iconButton,\n"
+        "\t\t\t\t\t\t\thref: downloadUrl(scope, path),\n"
+        "\t\t\t\t\t\t\tdownload: true,\n"
+        "\t\t\t\t\t\t\t\"aria-label\": \"下载到本机\",\n"
+        "\t\t\t\t\t\t\ttitle: \"下载到本机\",\n"
+        "\t\t\t\t\t\t\tchildren: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconDownloadOutlineRegular, { size: 14 })\n"
+        "\t\t\t\t\t\t}),\n"
+    )
+    return t.replace(anchor, dl + anchor, 1), "patched"
 
 
 SIDEBAR_DL = (
@@ -243,7 +268,18 @@ CARD_HELPERS = """		// company-presented-inline-media-v1: inline image/video and
 
 
 def patch_presented_card(t: str) -> tuple[str, str]:
-    return chain(t, patch_presented_media, patch_presented_reveal)
+    return chain(t, patch_presented_media, patch_presented_reveal, patch_presented_both)
+
+
+def patch_presented_both(t: str) -> tuple[str, str]:
+    if MARK_BOTH in t:
+        return t, "already"
+    old = "\t\t\tif (!companyIsPhone()) return null;\n"
+    if MARK_REVEAL not in t:
+        return t, "no-card"
+    if t.count(old) != 1:
+        raise SystemExit("anchor-missing:" + MARK_BOTH + ":card")
+    return t.replace(old, "\t\t\t// " + MARK_BOTH + ": the download link on the computer too, beside the folder button.\n", 1), "patched"
 
 
 def patch_presented_reveal(t: str) -> tuple[str, str]:
