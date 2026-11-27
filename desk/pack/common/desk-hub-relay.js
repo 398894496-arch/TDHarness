@@ -134,9 +134,101 @@ function revealRoute(req, res) {
   });
 }
 
+// ---- company-erp-hub-v1 ------------------------------------------------------------------------------------------
+// ERPNext in the desk's frame (the user, 2026-11-27: 「ERP也挂了」): the desk on the server answers the frame's address
+// with its own ERP relay, http://127.0.0.1:<port>/… on the SERVER — nothing on this computer. This relay listens on a
+// second port of its own for ERPNext (a site of its own: ERPNext's pages ask for /app, /api, /assets at the root) and
+// passes everything there to the hub's /_erp/, which hands it to that relay on the server (server/desk_hub.js); the
+// frame's address is changed to this port as it passes.
+const ERP_PORTS = [17831, 17832, 17833, 17834, 0];
+let erpPort = 0;
+function erpHostOk(req) {
+  const h = String(req.headers.host || "");
+  return erpPort > 0 && (h === "127.0.0.1:" + erpPort || h === "localhost:" + erpPort);
+}
+function erpWhere(req, res) {
+  // Plain, to be read here.
+  const wh = headersFor(req);
+  delete wh["accept-encoding"];
+  const up = https.request({ host: dial, port: sitePort, servername: SITE.hostname, agent, method: req.method, path: PREFIX + req.url, headers: wh }, (ures) => {
+    const c = []; let n = 0;
+    ures.on("data", (x) => { n += x.length; if (n <= 65536) c.push(x); });
+    ures.on("end", () => {
+      let body = Buffer.concat(c);
+      try {
+        const j = JSON.parse(body.toString("utf8"));
+        if (j && j.ok && typeof j.url === "string" && erpPort > 0) {
+          j.url = j.url.replace(/^http:\/\/127\.0\.0\.1:\d+\//, "http://127.0.0.1:" + erpPort + "/");
+          body = Buffer.from(JSON.stringify(j));
+        }
+      } catch {}
+      const h = Object.assign({}, ures.headers);
+      delete h["transfer-encoding"];
+      h["content-length"] = String(body.length);
+      res.writeHead(ures.statusCode || 502, h);
+      res.end(body);
+    });
+    ures.on("error", () => res.destroy());
+  });
+  up.on("error", (e) => {
+    if (res.headersSent) { res.destroy(); return; }
+    res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("连不上公司服务器（" + (e.code || e.message) + "）");
+  });
+  req.pipe(up);
+}
+const erpSrv = http.createServer((req, res) => {
+  if (!erpHostOk(req)) { res.writeHead(421); res.end("wrong host"); return; }
+  const up = https.request({ host: dial, port: sitePort, servername: SITE.hostname, agent, method: req.method, path: PREFIX + "/_erp" + req.url, headers: headersFor(req) }, (ures) => {
+    const h = Object.assign({}, ures.headers);
+    if (h.location && h.location.startsWith(PREFIX + "/_erp/")) h.location = h.location.slice(PREFIX.length + 5);
+    res.writeHead(ures.statusCode || 502, h);
+    ures.pipe(res);
+  });
+  up.setTimeout(180000, () => up.destroy());
+  up.on("error", (e) => {
+    if (res.headersSent) { res.destroy(); return; }
+    res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("ERP 没连上（" + (e.code || e.message) + "），请点「重新打开」");
+  });
+  res.on("close", () => up.destroy());
+  req.pipe(up);
+});
+erpSrv.requestTimeout = 0;
+erpSrv.on("upgrade", (req, sock, head) => {
+  sock.on("error", () => {});
+  if (!erpHostOk(req) || String(req.url || "").indexOf("/socket.io/") !== 0) { sock.end("HTTP/1.1 403 Forbidden\r\n\r\n"); return; }
+  const up = tls.connect({ host: dial, port: sitePort, servername: SITE.hostname, ca }, () => {
+    const h = headersFor(req);
+    h.connection = "Upgrade";
+    h.upgrade = req.headers.upgrade || "websocket";
+    let s = req.method + " " + PREFIX + "/_erp" + req.url + " HTTP/1.1\r\n";
+    for (const [k, v] of Object.entries(h)) for (const vv of [].concat(v)) s += k + ": " + vv + "\r\n";
+    up.write(s + "\r\n");
+    if (head && head.length) up.write(head);
+    up.pipe(sock); sock.pipe(up);
+  });
+  up.on("error", () => sock.destroy());
+  sock.on("close", () => up.destroy());
+});
+(async () => {
+  for (const p of ERP_PORTS) {
+    const ok = await new Promise((resolve) => {
+      const onErr = () => { erpSrv.off("listening", onOk); resolve(false); };
+      const onOk = () => { erpSrv.off("error", onErr); resolve(true); };
+      erpSrv.once("error", onErr);
+      erpSrv.once("listening", onOk);
+      erpSrv.listen(p, "127.0.0.1");
+    });
+    if (ok) { erpPort = erpSrv.address().port; process.stdout.write("RELAY_ERP=" + erpPort + "\n"); return; }
+  }
+})();
+erpSrv.on("error", () => {});
+
 const srv = http.createServer((req, res) => {
   if (!hostOk(req)) { res.writeHead(403); res.end("forbidden"); return; }
   if (req.url === "/_tdh/reveal") { revealRoute(req, res); return; }
+  if (req.method === "POST" && req.url === "/company/erp/where") { erpWhere(req, res); return; }
   const up = https.request({ host: dial, port: sitePort, servername: SITE.hostname, agent, method: req.method, path: PREFIX + req.url, headers: headersFor(req) }, (ures) => {
     const h = Object.assign({}, ures.headers);
     if (h.location && h.location.startsWith(PREFIX + "/")) h.location = h.location.slice(PREFIX.length);

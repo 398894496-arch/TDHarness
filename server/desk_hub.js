@@ -628,6 +628,13 @@ async function onRequest(req, res) {
     return;
   }
   d.lastSeen = Date.now();
+  // company-erp-hub-v1 (the user, 2026-11-27: 「ERP也挂了」): ERPNext in the desk's frame is the kernel's own ERP relay
+  // (company-shell erp-relay.js) at http://127.0.0.1:<port>/… — on THIS server, nothing on the person's computer. The
+  // hub learns that port from the frame's address as it passes, and passes /_erp/* (requests and the socket) to it as
+  // if from its own page; the computer's relay gives the frame a port of its own that comes here (desk-hub-relay.js).
+  // Behind the sign-in token like the rest of the hub: ERPNext is not opened to the internet.
+  if (p === "/company/erp/where" && req.method === "POST") { erpWhere(req, res, d, search); return; }
+  if (p === "/_erp" || p.startsWith("/_erp/")) { erpPass(req, res, d, p.slice(5) || "/", search); return; }
   if (p === "/company/chat/where") {
     const w = await chatWhere(d);
     const body = Buffer.from(JSON.stringify(w.json));
@@ -680,6 +687,57 @@ async function onRequest(req, res) {
   req.pipe(up);
 }
 
+// ---- company-erp-hub-v1 --------------------------------------------------------------------------------------------
+function erpWhere(req, res, d, search) {
+  // Plain, to be read here (the kernel compresses for a browser that says it can take it).
+  const uh = upstreamHeaders(req, d);
+  delete uh["accept-encoding"];
+  const up = http.request({ hostname: "127.0.0.1", port: d.port, method: "POST", path: withKernelToken("/company/erp/where", search, d, "POST"),
+    headers: uh }, (ures) => {
+    const c = []; let n = 0;
+    ures.on("data", (x) => { n += x.length; if (n <= 65536) c.push(x); });
+    ures.on("end", () => {
+      const body = Buffer.concat(c);
+      try {
+        const j = JSON.parse(body.toString("utf8"));
+        const m = j && j.ok && typeof j.url === "string" ? /^http:\/\/127\.0\.0\.1:(\d+)\//.exec(j.url) : null;
+        if (m) d.erpPort = Number(m[1]);
+      } catch {}
+      const h = Object.assign({}, ures.headers);
+      delete h["transfer-encoding"];
+      h["content-length"] = String(body.length);
+      res.writeHead(ures.statusCode || 502, h);
+      res.end(body);
+    });
+    ures.on("error", () => res.destroy());
+  });
+  up.on("error", () => fail(res, 502, "desk-unreachable", "服务器上的工作台没有响应，请稍后重试"));
+  req.pipe(up);
+}
+function erpHeaders(req, port) {
+  const h = {};
+  for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k)) h[k] = v;
+  const own = "http://127.0.0.1:" + port;
+  h.host = "127.0.0.1:" + port;
+  if (h.origin) h.origin = own;
+  if (h.referer) { try { const r = new URL(h.referer); h.referer = own + r.pathname.replace(/^\/desk-hub\/_erp/, "").replace(/^\/_erp/, "") + r.search; } catch { delete h.referer; } }
+  return h;
+}
+function erpPass(req, res, d, rest, search) {
+  if (!d.erpPort) { fail(res, 409, "erp-not-open", "ERP 还没在工作台里打开过，请点「重新打开」"); return; }
+  const port = d.erpPort;
+  const up = http.request({ hostname: "127.0.0.1", port, method: req.method, path: rest + (search || ""), headers: erpHeaders(req, port) }, (ures) => {
+    const h = Object.assign({}, ures.headers);
+    if (h.location) { try { const l = new URL(h.location, "http://127.0.0.1:" + port); if (l.host === "127.0.0.1:" + port) h.location = l.pathname + l.search + l.hash; } catch {} }
+    res.writeHead(ures.statusCode || 502, h);
+    ures.pipe(res);
+  });
+  up.setTimeout(180000, () => up.destroy());
+  up.on("error", () => { d.erpPort = 0; if (!res.headersSent) fail(res, 502, "erp-unreachable", "ERP 没有响应，请点「重新打开」"); else res.destroy(); });
+  res.on("close", () => up.destroy());
+  req.pipe(up);
+}
+
 /// The live connections that carry an id (login + " " + id), while they are open.
 const liveStreams = new Set();
 
@@ -697,6 +755,25 @@ async function onUpgrade(req, sock, head) {
       d = full ? await ensureDesk(full) : null;
     } catch { d = null; }
     if (!d || d.state !== "up") { sock.end("HTTP/1.1 503 Desk Not Started\r\nConnection: close\r\n\r\n"); return; }
+  }
+  // company-erp-hub-v1: ERPNext's own socket (socket.io), to the kernel's ERP relay.
+  if (p.startsWith("/_erp/")) {
+    const port = d.erpPort;
+    if (!port) { sock.end("HTTP/1.1 409 ERP Not Open\r\nConnection: close\r\n\r\n"); return; }
+    const eu = net.connect(port, "127.0.0.1");
+    eu.on("error", () => sock.destroy());
+    eu.on("connect", () => {
+      const h = erpHeaders(req, port);
+      h.connection = "Upgrade";
+      h.upgrade = req.headers.upgrade || "websocket";
+      let hd = req.method + " " + p.slice(5) + search + " HTTP/1.1\r\n";
+      for (const [k, v] of Object.entries(h)) for (const vv of [].concat(v)) hd += k + ": " + vv + "\r\n";
+      eu.write(hd + "\r\n");
+      if (head && head.length) eu.write(head);
+      eu.pipe(sock); sock.pipe(eu);
+      sock.on("close", () => eu.destroy()); eu.on("close", () => sock.destroy());
+    });
+    return;
   }
   const chat = isChatPath(p);
   const cport = chat ? await chatPortOf(d) : 0;
@@ -836,6 +913,7 @@ async function selftest() {
   const seen = [];
   const kernel = http.createServer((req, res) => {
     seen.push({ url: req.url, host: req.headers.host, origin: req.headers.origin, auth: req.headers.authorization, method: req.method });
+    if (req.url.startsWith("/company/erp/where")) { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ ok: true, url: "http://127.0.0.1:" + erpFake.address().port + "/tdh-sso/start?t=abcdefghij" })); return; }
     if (req.url === "/api/workspace.create") { res.writeHead(200, { "Content-Type": "application/json" }); res.end(JSON.stringify({ type: "result", result: { workspaceId: "ws-1" } })); return; }
     if (req.url.startsWith("/?")) { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end("<!doctype html><html><head><title>d</title><script>boot()</script></head><body></body></html>"); return; }
     res.writeHead(200, { "Content-Type": "text/plain" }); res.end("kernel:" + req.url);
@@ -843,6 +921,14 @@ async function selftest() {
   kernel.on("upgrade", (req, sock) => { seen.push({ ws: req.url, host: req.headers.host, origin: req.headers.origin }); sock.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"); sock.on("data", (d) => sock.write("echo:" + d)); });
   await new Promise((r) => kernel.listen(0, "127.0.0.1", r));
   const kport = kernel.address().port;
+  // company-erp-hub-v1: the kernel's ERP relay, as the hub reaches it
+  const erpSeen = [];
+  const erpFake = http.createServer((req, res) => {
+    erpSeen.push({ url: req.url, host: req.headers.host, origin: req.headers.origin, auth: req.headers.authorization, cookie: req.headers.cookie });
+    if (req.url === "/go") { res.writeHead(302, { Location: "http://127.0.0.1:" + erpFake.address().port + "/app?x=1" }); res.end(); return; }
+    res.writeHead(200, { "Content-Type": "text/plain" }); res.end("erp:" + req.url);
+  });
+  await new Promise((r) => erpFake.listen(0, "127.0.0.1", r));
   Object.assign(CFG, { people: "http://127.0.0.1:" + people.address().port, port: 0, maxStarts: 2 });
   process.env.TDH_ROOT = tmp;
   let launches = 0;
@@ -889,6 +975,28 @@ async function selftest() {
   assert.ok(/101 Switching/.test(echoed) && /echo:ping1/.test(echoed), "websocket both ways");
   const wsSeen = seen.find((s) => s.ws);
   assert.strictEqual(wsSeen.ws, "/api/remote.mux"); assert.strictEqual(wsSeen.origin, "http://127.0.0.1:" + desks.get("alice").port);
+  // company-erp-hub-v1: before the frame's address passed, ERP is not open; after, /_erp/* reaches the kernel's relay
+  assert.strictEqual((await get("/desk-hub/_erp/app", "dsh_aliceToken0123456789")).status, 409, "ERP not opened yet");
+  const where = await new Promise((resolve) => {
+    const rq = http.request({ hostname: "127.0.0.1", port: hport, method: "POST", path: "/desk-hub/company/erp/where",
+      headers: { Authorization: "Bearer dsh_aliceToken0123456789", Origin: "http://127.0.0.1:17803", "X-TDH-ERP": "1" } }, (res) => {
+      const c = []; res.on("data", (x) => c.push(x)); res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(c).toString() }));
+    });
+    rq.end("{}");
+  });
+  assert.strictEqual(where.status, 200);
+  assert.ok(JSON.parse(where.body).url.indexOf("/tdh-sso/start?t=abcdefghij") > 0, "the frame's address passes unchanged");
+  const ea = await get("/desk-hub/_erp/api/method/ping?a=1", "dsh_aliceToken0123456789", { Origin: "http://127.0.0.1:17831", Referer: "http://127.0.0.1:17831/app/home", Cookie: "sid=s1" });
+  assert.strictEqual(ea.body, "erp:/api/method/ping?a=1", "prefix off, query kept");
+  const es = erpSeen[erpSeen.length - 1];
+  assert.strictEqual(es.host, "127.0.0.1:" + erpFake.address().port, "as from the relay's own page");
+  assert.strictEqual(es.origin, "http://127.0.0.1:" + erpFake.address().port);
+  assert.strictEqual(es.cookie, "sid=s1", "ERPNext's cookie passes");
+  assert.ok(!erpSeen.some((x) => x.auth), "the sign-in token never reaches ERP");
+  const eg = await new Promise((resolve) => http.get({ hostname: "127.0.0.1", port: hport, path: "/desk-hub/_erp/go", headers: { Authorization: "Bearer dsh_aliceToken0123456789" } },
+    (res) => { res.resume(); resolve(res.headers.location); }));
+  assert.strictEqual(eg, "/app?x=1", "the relay's own address comes back as a path");
+  erpFake.close();
   // a WebSocket for someone without a running desk is refused
   void realEnsure; void origSecret;
   srv.close(); people.close(); kernel.close();
