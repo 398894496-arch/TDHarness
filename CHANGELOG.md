@@ -4,6 +4,11 @@
 
 The version is the release date. Every merge to `main` bumps `VERSION`, adds a section at the top of this file and updates the version line in `README.md` and `README.en.md`; CI enforces it and publishes a tagged release.
 
+## 2026.11.26.8
+
+**服务器工作台里的 ERP 能打开了**
+- 用户：「ERP也挂了」。服务器上的工作台把 ERP 页指向它自己的 ERP 中继 `http://127.0.0.1:<端口>/…`，那个端口在服务器上，员工电脑上打开是灰云；用服务器工作台的人 ERP 都打不开。现在（`company-erp-hub-v1`）hub 在 ERP 地址经过时记下这个端口，并把 `/desk-hub/_erp/*`（请求和 socket）交给它；电脑端中继（`desk-hub-relay.js`）多开一个本机 ERP 端口转到那里，并把 ERP 页拿到的地址换成本机端口。全程走 hub 的登录校验，不把 ERPNext 开到公网（青岛入口只放行固定路径）。电脑要更新到新包、重启 TDH 后生效；hub 重启后 ERP 页提示时点「重新打开」。
+
 ## 2026.11.26.7
 
 **安卓打开聊天闪退修好；全面审查后再修 13 处**
